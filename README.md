@@ -7,28 +7,31 @@ This repository contains implementations and experiments focused on **limit orde
 The project currently includes:
 
 * **Algorithm 1:** a custom depth-aware, inventory-skewed quoting strategy
-* **Algorithm 2:** an implementation of the Avellaneda–Stoikov optimal market-making model
+* **Algorithm 2:** an implementation of the Avellaneda-Stoikov optimal market-making model
 
-The goal is to simulate, backtest, and compare different market-making approaches on cryptocurrency order book data.
+The goal of this project is to simulate, backtest, and compare different market-making approaches on cryptocurrency order book data.
 
 ---
 
 ## About the market-making logic
 
-Market making consists of continuously placing bid and ask limit orders around the market price. A market maker attempts to earn the bid-ask spread, but also faces several risks, including:
+Market making consists of continuously placing bid and ask limit orders around the current market price.
 
-* **Inventory risk:** accumulating too much long or short inventory
-* **Adverse selection risk:** being filled just before the market moves against the quote
+A market maker attempts to earn the bid-ask spread, but also faces several risks:
+
+* **Inventory risk:** holding too much long or short inventory
+* **Adverse selection risk:** being filled before the market moves against the quote
 * **Execution risk:** quotes may not be filled
 * **Order book risk:** available liquidity changes across depth levels
-* **Fee and tick-size constraints:** quoted prices must remain valid and economically meaningful
+* **Tick-size and fee constraints:** quotes must remain valid and economically meaningful
 
-This project studies two different approaches:
+This repository studies two market-making approaches:
 
 1. A **deterministic depth-aware strategy**, called Algorithm 1
-2. A **model-based optimal strategy**, based on the Avellaneda–Stoikov framework
+2. A **model-based optimal strategy**, based on the Avellaneda-Stoikov framework
 
-Algorithm 1 is designed as a practical baseline that directly uses order book depth and inventory information. Algorithm 2 provides a theoretical benchmark based on stochastic control.
+Algorithm 1 is designed as a practical baseline that directly uses inventory and order book depth.
+Algorithm 2 provides a theoretical benchmark based on stochastic market-making theory.
 
 ---
 
@@ -40,17 +43,17 @@ Algorithm 1 is a rule-based market-making strategy.
 
 Instead of always quoting at the best bid and best ask, the algorithm looks deeper into the order book and selects bid and ask levels according to the current inventory.
 
-The strategy follows the logic:
+The strategy follows this logic:
 
 ```text
 inventory
-    -> inventory index
-    -> candidate bid/ask levels
-    -> spread feasibility check
-    -> final bid/ask quotes
+    -> inventory imbalance index
+    -> candidate bid/ask level pairs
+    -> spread-feasibility check
+    -> final bid and ask quotes
 ```
 
-The final quotes are placed **one tick inside** the selected order book levels.
+The final bid and ask quotes are placed **one tick inside** the selected order book levels.
 
 ---
 
@@ -65,12 +68,12 @@ Let the bid side of the order book be:
 where:
 
 ```math
-B_0 \geq B_1 \geq \dots \geq B_D
+B_0 \ge B_1 \ge \dots \ge B_D
 ```
 
-Here, `B_0` is the best bid, and deeper bid levels have lower prices.
+Here, (B_0) is the best bid price, and deeper bid levels have lower prices.
 
-Similarly, let the ask side of the order book be:
+Let the ask side of the order book be:
 
 ```math
 \mathcal{A} = \{A_0, A_1, \dots, A_D\}
@@ -79,18 +82,18 @@ Similarly, let the ask side of the order book be:
 where:
 
 ```math
-A_0 \leq A_1 \leq \dots \leq A_D
+A_0 \le A_1 \le \dots \le A_D
 ```
 
-Here, `A_0` is the best ask, and deeper ask levels have higher prices.
+Here, (A_0) is the best ask price, and deeper ask levels have higher prices.
 
-The maximum usable depth is:
+The maximum usable order book depth is:
 
 ```math
 D
 ```
 
-The exchange tick size is:
+The tick size is:
 
 ```math
 \epsilon
@@ -112,39 +115,39 @@ Let the current inventory be:
 q
 ```
 
-The strategy assumes an allowed inventory range:
+The strategy assumes that inventory is bounded by:
 
 ```math
-q_{\min} \leq q \leq q_{\max}
+q_{\min} \le q \le q_{\max}
 ```
 
-The current inventory is mapped into a discrete inventory imbalance index:
+The current inventory is converted into a discrete inventory imbalance index:
 
 ```math
 d_q =
 \operatorname{int}
 \left(
 10
-\frac{q - q_{\min}}{q_{\max} - q_{\min}}
+\frac{q-q_{\min}}{q_{\max}-q_{\min}}
 \right)
-- 5
+-5
 ```
 
 This creates an integer-valued inventory signal.
 
 Approximately:
 
-* `d_q < 0`: inventory is low or negative
-* `d_q ≈ 0`: inventory is close to neutral
-* `d_q > 0`: inventory is high or positive
+* (d_q < 0): inventory is low or negative
+* (d_q \approx 0): inventory is close to neutral
+* (d_q > 0): inventory is high or positive
 
-This index is then used to skew the bid and ask quote levels.
+This inventory index is used to skew the bid and ask quote levels.
 
 ---
 
 ## Step 2: Inventory-dependent level-pair generation
 
-The algorithm generates a sequence of candidate bid/ask level pairs:
+The algorithm generates a sequence of candidate bid and ask level pairs:
 
 ```math
 \mathcal{P}(d_q,D)
@@ -157,42 +160,48 @@ The algorithm generates a sequence of candidate bid/ask level pairs:
 \right]
 ```
 
-Each pair `(b_k, a_k)` represents a candidate quote location:
+Each candidate pair is:
 
-* `b_k`: candidate bid level
-* `a_k`: candidate ask level
+```math
+(b_k,a_k)
+```
 
-The function below creates these candidate pairs:
+where:
+
+* (b_k) is the candidate bid level
+* (a_k) is the candidate ask level
+
+In the code, this is generated by:
 
 ```python
 pairs = self._leg_pairs(inv_d, depth_max_local)
 ```
 
-The exact sequence depends on the inventory imbalance index `d_q`.
+The exact sequence depends on the inventory imbalance index (d_q).
 
-The purpose is to adjust quote aggressiveness according to inventory.
+The purpose of this step is to adjust quote aggressiveness according to inventory.
 
-If inventory is high, the algorithm generally tries to:
+When inventory is high, the strategy should generally:
 
 * quote less aggressively on the bid side
 * quote more aggressively on the ask side
 
 This discourages further buying and encourages selling.
 
-If inventory is low or negative, the algorithm generally tries to:
+When inventory is low or negative, the strategy should generally:
 
 * quote more aggressively on the bid side
 * quote less aggressively on the ask side
 
 This encourages buying and discourages selling.
 
-If inventory is neutral, the algorithm tends to quote more symmetrically.
+When inventory is close to neutral, the strategy tends to quote more symmetrically.
 
 ---
 
 ## Step 3: Spread-feasibility condition
 
-For each candidate pair `(b_k, a_k)`, the algorithm checks whether the selected bid and ask levels satisfy a spread condition.
+For each candidate pair ((b_k,a_k)), the algorithm checks whether the corresponding bid and ask levels satisfy a spread condition.
 
 The final bid quote will be placed one tick above the selected bid level:
 
@@ -218,7 +227,7 @@ Equivalently:
 A_{a_k} - B_{b_k} > 2\epsilon
 ```
 
-This condition ensures that, after moving both quotes one tick inward, the bid quote still remains below the ask quote.
+This condition ensures that after moving both quotes one tick inward, the bid quote remains below the ask quote.
 
 In the implementation, this check is handled by:
 
@@ -226,12 +235,14 @@ In the implementation, this check is handled by:
 self._spread_ok(ob, bidx, aidx)
 ```
 
-The algorithm scans the candidate level pairs sequentially. It keeps updating the selected bid and ask levels while the spread condition remains valid. Once the condition fails, the search stops.
+If `_spread_ok` includes exchange fees or additional spread constraints, those constraints are also applied at this step.
 
-Therefore, the selected pair is the last feasible pair before the first infeasible one.
+The algorithm scans the candidate pairs sequentially. It keeps updating the selected bid and ask levels while the spread condition remains valid. Once the condition fails, the search stops.
+
+Therefore, the selected pair is the last feasible pair before the first infeasible pair:
 
 ```math
-(b^\star, a^\star)
+(b^\star,a^\star)
 =
 \text{last feasible pair in }
 \mathcal{P}(d_q,D)
@@ -277,7 +288,10 @@ The final ask quote is:
 p_a = A_{a^\star} - \epsilon
 ```
 
-This means the bid quote is slightly more aggressive than the selected bid level, and the ask quote is slightly more aggressive than the selected ask level.
+This means that:
+
+* the bid quote is slightly more aggressive than the selected bid level
+* the ask quote is slightly more aggressive than the selected ask level
 
 ---
 
@@ -352,22 +366,26 @@ s_a = A_{a^\star} - \epsilon - m
 The full algorithm can be summarized as:
 
 ```text
-q -> d_q -> P(d_q,D) -> (b*,a*) -> (p_b,p_a)
+current inventory q
+    -> inventory index d_q
+    -> candidate level pairs P(d_q, D)
+    -> selected feasible pair (b*, a*)
+    -> final quotes (p_b, p_a)
 ```
 
-More explicitly, the inventory index is:
+Mathematically, the inventory index is:
 
 ```math
 d_q =
 \operatorname{int}
 \left(
 10
-\frac{q - q_{\min}}{q_{\max} - q_{\min}}
+\frac{q-q_{\min}}{q_{\max}-q_{\min}}
 \right)
-- 5
+-5
 ```
 
-The selected level pair is:
+The selected pair is:
 
 ```math
 (b^\star,a^\star)
@@ -381,11 +399,13 @@ subject to:
 B_{b^\star} + \epsilon < A_{a^\star} - \epsilon
 ```
 
-The final bid and ask quotes are:
+The final quotes are:
 
 ```math
 p_b = B_{b^\star} + \epsilon
 ```
+
+and:
 
 ```math
 p_a = A_{a^\star} - \epsilon
@@ -399,73 +419,128 @@ p_a = A_{a^\star} - \epsilon
 Input:
     order book ob
     current inventory q
-    inventory limits q_min, q_max
+    inventory limits q_min and q_max
     tick size epsilon
     maximum usable depth D
 
 Step 1:
-    Compute inventory index:
+    Compute inventory imbalance index:
 
-    d_q = int(10 * (q - q_min) / (q_max - q_min)) - 5
+        d_q = int(10 * (q - q_min) / (q_max - q_min)) - 5
 
 Step 2:
-    Generate candidate level pairs:
+    Generate candidate bid/ask level pairs:
 
-    pairs = P(d_q, D)
+        pairs = P(d_q, D)
 
 Step 3:
     Initialize:
 
-    bid_level = D
-    ask_level = D
+        bid_level = D
+        ask_level = D
 
 Step 4:
-    For each candidate pair (b_k, a_k):
+    For each candidate pair (b, a):
 
-        If spread condition is valid:
-
-            B_{b_k} + epsilon < A_{a_k} - epsilon
-
-        then:
-
-            bid_level = b_k
-            ask_level = a_k
-
-        else:
-
-            stop the search
+        If spread condition is satisfied:
+            bid_level = b
+            ask_level = a
+        Else:
+            stop searching
 
 Step 5:
-    Clip selected levels:
+    Clip selected levels into valid order book range:
 
-    bid_level = min(max(bid_level, 0), D)
-    ask_level = min(max(ask_level, 0), D)
+        bid_level = min(max(bid_level, 0), D)
+        ask_level = min(max(ask_level, 0), D)
 
 Step 6:
-    Construct final quotes:
+    Read selected raw prices from the order book:
 
-    bid_price = B_{bid_level} + epsilon
-    ask_price = A_{ask_level} - epsilon
+        raw_bid = B_bid_level
+        raw_ask = A_ask_level
 
 Step 7:
-    Compute mid-price:
+    Place quotes one tick inside selected levels:
 
-    mid_price = (B_0 + A_0) / 2
+        bid_price = raw_bid + epsilon
+        ask_price = raw_ask - epsilon
 
 Step 8:
+    Compute mid-price:
+
+        mid_price = (best_bid + best_ask) / 2
+
+Step 9:
     Compute reported spreads:
 
-    bid_spread = mid_price - bid_price
-    ask_spread = ask_price - mid_price
+        bid_spread = mid_price - bid_price
+        ask_spread = ask_price - mid_price
 
 Output:
-    bid_price
-    ask_price
-    bid_level
-    ask_level
-    bid_spread
-    ask_spread
+    bid price
+    ask price
+    selected bid level
+    selected ask level
+    last traded price
+    bid spread
+    ask spread
 ```
+
+---
+
+## Output of Algorithm 1
+
+For each order book snapshot, Algorithm 1 returns a dictionary:
+
+```python
+{
+    "bid": bid_price,
+    "ask": ask_price,
+    "bid level": bid_level,
+    "ask level": ask_level,
+    "lastTradePrice": last,
+    "bid spread": mid_price - bid_price,
+    "ask spread": ask_price - mid_price,
+    "bid exec prob": 1.0,
+    "ask exec prob": 1.0
+}
+```
+
+The most important outputs are:
+
+* **bid:** final bid quote
+* **ask:** final ask quote
+* **bid level:** selected bid depth level
+* **ask level:** selected ask depth level
+* **lastTradePrice:** most recent traded price
+* **bid spread:** distance between the mid-price and the bid quote
+* **ask spread:** distance between the ask quote and the mid-price
+* **bid exec prob:** placeholder execution probability for the bid side
+* **ask exec prob:** placeholder execution probability for the ask side
+
+---
+
+## Important implementation note
+
+In the current implementation, the execution probabilities are placeholders:
+
+```python
+"bid exec prob": 1.0,
+"ask exec prob": 1.0
+```
+
+This means that Algorithm 1 does not currently estimate fill probability using an order-arrival or intensity model.
+
+Future versions could replace these placeholders with empirical execution probabilities based on:
+
+* quote distance from the mid-price
+* order book imbalance
+* recent trade direction
+* recent volatility
+* historical fill statistics
+* queue position
+* trade arrival intensity
 
 ---
 
@@ -473,57 +548,36 @@ Output:
 
 Algorithm 1 has several practical advantages:
 
-* It is **fast and deterministic**
-* It directly uses **order book depth**
-* It does not require calibration of a stochastic price model
-* It adjusts quotes according to **current inventory**
-* It avoids invalid or crossed quotes through a spread-feasibility check
-* It provides a simple baseline for comparison with more advanced market-making models
+* It is fast and deterministic.
+* It directly uses order book depth.
+* It does not require calibration of a stochastic price model.
+* It adjusts quotes according to current inventory.
+* It avoids crossed quotes through a spread-feasibility check.
+* It provides a practical baseline for comparison with more advanced models.
 
-Unlike Avellaneda–Stoikov, Algorithm 1 does not solve an optimization problem. It is a heuristic strategy that converts inventory and order book information into practical bid and ask quotes.
-
----
-
-## Important implementation note
-
-In the current implementation, the returned execution probabilities are placeholders:
-
-```python
-"bid exec prob": 1.0,
-"ask exec prob": 1.0
-```
-
-This means Algorithm 1 currently does not estimate execution probability using an arrival-intensity model.
-
-Future versions could replace these placeholders with empirical fill probabilities based on:
-
-* quote distance from the mid-price
-* order book imbalance
-* recent trade direction
-* market volatility
-* historical fill statistics
+Unlike the Avellaneda-Stoikov model, Algorithm 1 does not solve an optimization problem. It is a heuristic strategy that converts inventory and order book information into practical bid and ask quotes.
 
 ---
 
-# Algorithm 2: Avellaneda–Stoikov Model
+# Algorithm 2: Avellaneda-Stoikov Model
 
-This repository also includes an implementation of the Avellaneda–Stoikov optimal market-making model.
+This repository also includes an implementation of the Avellaneda-Stoikov optimal market-making model.
 
-In the Avellaneda–Stoikov framework:
+In the Avellaneda-Stoikov framework:
 
-* The mid-price is modeled as a stochastic process
-* Order arrivals depend on quote distance from the mid-price
-* The market maker chooses bid and ask quotes to maximize expected utility
-* The utility function balances expected profit against inventory risk
+* the mid-price is modeled as a stochastic process
+* order arrivals depend on quote distance from the mid-price
+* the market maker chooses bid and ask quotes to maximize expected utility
+* the utility function balances expected profit against inventory risk
 
 The model produces an optimal reservation price and optimal bid/ask spreads.
 
 Compared with Algorithm 1:
 
-* Algorithm 1 is deterministic and order-book based
-* Avellaneda–Stoikov is stochastic and model-based
-* Algorithm 1 is easier to implement and interpret
-* Avellaneda–Stoikov provides a stronger theoretical benchmark
+* Algorithm 1 is deterministic and order-book based.
+* Avellaneda-Stoikov is stochastic and model-based.
+* Algorithm 1 is easier to implement and interpret.
+* Avellaneda-Stoikov provides a theoretical benchmark.
 
 ---
 
@@ -531,13 +585,15 @@ Compared with Algorithm 1:
 
 The main files in this repository are:
 
-* **Algo1.py** — implementation of the custom depth-aware inventory-skewed quoting strategy
-* **Config.py** — configuration file containing inventory limits, tick size, depth caps, and other parameters
-* **demo_btc.py** — runs the market-making engine using BTC order book data
-* **demo_usdt.py** — runs the market-making engine using USDT order book data
-* **live_plot.py** — displays real-time portfolio and PnL visualization
-* **Order_Status.py** — tracks filled and pending orders
-* **Portfolio.py** — manages balance, inventory, and PnL calculations
+```text
+Algo1.py          Implementation of the custom depth-aware inventory-skewed quoting strategy
+Config.py         Configuration file for inventory limits, tick size, depth caps, and other parameters
+demo_btc.py       Runs the market-making engine using BTC order book data
+demo_usdt.py      Runs the market-making engine using USDT order book data
+live_plot.py      Displays real-time portfolio and PnL visualization
+Order_Status.py   Tracks filled and pending orders
+Portfolio.py      Manages balance, inventory, and PnL calculations
+```
 
 ---
 
@@ -575,43 +631,31 @@ Important parameters include:
 
 ---
 
-# Output of Algorithm 1
+# Example workflow
 
-For each order book snapshot, Algorithm 1 returns a dictionary containing:
+A typical experiment follows this workflow:
 
-```python
-{
-    "bid": bid_price,
-    "ask": ask_price,
-    "bid level": bid_level,
-    "ask level": ask_level,
-    "lastTradePrice": last,
-    "bid spread": mid_price - bid_price,
-    "ask spread": ask_price - mid_price,
-    "bid exec prob": 1.0,
-    "ask exec prob": 1.0
-}
+```text
+1. Load cryptocurrency order book data.
+2. Initialize the portfolio and configuration.
+3. For each order book snapshot:
+       a. Compute bid and ask quotes using Algorithm 1 or Algorithm 2.
+       b. Submit or simulate limit orders.
+       c. Track order status.
+       d. Update portfolio inventory and cash balance.
+       e. Compute PnL and performance metrics.
+4. Compare the performance of different strategies.
 ```
-
-The most important outputs are:
-
-* **bid:** final bid quote
-* **ask:** final ask quote
-* **bid level:** selected bid depth level
-* **ask level:** selected ask depth level
-* **bid spread:** distance between the mid-price and the bid quote
-* **ask spread:** distance between the ask quote and the mid-price
-* **lastTradePrice:** most recent traded price
 
 ---
 
 # Research purpose
 
-This project is designed for experimentation with crypto market-making strategies.
+This project is designed for experimentation with cryptocurrency market-making strategies.
 
 Possible experiments include:
 
-* comparing Algorithm 1 with Avellaneda–Stoikov
+* comparing Algorithm 1 with Avellaneda-Stoikov
 * studying how inventory limits affect performance
 * testing different depth caps
 * evaluating the effect of tick size
@@ -626,4 +670,4 @@ Possible experiments include:
 
 This project is for research and educational purposes only.
 
-It is not financial advice, and it should not be used for live trading without careful testing, validation, and risk management.
+It is not financial advice and should not be used for live trading without careful testing, validation, and risk management.
