@@ -15,7 +15,7 @@ The goal is to simulate, backtest, and compare different market-making approache
 
 ## About the market-making logic
 
-Market making consists of continuously placing bid and ask limit orders around the market price. A market maker earns the spread when orders are filled, but also faces several risks, including:
+Market making consists of continuously placing bid and ask limit orders around the market price. A market maker attempts to earn the bid-ask spread, but also faces several risks, including:
 
 * **Inventory risk:** accumulating too much long or short inventory
 * **Adverse selection risk:** being filled just before the market moves against the quote
@@ -42,17 +42,13 @@ Instead of always quoting at the best bid and best ask, the algorithm looks deep
 
 The strategy follows the logic:
 
-[
-\text{inventory}
-\rightarrow
-\text{inventory index}
-\rightarrow
-\text{candidate bid/ask levels}
-\rightarrow
-\text{spread feasibility check}
-\rightarrow
-\text{final bid/ask quotes}
-]
+```text
+inventory
+    -> inventory index
+    -> candidate bid/ask levels
+    -> spread feasibility check
+    -> final bid/ask quotes
+```
 
 The final quotes are placed **one tick inside** the selected order book levels.
 
@@ -60,87 +56,87 @@ The final quotes are placed **one tick inside** the selected order book levels.
 
 ## Order book notation
 
-Let the bid side of the order book be
+Let the bid side of the order book be:
 
-[
-\mathcal{B} = {B_0, B_1, \dots, B_D},
-]
+```math
+\mathcal{B} = \{B_0, B_1, \dots, B_D\}
+```
 
-where
+where:
 
-[
-B_0 \ge B_1 \ge \dots \ge B_D.
-]
+```math
+B_0 \geq B_1 \geq \dots \geq B_D
+```
 
-Here, (B_0) is the best bid, and deeper bid levels have lower prices.
+Here, `B_0` is the best bid, and deeper bid levels have lower prices.
 
-Similarly, let the ask side be
+Similarly, let the ask side of the order book be:
 
-[
-\mathcal{A} = {A_0, A_1, \dots, A_D},
-]
+```math
+\mathcal{A} = \{A_0, A_1, \dots, A_D\}
+```
 
-where
+where:
 
-[
-A_0 \le A_1 \le \dots \le A_D.
-]
+```math
+A_0 \leq A_1 \leq \dots \leq A_D
+```
 
-Here, (A_0) is the best ask, and deeper ask levels have higher prices.
+Here, `A_0` is the best ask, and deeper ask levels have higher prices.
 
-The maximum usable depth is denoted by
+The maximum usable depth is:
 
-[
-D.
-]
+```math
+D
+```
 
-The exchange tick size is denoted by
+The exchange tick size is:
 
-[
-\epsilon.
-]
+```math
+\epsilon
+```
 
-The mid-price is
+The mid-price is defined as:
 
-[
-m = \frac{B_0 + A_0}{2}.
-]
+```math
+m = \frac{B_0 + A_0}{2}
+```
 
 ---
 
 ## Step 1: Inventory normalization
 
-Let the current inventory be
+Let the current inventory be:
 
-[
-q.
-]
+```math
+q
+```
 
 The strategy assumes an allowed inventory range:
 
-[
-q_{\min} \le q \le q_{\max}.
-]
+```math
+q_{\min} \leq q \leq q_{\max}
+```
 
 The current inventory is mapped into a discrete inventory imbalance index:
 
-[
+```math
 d_q =
 \operatorname{int}
 \left(
 10
-\frac{q-q_{\min}}{q_{\max}-q_{\min}}
+\frac{q - q_{\min}}{q_{\max} - q_{\min}}
 \right)
--5.
-]
+- 5
+```
 
 This creates an integer-valued inventory signal.
 
 Approximately:
 
-* (d_q < 0): inventory is low or negative
-* (d_q \approx 0): inventory is close to neutral
-* (d_q > 0): inventory is high or positive
+* `d_q < 0`: inventory is low or negative
+* `d_q ≈ 0`: inventory is close to neutral
+* `d_q > 0`: inventory is high or positive
 
 This index is then used to skew the bid and ask quote levels.
 
@@ -150,35 +146,40 @@ This index is then used to skew the bid and ask quote levels.
 
 The algorithm generates a sequence of candidate bid/ask level pairs:
 
-[
+```math
 \mathcal{P}(d_q,D)
-==================
-
+=
 \left[
 (b_1,a_1),
 (b_2,a_2),
 \dots,
 (b_K,a_K)
-\right].
-]
+\right]
+```
 
-Each pair ((b_k,a_k)) represents a candidate quote location:
+Each pair `(b_k, a_k)` represents a candidate quote location:
 
-* (b_k): candidate bid level
-* (a_k): candidate ask level
+* `b_k`: candidate bid level
+* `a_k`: candidate ask level
 
-The function `_leg_pairs(inv_d, depth_max_local)` creates these candidate pairs.
+The function below creates these candidate pairs:
 
-The exact sequence depends on the inventory imbalance index (d_q). The purpose is to adjust quote aggressiveness according to inventory.
+```python
+pairs = self._leg_pairs(inv_d, depth_max_local)
+```
 
-If inventory is high, the algorithm should generally:
+The exact sequence depends on the inventory imbalance index `d_q`.
+
+The purpose is to adjust quote aggressiveness according to inventory.
+
+If inventory is high, the algorithm generally tries to:
 
 * quote less aggressively on the bid side
 * quote more aggressively on the ask side
 
 This discourages further buying and encourages selling.
 
-If inventory is low or negative, the algorithm should generally:
+If inventory is low or negative, the algorithm generally tries to:
 
 * quote more aggressively on the bid side
 * quote less aggressively on the ask side
@@ -191,33 +192,33 @@ If inventory is neutral, the algorithm tends to quote more symmetrically.
 
 ## Step 3: Spread-feasibility condition
 
-For each candidate pair ((b_k,a_k)), the algorithm checks whether the selected bid and ask levels satisfy a spread condition.
+For each candidate pair `(b_k, a_k)`, the algorithm checks whether the selected bid and ask levels satisfy a spread condition.
 
 The final bid quote will be placed one tick above the selected bid level:
 
-[
-p_b = B_{b_k}+\epsilon.
-]
+```math
+p_b = B_{b_k} + \epsilon
+```
 
 The final ask quote will be placed one tick below the selected ask level:
 
-[
-p_a = A_{a_k}-\epsilon.
-]
+```math
+p_a = A_{a_k} - \epsilon
+```
 
 To avoid crossed or invalid quotes, the algorithm requires:
 
-[
-B_{b_k}+\epsilon < A_{a_k}-\epsilon.
-]
+```math
+B_{b_k} + \epsilon < A_{a_k} - \epsilon
+```
 
-Equivalently,
+Equivalently:
 
-[
-A_{a_k}-B_{b_k} > 2\epsilon.
-]
+```math
+A_{a_k} - B_{b_k} > 2\epsilon
+```
 
-This condition ensures that after moving both quotes one tick inward, the bid quote still remains below the ask quote.
+This condition ensures that, after moving both quotes one tick inward, the bid quote still remains below the ask quote.
 
 In the implementation, this check is handled by:
 
@@ -229,25 +230,22 @@ The algorithm scans the candidate level pairs sequentially. It keeps updating th
 
 Therefore, the selected pair is the last feasible pair before the first infeasible one.
 
-Mathematically:
-
-[
-(b^\star,a^\star)
-=================
-
+```math
+(b^\star, a^\star)
+=
 \text{last feasible pair in }
-\mathcal{P}(d_q,D).
-]
+\mathcal{P}(d_q,D)
+```
 
 The selected levels are then clipped to remain inside the available order book depth:
 
-[
-b^\star = \min(\max(b^\star,0),D),
-]
+```math
+b^\star = \min(\max(b^\star,0),D)
+```
 
-[
-a^\star = \min(\max(a^\star,0),D).
-]
+```math
+a^\star = \min(\max(a^\star,0),D)
+```
 
 ---
 
@@ -255,29 +253,29 @@ a^\star = \min(\max(a^\star,0),D).
 
 After selecting the final bid and ask levels, the algorithm extracts the corresponding raw order book prices:
 
-[
+```math
 B_{b^\star}
-]
+```
 
-and
+and:
 
-[
-A_{a^\star}.
-]
+```math
+A_{a^\star}
+```
 
-Then it places quotes one tick inside those levels:
+Then it places quotes one tick inside those levels.
 
-[
-\boxed{
-p_b = B_{b^\star}+\epsilon
-}
-]
+The final bid quote is:
 
-[
-\boxed{
-p_a = A_{a^\star}-\epsilon
-}
-]
+```math
+p_b = B_{b^\star} + \epsilon
+```
+
+The final ask quote is:
+
+```math
+p_a = A_{a^\star} - \epsilon
+```
 
 This means the bid quote is slightly more aggressive than the selected bid level, and the ask quote is slightly more aggressive than the selected ask level.
 
@@ -287,45 +285,65 @@ This means the bid quote is slightly more aggressive than the selected bid level
 
 The algorithm also reports the distance of each quote from the mid-price.
 
-The bid-side spread is
+The bid-side spread is defined as:
 
-[
-s_b = m - p_b.
-]
+```math
+s_b = m - p_b
+```
 
-Using the final bid quote,
+Since the final bid quote is:
 
-[
-s_b = m - \left(B_{b^\star}+\epsilon\right).
-]
+```math
+p_b = B_{b^\star} + \epsilon
+```
 
-The ask-side spread is
+we obtain:
 
-[
-s_a = p_a - m.
-]
+```math
+s_b = m - \left(B_{b^\star} + \epsilon\right)
+```
 
-Using the final ask quote,
+Therefore:
 
-[
-s_a = \left(A_{a^\star}-\epsilon\right) - m.
-]
-
-Therefore,
-
-[
-\boxed{
+```math
 s_b = m - B_{b^\star} - \epsilon
-}
-]
+```
 
-and
+The ask-side spread is defined as:
 
-[
-\boxed{
-s_a = A_{a^\star} - \epsilon - m.
-}
-]
+```math
+s_a = p_a - m
+```
+
+Since the final ask quote is:
+
+```math
+p_a = A_{a^\star} - \epsilon
+```
+
+we obtain:
+
+```math
+s_a = \left(A_{a^\star} - \epsilon\right) - m
+```
+
+Therefore:
+
+```math
+s_a = A_{a^\star} - \epsilon - m
+```
+
+So the reported spreads are:
+
+```math
+s_b = m - B_{b^\star} - \epsilon
+```
+
+and:
+
+```math
+s_a = A_{a^\star} - \epsilon - m
+```
 
 ---
 
@@ -333,52 +351,121 @@ s_a = A_{a^\star} - \epsilon - m.
 
 The full algorithm can be summarized as:
 
-[
-q
-\longrightarrow
-d_q
-\longrightarrow
-\mathcal{P}(d_q,D)
-\longrightarrow
-(b^\star,a^\star)
-\longrightarrow
-(p_b,p_a).
-]
+```text
+q -> d_q -> P(d_q,D) -> (b*,a*) -> (p_b,p_a)
+```
 
-More explicitly:
+More explicitly, the inventory index is:
 
-[
+```math
 d_q =
 \operatorname{int}
 \left(
 10
-\frac{q-q_{\min}}{q_{\max}-q_{\min}}
+\frac{q - q_{\min}}{q_{\max} - q_{\min}}
 \right)
--5,
-]
+- 5
+```
 
-[
+The selected level pair is:
+
+```math
 (b^\star,a^\star)
-=================
+=
+\text{last feasible candidate pair}
+```
 
-\text{last feasible candidate pair},
-]
+subject to:
 
-subject to
+```math
+B_{b^\star} + \epsilon < A_{a^\star} - \epsilon
+```
 
-[
-B_{b^\star}+\epsilon < A_{a^\star}-\epsilon.
-]
+The final bid and ask quotes are:
 
-The final quotes are
+```math
+p_b = B_{b^\star} + \epsilon
+```
 
-[
-p_b = B_{b^\star}+\epsilon,
-]
+```math
+p_a = A_{a^\star} - \epsilon
+```
 
-[
-p_a = A_{a^\star}-\epsilon.
-]
+---
+
+## Algorithm 1 pseudocode
+
+```text
+Input:
+    order book ob
+    current inventory q
+    inventory limits q_min, q_max
+    tick size epsilon
+    maximum usable depth D
+
+Step 1:
+    Compute inventory index:
+
+    d_q = int(10 * (q - q_min) / (q_max - q_min)) - 5
+
+Step 2:
+    Generate candidate level pairs:
+
+    pairs = P(d_q, D)
+
+Step 3:
+    Initialize:
+
+    bid_level = D
+    ask_level = D
+
+Step 4:
+    For each candidate pair (b_k, a_k):
+
+        If spread condition is valid:
+
+            B_{b_k} + epsilon < A_{a_k} - epsilon
+
+        then:
+
+            bid_level = b_k
+            ask_level = a_k
+
+        else:
+
+            stop the search
+
+Step 5:
+    Clip selected levels:
+
+    bid_level = min(max(bid_level, 0), D)
+    ask_level = min(max(ask_level, 0), D)
+
+Step 6:
+    Construct final quotes:
+
+    bid_price = B_{bid_level} + epsilon
+    ask_price = A_{ask_level} - epsilon
+
+Step 7:
+    Compute mid-price:
+
+    mid_price = (B_0 + A_0) / 2
+
+Step 8:
+    Compute reported spreads:
+
+    bid_spread = mid_price - bid_price
+    ask_spread = ask_price - mid_price
+
+Output:
+    bid_price
+    ask_price
+    bid_level
+    ask_level
+    bid_spread
+    ask_spread
+```
 
 ---
 
@@ -424,19 +511,19 @@ This repository also includes an implementation of the Avellaneda–Stoikov opti
 
 In the Avellaneda–Stoikov framework:
 
-* The mid-price is modeled as a stochastic process.
-* Order arrivals depend on quote distance from the mid-price.
-* The market maker chooses bid and ask quotes to maximize expected utility.
-* The utility function balances expected profit against inventory risk.
+* The mid-price is modeled as a stochastic process
+* Order arrivals depend on quote distance from the mid-price
+* The market maker chooses bid and ask quotes to maximize expected utility
+* The utility function balances expected profit against inventory risk
 
 The model produces an optimal reservation price and optimal bid/ask spreads.
 
 Compared with Algorithm 1:
 
-* Algorithm 1 is deterministic and order-book based.
-* Avellaneda–Stoikov is stochastic and model-based.
-* Algorithm 1 is easier to implement and interpret.
-* Avellaneda–Stoikov provides a stronger theoretical benchmark.
+* Algorithm 1 is deterministic and order-book based
+* Avellaneda–Stoikov is stochastic and model-based
+* Algorithm 1 is easier to implement and interpret
+* Avellaneda–Stoikov provides a stronger theoretical benchmark
 
 ---
 
@@ -472,7 +559,7 @@ python demo_usdt.py
 
 Before running the demos, check the configuration file:
 
-```sh
+```text
 Config.py
 ```
 
