@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-from Config import MMConfig
+from config import MMConfig
 from strategy.base import Strategy
 
 

@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from Order_Statuse import OrderStatusChecker, OrderCanceller
+from order_status import OrderStatusChecker, OrderCanceller
 from exchange.base import ExchangeClient
 
 

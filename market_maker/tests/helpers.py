@@ -10,8 +10,8 @@ construction lines `__init__` would have run. This is a test seam only --
 production code is untouched.
 """
 
-from Algo1 import SimpleMarketMaker
-from strategy.algo1_strategy import Algo1Strategy
+from engine import SimpleMarketMaker
+from strategy.algo1 import Algo1Strategy
 
 
 def make_bot(cfg):

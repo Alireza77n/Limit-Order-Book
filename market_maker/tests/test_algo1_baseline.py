@@ -15,7 +15,7 @@ environment (see refactor plan / structural report).
 
 import pytest
 
-from Config import MMConfig
+from config import MMConfig
 from helpers import make_bot, make_orderbook
 
 

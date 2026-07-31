@@ -9,8 +9,8 @@ change behavior.
 
 import pytest
 
-from Config import MMConfig
-from strategy.algo1_strategy import Algo1Strategy
+from config import MMConfig
+from strategy.algo1 import Algo1Strategy
 from helpers import make_orderbook
 
 

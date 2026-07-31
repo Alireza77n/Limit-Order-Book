@@ -6,10 +6,10 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple, List, Set  # add Set
 import pandas as pd
 
-from Config import MMConfig
-from Portfolio import Nobitex_portfolio
+from config import MMConfig
+from portfolio import Nobitex_portfolio
 from strategy.base import Strategy
-from strategy.algo1_strategy import Algo1Strategy
+from strategy.algo1 import Algo1Strategy
 from exchange.base import ExchangeClient
 import pytz
 from datetime import datetime, timedelta
@@ -162,7 +162,7 @@ class SimpleMarketMaker:
         return self.exchange.get_orderbook(symbol or self.cfg.pair)
 
     # ---------- Microstructure helpers ----------
-    # NOTE: the actual quoting logic lives in Algo1Strategy (strategy/algo1_strategy.py).
+    # NOTE: the actual quoting logic lives in Algo1Strategy (strategy/algo1.py).
     # These wrappers exist so existing internal call sites (_tick_size(), _depth_cap(ob),
     # etc.) and the baseline characterization tests keep working unchanged.
     def _depth_cap(self, ob: Dict[str, Any]) -> int:

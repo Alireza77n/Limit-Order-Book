@@ -7,9 +7,9 @@ and clearly rather than silently returning a made-up quote.
 
 import pytest
 
-from Config import MMConfig
+from config import MMConfig
 from strategy.base import Strategy
-from strategy.algo2_strategy import Algo2Strategy
+from strategy.algo2 import Algo2Strategy
 from helpers import make_orderbook
 
 
