@@ -23,7 +23,6 @@ currency_2="rls",       # quote (cash)
 time_step=60,
 time_horizon_days=1,
 max_rounds=500,
-token=cfg.token,
 inv_initial = 0.0001888,
 order_size=0.000015,
 cash_initial =30000000 ,
