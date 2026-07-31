@@ -161,22 +161,32 @@ still raises `NotImplementedError` in demo mode exactly as in real mode.
 
 ---
 
-## 2. Automated tests (no account, no money, no database)
-
-**The only mode that's actually safe to run without a real Nobitex account
-or MySQL server.** This is how to validate changes to the quoting logic.
+## 2. Automated tests
 
 ```sh
 cd market_maker/tests
 python3 -m pytest -q
 ```
 
-60 tests, all pure Python -- no network, no database, nothing touches
-Nobitex. See README.md's "Testing" section for what's covered (both
-algorithms' strategy logic, env-var config sourcing, `DemoExchangeClient`'s
-simulated fills, the `persist_to_db` flag, the dashboard's CSV/session
-handling) and what isn't (`run()`, `NobitexExchangeClient.send_order`,
-`save_to_db` -- anything that's inherently live).
+62 tests. **60 are pure Python** (no network, no database, nothing touches
+Nobitex) covering both algorithms' strategy logic, env-var config
+sourcing, `DemoExchangeClient`'s simulated fills, the `persist_to_db`
+flag, and the dashboard's CSV/session handling. **The other 2
+(`test_demo_end_to_end.py`) make real network calls** to Nobitex's public
+orderbook endpoint (no auth, read-only, nothing placed) and actually run
+the full `run()` loop for 2 rounds, once per profile (BTC, USDT), with
+`NobitexExchangeClient.send_order` monkeypatched to raise if it's ever
+called -- proving demo mode's real control flow, not just its pieces in
+isolation, never places a real order. These two skip cleanly (not fail)
+if the network is unreachable, and add ~10-20s to the run since each
+round is a real request.
+
+Still nothing here needs a real Nobitex account, MySQL, or places real
+orders -- this remains the only mode safe to run without either.
+
+See README.md's "Testing" section for the full breakdown of what's
+covered and what isn't (`run()` beyond 2 rounds, `send_order` against
+Nobitex itself, `save_to_db` -- anything inherently live and unbounded).
 
 ---
 
@@ -194,13 +204,25 @@ runs. Read-only against the CSVs; doesn't touch Nobitex or MySQL itself,
 and auto-refreshes every 20 seconds so it's safe to leave open while a
 real `run.py` or `--mode demo` session is writing to the same file.
 
+**Layout:** a toolbar card (track picker, session picker, a colored
+real/demo status badge with icon + label -- never color alone) sits above
+five chart cards and an activity-table card, all on a shared light
+surface with consistent spacing, a system-UI font, and a fixed
+categorical color palette (never Plotly's default color cycle). Every
+line chart uses `hovermode="x unified"` for a crosshair-style tooltip.
+
 Pick a **track** (which CSV) and a **session** (a specific run, or "All
-sessions" to compare multiple runs on one chart), then review:
+sessions (compare)" to overlay multiple runs, colored by session), then
+review five separate charts -- each on its own single axis, since mixing
+differently-scaled measures on one axis (e.g. BTC amounts vs. IRT cash,
+or depth-level integers vs. price spreads) makes both unreadable:
 
 * **Portfolio wealth** over time (colored by session when comparing).
-* **Inventory & cash** over time.
-* **Selected depth levels & derived spreads** — `Bid Level`/`Ask Level`
-  are logged directly; `Bid Spread`/`Ask Spread` are computed from
+* **Inventory** over time (base currency, e.g. BTC amount).
+* **Cash** over time (quote currency, e.g. IRT amount) -- its own chart,
+  not sharing an axis with inventory.
+* **Selected depth levels** — `Bid Level`/`Ask Level`, logged directly.
+* **Quoted spreads** — `Bid Spread`/`Ask Spread`, computed from
   already-logged `Best Bid`/`Best Ask`/`Bid Price Sent`/`Ask Price Sent`
   using the same formulas as README.md's Algorithm 1 "Step 5: Reported
   spreads" section -- nothing new is collected, this is a view over

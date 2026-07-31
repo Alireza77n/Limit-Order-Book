@@ -1,8 +1,8 @@
 """Comprehensive history dashboard -- replaces live_plot.py.
 
 Reads the CSV files run.py writes (real and demo, BTC and USDT) and
-serves a live-updating Dash app: portfolio wealth, inventory & cash,
-selected bid/ask depth levels with derived spreads, and a browsable
+serves a live-updating Dash app: portfolio wealth, inventory, cash,
+selected bid/ask depth levels, derived spreads, and a browsable
 order-activity table, with a session picker for reviewing/comparing past
 runs. Read-only against the CSVs -- never touches Nobitex or MySQL, so
 it's safe to leave running against real or demo output alike.
@@ -11,13 +11,20 @@ Pure data-handling functions (load_track, with_derived_spreads,
 session_ids, filter_session) are kept separate from the Dash app wiring
 below so they can be unit-tested without starting a server -- see
 tests/test_dashboard.py.
+
+Chart design follows a fixed categorical palette (never Plotly's default
+color cycle) and puts each differently-scaled measure on its own chart --
+inventory (base currency, e.g. BTC) and cash (quote currency, e.g. IRT)
+differ by many orders of magnitude, as do depth levels (small integers)
+and price spreads, so each gets its own single-axis chart rather than
+being crammed onto one dual-scale plot.
 """
 
 from pathlib import Path
 from typing import List, Optional
 
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 from dash import Dash, dash_table, dcc, html
 from dash.dependencies import Input, Output
 
@@ -26,12 +33,12 @@ from run import PROFILES, _demo_csv_path
 # Every track this project can produce, explicitly labeled real vs demo so
 # they're never confused with each other in the UI.
 TRACKS = {
-    "btc_real": {"label": "BTC — Real", "path": PROFILES["btc"]["output_csv"]},
+    "btc_real": {"label": "BTC — Real", "path": PROFILES["btc"]["output_csv"], "status": "real"},
     "btc_demo": {"label": "BTC — Demo (paper trading)",
-                 "path": _demo_csv_path(PROFILES["btc"]["output_csv"])},
-    "usdt_real": {"label": "USDT — Real", "path": PROFILES["usdt"]["output_csv"]},
+                 "path": _demo_csv_path(PROFILES["btc"]["output_csv"]), "status": "demo"},
+    "usdt_real": {"label": "USDT — Real", "path": PROFILES["usdt"]["output_csv"], "status": "real"},
     "usdt_demo": {"label": "USDT — Demo (paper trading)",
-                  "path": _demo_csv_path(PROFILES["usdt"]["output_csv"])},
+                  "path": _demo_csv_path(PROFILES["usdt"]["output_csv"]), "status": "demo"},
 }
 
 ACTIVITY_COLUMNS = [
@@ -40,6 +47,22 @@ ACTIVITY_COLUMNS = [
     "Buy Size", "Buy Sent", "Buy Status",
     "Sell Size", "Sell Sent", "Sell Status",
 ]
+
+# ---------- Design tokens (dataviz skill: validated reference palette) ----------
+# Categorical slots 1/2/3 (blue/orange/aqua) -- these three clear the
+# all-pairs CVD/normal-vision floors together, so charts with up to three
+# series never need to fold into "Other".
+SERIES = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+SURFACE = "#fcfcfb"
+PAGE = "#f9f9f7"
+TEXT_PRIMARY = "#0b0b0b"
+TEXT_SECONDARY = "#52514e"
+MUTED = "#898781"
+GRIDLINE = "#e1e0d9"
+BASELINE = "#c3c2b7"
+STATUS_CRITICAL = "#d03b3b"  # real money -- draws the eye
+STATUS_GOOD = "#0ca30c"      # demo/paper -- safe
+FONT_FAMILY = "system-ui, -apple-system, 'Segoe UI', sans-serif"
 
 
 # ---------- Pure data handling (unit-tested, no Dash involved) ----------
@@ -87,43 +110,148 @@ def filter_session(df: pd.DataFrame, session_id) -> pd.DataFrame:
     return df[df["Session_id"] == session_id]
 
 
+# ---------- Chart helpers ----------
+
+def _empty_fig(message: str) -> go.Figure:
+    fig = go.Figure()
+    fig.add_annotation(text=message, showarrow=False, font=dict(color=MUTED, size=14))
+    return _style(fig, message)
+
+
+def _style(fig: go.Figure, title: str) -> go.Figure:
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=15, color=TEXT_PRIMARY)),
+        paper_bgcolor=SURFACE,
+        plot_bgcolor=SURFACE,
+        font=dict(family=FONT_FAMILY, color=TEXT_SECONDARY, size=12),
+        hovermode="x unified",
+        margin=dict(l=48, r=24, t=48, b=36),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+    )
+    fig.update_xaxes(gridcolor=GRIDLINE, linecolor=BASELINE, showline=True, zeroline=False)
+    fig.update_yaxes(gridcolor=GRIDLINE, linecolor=BASELINE, showline=True, zeroline=False)
+    return fig
+
+
+def _line_chart(df: pd.DataFrame, y_columns: List[str], title: str,
+                 color_by: Optional[str] = None) -> go.Figure:
+    """One measure family per chart (single y-axis). If color_by is set
+    (session comparison), each session gets its own trace per y-column;
+    otherwise each y-column gets one fixed categorical color."""
+    fig = go.Figure()
+    if color_by:
+        for i, (session, group) in enumerate(df.groupby(color_by)):
+            col = y_columns[0]
+            fig.add_trace(go.Scatter(
+                x=group["Timestamp"], y=group[col], mode="lines+markers",
+                name=str(session), line=dict(color=SERIES[i % len(SERIES)], width=2),
+                marker=dict(size=5),
+            ))
+    else:
+        for i, col in enumerate(y_columns):
+            fig.add_trace(go.Scatter(
+                x=df["Timestamp"], y=df[col], mode="lines", name=col,
+                line=dict(color=SERIES[i % len(SERIES)], width=2),
+            ))
+    return _style(fig, title)
+
+
+def _status_badge(status: str) -> html.Span:
+    if status == "real":
+        color, icon, text = STATUS_CRITICAL, "●", "REAL — places real orders"
+    else:
+        color, icon, text = STATUS_GOOD, "●", "DEMO — simulated, no real orders"
+    return html.Span([icon + " ", text], style={
+        "color": color, "fontWeight": 600, "fontSize": "0.85rem",
+        "border": f"1px solid {color}", "borderRadius": "999px",
+        "padding": "0.25rem 0.75rem", "display": "inline-block",
+    })
+
+
+def _card(*children) -> html.Div:
+    return html.Div(children, style={
+        "background": SURFACE, "border": f"1px solid {GRIDLINE}",
+        "borderRadius": "12px", "padding": "1.25rem",
+        "boxShadow": "0 1px 3px rgba(11,11,11,0.06)", "marginBottom": "1.25rem",
+    })
+
+
 # ---------- Dash app ----------
 
 app = Dash(__name__)
 app.title = "Market-Making Dashboard"
 
 app.layout = html.Div([
-    html.H2("Market-Making History Dashboard"),
     html.Div([
-        html.Label("Track"),
-        dcc.Dropdown(
-            id="track",
-            options=[{"label": v["label"], "value": k} for k, v in TRACKS.items()],
-            value="btc_real",
-            clearable=False,
+        html.H1("Market-Making History Dashboard", style={
+            "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.5rem", "margin": 0,
+        }),
+        html.P(
+            "Real Nobitex market data, Algorithm 1 quoting decisions, and every "
+            "round's outcome -- real and demo runs always clearly labeled.",
+            style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "marginTop": "0.4rem"},
         ),
-        html.Label("Session"),
-        dcc.Dropdown(id="session", clearable=False),
-    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1rem", "maxWidth": "600px"}),
+    ], style={"marginBottom": "1.5rem"}),
 
-    html.Div(id="status"),
+    _card(
+        html.Div([
+            html.Div([
+                html.Label("Track", style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY,
+                                            "fontSize": "0.85rem", "fontWeight": 600}),
+                dcc.Dropdown(
+                    id="track",
+                    options=[{"label": v["label"], "value": k} for k, v in TRACKS.items()],
+                    value="btc_real", clearable=False,
+                ),
+            ]),
+            html.Div([
+                html.Label("Session", style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY,
+                                              "fontSize": "0.85rem", "fontWeight": 600}),
+                dcc.Dropdown(id="session", clearable=False),
+            ]),
+            html.Div(id="status-badge", style={"display": "flex", "alignItems": "flex-end"}),
+        ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr auto", "gap": "1.5rem",
+                   "alignItems": "start"}),
+        html.Div(id="status-text", style={
+            "color": MUTED, "fontFamily": FONT_FAMILY, "fontSize": "0.85rem", "marginTop": "0.75rem",
+        }),
+    ),
 
-    dcc.Graph(id="wealth-chart"),
-    dcc.Graph(id="inventory-chart"),
-    dcc.Graph(id="levels-chart"),
+    _card(dcc.Graph(id="wealth-chart", config={"displaylogo": False})),
 
-    html.H3("Order activity"),
-    dash_table.DataTable(
-        id="activity-table",
-        columns=[{"name": c, "id": c} for c in ACTIVITY_COLUMNS],
-        page_size=20,
-        sort_action="native",
-        filter_action="native",
-        style_table={"overflowX": "auto"},
+    html.Div([
+        _card(dcc.Graph(id="inventory-chart", config={"displaylogo": False})),
+        _card(dcc.Graph(id="cash-chart", config={"displaylogo": False})),
+    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1.25rem"}),
+
+    html.Div([
+        _card(dcc.Graph(id="levels-chart", config={"displaylogo": False})),
+        _card(dcc.Graph(id="spreads-chart", config={"displaylogo": False})),
+    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1.25rem"}),
+
+    _card(
+        html.H3("Order activity", style={
+            "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.1rem", "marginTop": 0,
+        }),
+        dash_table.DataTable(
+            id="activity-table",
+            columns=[{"name": c, "id": c} for c in ACTIVITY_COLUMNS],
+            page_size=20,
+            sort_action="native",
+            filter_action="native",
+            style_table={"overflowX": "auto"},
+            style_header={"backgroundColor": PAGE, "fontWeight": 600, "color": TEXT_PRIMARY,
+                           "fontFamily": FONT_FAMILY, "border": f"1px solid {GRIDLINE}"},
+            style_cell={"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.85rem",
+                        "border": f"1px solid {GRIDLINE}", "padding": "0.5rem"},
+            style_data_conditional=[
+                {"if": {"row_index": "odd"}, "backgroundColor": PAGE},
+            ],
+        ),
     ),
 
     dcc.Interval(id="tick", interval=20_000, n_intervals=0),  # auto-refresh every 20s
-])
+], style={"background": PAGE, "padding": "1.5rem 2rem", "minHeight": "100vh"})
 
 
 @app.callback(Output("session", "options"), Output("session", "value"),
@@ -133,17 +261,24 @@ def refresh_session_options(track_key, _):
     if df is None:
         return [], None
     ids = session_ids(df)
-    options = [{"label": "All sessions", "value": "all"}] + [
+    options = [{"label": "All sessions (compare)", "value": "all"}] + [
         {"label": str(s), "value": s} for s in ids
     ]
     return options, ids[0] if ids else "all"
 
 
+@app.callback(Output("status-badge", "children"), Input("track", "value"))
+def refresh_status_badge(track_key):
+    return _status_badge(TRACKS[track_key]["status"])
+
+
 @app.callback(
-    Output("status", "children"),
+    Output("status-text", "children"),
     Output("wealth-chart", "figure"),
     Output("inventory-chart", "figure"),
+    Output("cash-chart", "figure"),
     Output("levels-chart", "figure"),
+    Output("spreads-chart", "figure"),
     Output("activity-table", "data"),
     Input("track", "value"),
     Input("session", "value"),
@@ -151,36 +286,32 @@ def refresh_session_options(track_key, _):
 )
 def refresh_dashboard(track_key, session_id, _):
     track = TRACKS[track_key]
-    empty = px.line(title="Waiting for data...")
+    waiting = _empty_fig("Waiting for data...")
 
     df = load_track(track["path"])
     if df is None:
-        return (f"No data yet for {track['label']} ({track['path']}).",
-                empty, empty, empty, [])
+        msg = f"No data yet for {track['label']} ({track['path']})."
+        return msg, waiting, waiting, waiting, waiting, waiting, []
 
     df = filter_session(df, session_id)
     if df.empty:
-        return "No rows for the selected session.", empty, empty, empty, []
+        msg = "No rows for the selected session."
+        return msg, waiting, waiting, waiting, waiting, waiting, []
 
-    df = with_derived_spreads(df)
-    color = "Session_id" if session_id in (None, "all") else None
+    df = with_derived_spreads(df).sort_values("Timestamp")
+    comparing = session_id in (None, "all")
 
-    wealth_fig = px.line(df, x="Timestamp", y="Portfolio Wealth", color=color, markers=True)
-    wealth_fig.update_layout(title="Portfolio wealth", xaxis_title="Time", yaxis_title="Wealth")
-
-    inv_fig = px.line(df, x="Timestamp", y=["inv_current", "cash_current"])
-    inv_fig.update_layout(title="Inventory & cash", xaxis_title="Time", yaxis_title="Value")
-
-    levels_fig = px.line(df, x="Timestamp", y=["Bid Level", "Ask Level", "Bid Spread", "Ask Spread"])
-    levels_fig.update_layout(title="Selected depth levels & derived spreads",
-                              xaxis_title="Time", yaxis_title="Level / Spread")
+    wealth_fig = _line_chart(df, ["Portfolio Wealth"], "Portfolio wealth",
+                              color_by="Session_id" if comparing else None)
+    inv_fig = _line_chart(df, ["inv_current"], "Inventory (base currency)")
+    cash_fig = _line_chart(df, ["cash_current"], "Cash (quote currency)")
+    levels_fig = _line_chart(df, ["Bid Level", "Ask Level"], "Selected depth levels")
+    spreads_fig = _line_chart(df, ["Bid Spread", "Ask Spread"], "Quoted spreads")
 
     activity = df[ACTIVITY_COLUMNS].sort_values("Timestamp", ascending=False).head(200)
-    status = f"{track['label']} — {len(df)} rows" + (
-        "" if session_id in (None, "all") else f" (session {session_id})"
-    )
+    status = f"{len(df)} rows" + ("" if comparing else f" — session {session_id}")
 
-    return status, wealth_fig, inv_fig, levels_fig, activity.to_dict("records")
+    return status, wealth_fig, inv_fig, cash_fig, levels_fig, spreads_fig, activity.to_dict("records")
 
 
 if __name__ == "__main__":

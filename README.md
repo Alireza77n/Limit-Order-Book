@@ -713,7 +713,9 @@ If you're missing `market_maker/.env`, copy `market_maker/.env.example` and fill
 
 Full details — environment setup, every way to run the bot (which modes touch a real account/real money and which don't), and how to run the test suite — are in **[usage.md](usage.md)**, kept as its own document so this README stays focused on what the project *is* rather than how to operate it.
 
-Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with simulated fills instead — no real orders, no MySQL required (see usage.md §1b). The test suite (`cd market_maker/tests && pytest -q`) needs neither a real account nor MySQL either way.
+Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with simulated fills instead — no real orders, no MySQL required (see usage.md §1b). The test suite (`cd market_maker/tests && pytest -q`) needs neither a real account nor MySQL either way — 2 of its 62 tests do make real (read-only) network calls to end-to-end verify demo mode, and skip cleanly if offline.
+
+A comprehensive, live-updating history dashboard (`python dashboard.py`) covers wealth, inventory, cash, depth levels, and spreads for every real/demo × BTC/USDT combination — see usage.md §3.
 
 ---
 
