@@ -8,11 +8,8 @@ __pycache__/
 .env
 *.local
 
-# Analysis, audit, and migration reports (local only, never pushed)
+# Local analysis notes (never pushed)
 /reports/
-/*.report.md
-/*_AUDIT.md
-/*_REPORT.md
 
 # Data outputs the bot writes at runtime
 *.csv
