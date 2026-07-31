@@ -32,26 +32,33 @@ MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "trading_bot")
 
 class SimpleMarketMaker:
     def __init__(self, cfg: MMConfig, nobi_portfo: Nobitex_portfolio, exchange: ExchangeClient,
-                 strategy: Optional[Strategy] = None):
+                 strategy: Optional[Strategy] = None, persist_to_db: bool = True):
         self.cfg = cfg
         self.recent_order_ids: List[str] = []
         self.tracked_orders: Dict[str, Set[str]] = {"buy": set(), "sell": set()}
         self.csv_path = cfg.output_csv
         self.nobi_portfo = nobi_portfo
-        self.algorithm_id = cfg.algorithm_id 
+        self.algorithm_id = cfg.algorithm_id
         self.pair=cfg.pair
         self.inv_initial = cfg.inv_initial
         self.cash_initial = cfg.cash_initial
         self.session=cfg.session
-        
-         #Connect to MySQL (use your existing DB)
-        self.conn = mysql.connector.connect(
-            host=MYSQL_HOST,
-            user=MYSQL_USER,
-            password=MYSQL_PASSWORD,
-            database=MYSQL_DATABASE
-        )
-        self.cursor = self.conn.cursor()
+        self.persist_to_db = persist_to_db
+
+        # Connect to MySQL (use your existing DB) -- skipped entirely in
+        # demo/paper-trading mode so a demo run never touches the real
+        # trading DB and doesn't require a live MySQL server at all.
+        if self.persist_to_db:
+            self.conn = mysql.connector.connect(
+                host=MYSQL_HOST,
+                user=MYSQL_USER,
+                password=MYSQL_PASSWORD,
+                database=MYSQL_DATABASE
+            )
+            self.cursor = self.conn.cursor()
+        else:
+            self.conn = None
+            self.cursor = None
         self.exchange = exchange
         self.strategy = strategy if strategy is not None else Algo1Strategy(self.cfg)
         if self.cfg.exp_ret_min is None:
@@ -433,12 +440,13 @@ class SimpleMarketMaker:
 
         
 
-        # Insert new session
-        self.cursor.execute("""
-            INSERT INTO sessions (session_id, algorithm_id, crypto)
-            VALUES (%s, %s, %s)
-        """, (self.session, self.algorithm_id, self.pair))
-        self.conn.commit()
+        # Insert new session (skipped in demo/paper-trading mode)
+        if self.persist_to_db:
+            self.cursor.execute("""
+                INSERT INTO sessions (session_id, algorithm_id, crypto)
+                VALUES (%s, %s, %s)
+            """, (self.session, self.algorithm_id, self.pair))
+            self.conn.commit()
     
         # Columns (now include order size columns)
         columns = [
@@ -634,8 +642,8 @@ class SimpleMarketMaker:
             # Replace NaN with None so MySQL gets NULL instead of "nan"
             order_df = order_df.where(pd.notnull(order_df), None)
 
-
-            self.save_to_db(order_df)
+            if self.persist_to_db:
+                self.save_to_db(order_df)
         finally:
             print("Cancelling all open orders before exit...")
             try:
@@ -658,8 +666,8 @@ class SimpleMarketMaker:
         order_df = order_df.where(pd.notnull(order_df), None)
         #print("Current DataFrame columns:", order_df.columns.tolist())
 
-
-        self.save_to_db(order_df)
+        if self.persist_to_db:
+            self.save_to_db(order_df)
         return order_df
 
 

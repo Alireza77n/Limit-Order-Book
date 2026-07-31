@@ -5,19 +5,19 @@ project *is* and how it's architected, see [README.md](README.md).
 
 ## Quick reference
 
-| Mode | Command | Real Nobitex account? | Real money? | Needs live MySQL? |
+| Mode | Command | Real market data? | Real orders placed? | Needs live MySQL? |
 |---|---|---|---|---|
-| [Live trading](#1-live-trading-real-money-real-account) | `python run.py --profile btc\|usdt` | **Yes** | **Yes** | **Yes** |
+| [Live trading](#1-live-trading-real-money-real-account) | `python run.py --profile btc\|usdt` | Yes | **Yes -- real money** | **Yes** |
+| [Demo / paper trading](#1b-demo-mode-real-market-data-simulated-orders) | `python run.py --profile btc\|usdt --mode demo` | **Yes** | No -- simulated | No |
 | [Automated tests](#2-automated-tests-no-account-no-money-no-database) | `pytest -q` | No | No | No |
 | [Live PnL chart](#3-live-pnl-chart) | `python live_plot.py` | No (reads a local CSV) | No | No |
 | [Research notebooks](#4-research-notebooks-read-only) | open in Jupyter | No | No | No |
 
-**There is no demo/paper/sandbox account mode.** This is true both here and
-on `main`: `demo_btc.py`/`demo_usdt.py` (this branch's `run.py --profile
-btc/usdt`) were never a simulated account -- "demo" in their old filenames
-meant "example script," not "demo account." Every run against Nobitex uses
-one real API token and places real orders. See
-[§5](#5-why-theres-no-demo-mode-today) if you want one added.
+Note on terminology: `demo_btc.py`/`demo_usdt.py` (this branch's `run.py
+--profile btc/usdt --mode real`, the default) were **never** a simulated
+account, on this branch or on `main` -- "demo" in their old filenames meant
+"example script." `--mode demo` below is a real, new capability, distinct
+from that old naming.
 
 ---
 
@@ -92,9 +92,11 @@ python run.py --help
 ```
 
 ```text
---profile {btc,usdt}     Currency-pair configuration to run. Required.
+--profile {btc,usdt}       Currency-pair configuration to run. Required.
 --algorithm {algo1,algo2}  Quoting strategy. Default: algo1.
---exchange {nobitex}       Exchange to trade on. Default: nobitex.
+--exchange {nobitex}       Exchange providing real market data. Default: nobitex.
+--mode {real,demo}         real: real orders, needs MySQL (default).
+                           demo: simulated orders, no MySQL -- see §1b.
 ```
 
 Adding a new profile/algorithm/exchange is a registry entry in `run.py`,
@@ -109,6 +111,56 @@ skips this cleanup and can leave open orders on the exchange.
 
 ---
 
+## 1b. Demo mode (real market data, simulated orders)
+
+`--mode demo` runs the exact same Algorithm 1 decision logic against the
+exact same real, live Nobitex order book -- the only thing that changes is
+what happens after a quote is decided:
+
+- **Order book, prices, spreads: real.** `DemoExchangeClient` delegates
+  `get_orderbook`/`wallet_balance` straight to the real Nobitex client.
+  Nothing about how a quote is computed changes.
+- **Orders: simulated, never sent to Nobitex.** Instead of calling
+  Nobitex's order-placement endpoint, a simulated order is recorded
+  locally and reported back as instantly and fully filled. No real order
+  is ever placed; no real money moves.
+- **No MySQL required.** `persist_to_db=False` in demo mode -- the engine
+  never opens a database connection.
+- **Results still saved completely** -- to a separate CSV so demo runs
+  never mix with real trading history: `btc_track.csv` → `btc_track_demo.csv`
+  (same for USDT). Every column real mode logs (inventory, cash, portfolio
+  wealth, bid/ask levels and prices, buy/sell size and status, timestamps)
+  is logged identically in demo mode.
+
+```sh
+cd market_maker
+python run.py --profile btc  --mode demo    # paper trade BTCIRT
+python run.py --profile usdt --mode demo    # paper trade USDTIRT
+```
+
+**Run both at once:** each `run()` is a self-contained blocking loop with
+its own state (own CSV, own session) -- there's no shared state between a
+BTC run and a USDT run. Running both simultaneously just means two
+separate process invocations, e.g. in two terminals (or backgrounded):
+
+```sh
+cd market_maker
+python run.py --profile btc  --mode demo &
+python run.py --profile usdt --mode demo &
+```
+
+**Simplification, stated plainly:** demo fills assume the full requested
+amount executes instantly at the quoted price -- no partial fills, no
+slippage, no queue position or latency modeling. This is a reasonable
+first approximation for exercising the strategy against real prices, not
+a fill-probability model. See `exchange/demo.py`'s docstring for the
+upgrade path if that matters for your use case.
+
+Only `--algorithm algo1` is meaningful today (the current goal); `algo2`
+still raises `NotImplementedError` in demo mode exactly as in real mode.
+
+---
+
 ## 2. Automated tests (no account, no money, no database)
 
 **The only mode that's actually safe to run without a real Nobitex account
@@ -119,10 +171,12 @@ cd market_maker/tests
 python3 -m pytest -q
 ```
 
-46 tests, all pure Python -- no network, no database, nothing touches
+53 tests, all pure Python -- no network, no database, nothing touches
 Nobitex. See README.md's "Testing" section for what's covered (both
-algorithms' strategy logic, env-var config sourcing) and what isn't
-(`run()`, `send_order`, `save_to_db` -- anything that's inherently live).
+algorithms' strategy logic, env-var config sourcing, `DemoExchangeClient`'s
+simulated fills, the `persist_to_db` flag) and what isn't (`run()`,
+`NobitexExchangeClient.send_order`, `save_to_db` -- anything that's
+inherently live).
 
 ---
 
@@ -158,21 +212,15 @@ don't place orders or touch any live account.
 
 ---
 
-## 5. Why there's no demo mode today
+## 5. What demo mode does not do
 
-Two separate things would need to exist for a real paper-trading mode,
-neither does yet:
+Kept here for anyone comparing against the state before `--mode demo`
+existed, and as an honest limitations list:
 
-1. **A simulated exchange** -- an `ExchangeClient` implementation that
-   fakes fills against a recorded/replayed order book instead of calling
-   Nobitex, so `--exchange demo` (or similar) could sit next to
-   `--exchange nobitex` with zero engine changes (the `ExchangeClient`
-   interface already supports this -- see README.md's "Extending"
-   section).
-2. **A persistence path that doesn't require MySQL** -- `SimpleMarketMaker.__init__`
-   unconditionally opens a real MySQL connection today, so even a fully
-   simulated exchange couldn't be constructed without one.
-
-Both are additive (new code, new classes) and wouldn't touch Algorithm 1's
-existing quoting logic or the real Nobitex path at all. Not built here --
-ask if you want this scoped as its own piece of work.
+- No fill-probability, slippage, or queue-position modeling -- see §1b.
+- No simulated wallet balance -- `wallet_balance()` in demo mode returns
+  the real account's real balance (read-only, no risk), it isn't tracked
+  as a simulated portfolio separately from `inv_initial`/`cash_initial`.
+- Algorithm 2 is still just a stub in demo mode, same as real mode.
+- No built-in way to run more than one profile in a single process --
+  see §1b's "run both at once" for the two-process approach.

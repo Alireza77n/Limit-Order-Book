@@ -713,7 +713,7 @@ If you're missing `market_maker/.env`, copy `market_maker/.env.example` and fill
 
 Full details — environment setup, every way to run the bot (which modes touch a real account/real money and which don't), and how to run the test suite — are in **[usage.md](usage.md)**, kept as its own document so this README stays focused on what the project *is* rather than how to operate it.
 
-Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server — there is no demo/paper-trading mode today (see usage.md §5 for why). The only mode that needs no real account is the test suite (`cd market_maker/tests && pytest -q`).
+Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with simulated fills instead — no real orders, no MySQL required (see usage.md §1b). The test suite (`cd market_maker/tests && pytest -q`) needs neither a real account nor MySQL either way.
 
 ---
 
@@ -723,7 +723,7 @@ Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with 
 * **Persistence (`save_to_db`, the MySQL connection in `__init__`) is not behind an interface** — `SimpleMarketMaker` still requires a live MySQL server to be constructed at all. Extracting a `TradeLogStore` interface (mirroring `ExchangeClient`) is the natural next seam.
 * **`portfolio.py`'s `Nobitex_portfolio` is not behind `ExchangeClient`** — `run.py`'s `--exchange` flag today only changes order execution/quotes, not portfolio valuation.
 * **Git history contains the original hardcoded secrets** (the Nobitex token and MySQL password, from commits predating the `.env` migration). Moving them to `.env` stops new exposure but doesn't erase history — rotating both credentials is recommended and is a team/repo-owner decision.
-* **No dry-run/paper-trading mode** — there's currently no way to exercise the full `run()` loop without placing real orders and needing a live MySQL server.
+* **Demo mode's fills are a simplification** — `--mode demo` assumes the full requested amount fills instantly at the quoted price (no partial fills, slippage, or queue modeling). Fine for exercising the strategy against real prices; not a fill-probability model. See usage.md §1b.
 * **Algorithm 2 has no real implementation**, only a stub and this README's math — see [Algorithm 2](#algorithm-2-avellaneda-stoikov-model).
 
 ---
