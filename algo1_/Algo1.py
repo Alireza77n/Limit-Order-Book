@@ -1,6 +1,5 @@
 import math
 import time
-import requests
 import numpy as np
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -8,9 +7,9 @@ from typing import Optional, Dict, Any, Tuple, List, Set  # add Set
 import pandas as pd
 
 from Config import MMConfig
-from Order_Statuse import OrderStatusChecker, OrderCanceller
 from Portfolio import Nobitex_portfolio
 from strategy.algo1_strategy import Algo1Strategy
+from exchange.base import ExchangeClient
 import pytz
 from datetime import datetime, timedelta
 import os
@@ -22,7 +21,7 @@ import mysql.connector
 
 
 class SimpleMarketMaker:
-    def __init__(self, cfg: MMConfig, nobi_portfo: Nobitex_portfolio):
+    def __init__(self, cfg: MMConfig, nobi_portfo: Nobitex_portfolio, exchange: ExchangeClient):
         self.cfg = cfg
         self.recent_order_ids: List[str] = []
         self.tracked_orders: Dict[str, Set[str]] = {"buy": set(), "sell": set()}
@@ -42,8 +41,7 @@ class SimpleMarketMaker:
             database="trading_bot"
         )
         self.cursor = self.conn.cursor()
-        self.order_status_checker = OrderStatusChecker(self.cfg.token)
-        self.order_canceller = OrderCanceller(self.cfg.token)
+        self.exchange = exchange
         self.strategy = Algo1Strategy(self.cfg)
         if self.cfg.exp_ret_min is None:
             self.cfg.exp_ret_min = self.cfg.commission_perc
@@ -67,7 +65,7 @@ class SimpleMarketMaker:
     # In SimpleMarketMaker
 
     def get_status_orders(self,status) -> List[Dict]:
-        orders = self.order_status_checker.get_order_list_status(
+        orders = self.exchange.get_order_list_status(
             status=status, details=2, page_size=100, max_pages=1
         )
     
@@ -148,22 +146,9 @@ class SimpleMarketMaker:
 
 
     # ---------- Market data ----------
+    # NOTE: exchange-specific I/O now lives in exchange/nobitex.py (NobitexExchangeClient).
     def _get_orderbook(self, symbol: Optional[str] = None) -> Optional[Dict[str, Any]]:
-        symbol = symbol or self.cfg.pair
-        url = f"https://apiv2.nobitex.ir/v3/orderbook/{symbol}"
-        try:
-            r = requests.get(url, timeout=5)
-            if r.status_code != 200:
-                print(f"Orderbook HTTP {r.status_code}")
-                return None
-            ob = r.json()
-            if not all(k in ob for k in ("bids", "asks", "lastTradePrice")):
-                print("Orderbook payload missing keys.")
-                return None
-            return ob
-        except Exception as e:
-            print(f"Orderbook error: {e}")
-            return None
+        return self.exchange.get_orderbook(symbol or self.cfg.pair)
 
     # ---------- Microstructure helpers ----------
     # NOTE: the actual quoting logic lives in Algo1Strategy (strategy/algo1_strategy.py).
@@ -188,20 +173,10 @@ class SimpleMarketMaker:
     def _decide_order(self, ob: Dict[str, Any], inv_current: float) -> Optional[Dict[str, Any]]:
         return self.strategy.decide_order(ob, inv_current)
 
-    # ---------- Wallet / order endpoints (kept exactly as you provided) ----------
+    # ---------- Wallet / order endpoints ----------
+    # NOTE: exchange-specific I/O now lives in exchange/nobitex.py (NobitexExchangeClient).
     def wallet_balance(self, currency: str) -> Optional[float]:
-        if not (self.cfg.token and self.cfg.url_wallet_balance):
-            print("Wallet balance endpoints not configured.")
-            return None
-        try:
-            headers = {"Authorization": f"Token {self.cfg.token}"}
-            data = {"currency": currency}
-            r = requests.post(self.cfg.url_wallet_balance, headers=headers, json=data, timeout=5)
-            w = r.json()
-            return float(w["balance"])
-        except Exception as e:
-            print(f"Wallet balance error: {e}")
-            return None
+        return self.exchange.wallet_balance(currency)
 
 
 
@@ -399,37 +374,19 @@ class SimpleMarketMaker:
 
     def send_order(self, order_type: str, srcCurrency: str, dstCurrency: str,
                amount: float, price: float, clientOrderId: Optional[str] = None) -> Optional[str]:
-        if not (self.cfg.token and self.cfg.url_send_order):
-            print("Order send endpoints not configured.")
-            return None
-        try:
-            if clientOrderId is None:
-                clientOrderId = f"algo-{self.algorithm_id}-{order_type}-{int(time.time()*1000)}"
-    
-            headers = {"Authorization": f"Token {self.cfg.token}", "content-type": "application/json"}
-            data = {
-                "type": order_type,
-                "srcCurrency": srcCurrency,
-                "dstCurrency": dstCurrency,
-                "amount": str(amount),
-                "price": price,
-                "clientOrderId": clientOrderId
-            }
-            r = requests.post(self.cfg.url_send_order, headers=headers, json=data, timeout=20)
-            print(r.text)
-    
+        # The actual HTTP call now lives in exchange/nobitex.py (NobitexExchangeClient);
+        # order-tracking bookkeeping stays here since it's SimpleMarketMaker's own state.
+        result_id = self.exchange.send_order(
+            order_type, srcCurrency, dstCurrency, amount, price, clientOrderId
+        )
+        if result_id:
             # Track for both PnL close-processing and UI status updates
-            self.recent_order_ids.append(clientOrderId)
+            self.recent_order_ids.append(result_id)
             if order_type == "buy":
-                self.tracked_orders["buy"].add(clientOrderId)
+                self.tracked_orders["buy"].add(result_id)
             else:
-                self.tracked_orders["sell"].add(clientOrderId)
-    
-            return clientOrderId
-    
-        except Exception as e:
-            print(f"Send order error: {e}")
-            return None
+                self.tracked_orders["sell"].add(result_id)
+        return result_id
 
 
 
@@ -568,7 +525,7 @@ class SimpleMarketMaker:
                 print(f"[{stamp}] Inventory={inv_current:.6f}, Cash={cash_current:.2f}, Wealth={portfolio_wealth:.2f}")
     
                 # ---- (C2) Cancel stale orders & reflect cancellations in DF/tracking ----
-                self.order_canceller.cancel_old_orders(
+                self.exchange.cancel_old_orders(
                     max_age_minutes=self.cfg.cancel_after_minutes,
                     df=order_df,
                     tracked_orders=self.tracked_orders
@@ -671,7 +628,7 @@ class SimpleMarketMaker:
         finally:
             print("Cancelling all open orders before exit...")
             try:
-                self.order_canceller.cancel_all_open_orders(max_pages=10)
+                self.exchange.cancel_all_open_orders(max_pages=10)
                 
 
                 # Optional: final reconciliation

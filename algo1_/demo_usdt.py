@@ -1,7 +1,7 @@
 from Config import MMConfig as cfg
-from Order_Statuse import *
 from Portfolio import Nobitex_portfolio
 from Algo1 import SimpleMarketMaker
+from exchange.nobitex import NobitexExchangeClient
 from datetime import datetime, timedelta
 
 
@@ -31,5 +31,11 @@ output_csv = r"/root/Nouri/Algo1/usdt_track.csv"
 )
 
 nobi_portfo = Nobitex_portfolio(cfg.token)
-bot = SimpleMarketMaker(cfg, nobi_portfo)
+exchange = NobitexExchangeClient(
+    token=cfg.token,
+    url_send_order=cfg.url_send_order,
+    url_wallet_balance=cfg.url_wallet_balance,
+    algorithm_id=cfg.algorithm_id,
+)
+bot = SimpleMarketMaker(cfg, nobi_portfo, exchange)
 a = bot.run()
