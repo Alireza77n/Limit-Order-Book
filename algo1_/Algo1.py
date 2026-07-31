@@ -15,8 +15,17 @@ import pytz
 from datetime import datetime, timedelta
 import os
 import mysql.connector
+from dotenv import load_dotenv
 
+load_dotenv()
 
+# DB connection: credentials come from the environment (.env) -- see
+# .env.example. Host/database keep their previous defaults since they
+# aren't sensitive, only user/password are secret and have no fallback.
+MYSQL_HOST = os.environ.get("MYSQL_HOST", "localhost")
+MYSQL_USER = os.environ.get("MYSQL_USER")
+MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD")
+MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "trading_bot")
 
 
 
@@ -37,10 +46,10 @@ class SimpleMarketMaker:
         
          #Connect to MySQL (use your existing DB)
         self.conn = mysql.connector.connect(
-            host="localhost",
-            user="Nouri",
-            password="12300123",
-            database="trading_bot"
+            host=MYSQL_HOST,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            database=MYSQL_DATABASE
         )
         self.cursor = self.conn.cursor()
         self.exchange = exchange
@@ -185,10 +194,10 @@ class SimpleMarketMaker:
     def save_to_db(self, order_df):
     
         conn = mysql.connector.connect(
-            host="localhost",
-            user="Nouri",
-            password="12300123",
-            database="trading_bot"
+            host=MYSQL_HOST,
+            user=MYSQL_USER,
+            password=MYSQL_PASSWORD,
+            database=MYSQL_DATABASE
         )
         cursor = conn.cursor()
     

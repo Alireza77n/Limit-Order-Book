@@ -1,11 +1,15 @@
 import math
+import os
 import time
 import requests
 import numpy as np
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple, List
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 @dataclass
@@ -37,6 +41,10 @@ class MMConfig:
 
 
     # API auth endpoints (required to read balances / place orders)
-    token: Optional[str] = 'e2f181f803e7cb6ae0ef7888e3a21a8c2d7fe0ac' 
+    # Token comes from the environment (.env) -- see .env.example. No secret
+    # is hardcoded here; if NOBITEX_API_TOKEN is unset this is None, and the
+    # existing "endpoints not configured" checks in NobitexExchangeClient
+    # degrade gracefully instead of crashing.
+    token: Optional[str] = field(default_factory=lambda: os.environ.get("NOBITEX_API_TOKEN"))
     url_send_order: Optional[str] = "https://apiv2.nobitex.ir/market/orders/add"
     url_wallet_balance: Optional[str] = "https://apiv2.nobitex.ir/users/wallets/balance"
