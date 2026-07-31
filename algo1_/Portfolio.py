@@ -7,7 +7,6 @@ import requests
 import time
 from datetime import datetime, timedelta
 import math
-from sklearn.linear_model import LinearRegression
 import pytz
 import os
 from decimal import Decimal, InvalidOperation, getcontext
