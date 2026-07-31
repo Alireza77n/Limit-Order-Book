@@ -10,7 +10,7 @@ project *is* and how it's architected, see [README.md](README.md).
 | [Live trading](#1-live-trading-real-money-real-account) | `python run.py --profile btc\|usdt` | Yes | **Yes -- real money** | **Yes** |
 | [Demo / paper trading](#1b-demo-mode-real-market-data-simulated-orders) | `python run.py --profile btc\|usdt --mode demo` | **Yes** | No -- simulated | No |
 | [Automated tests](#2-automated-tests-no-account-no-money-no-database) | `pytest -q` | No | No | No |
-| [Live PnL chart](#3-live-pnl-chart) | `python live_plot.py` | No (reads a local CSV) | No | No |
+| [History dashboard](#3-history-dashboard) | `python dashboard.py` | No (reads local CSVs) | No | No |
 | [Research notebooks](#4-research-notebooks-read-only) | open in Jupyter | No | No | No |
 
 Note on terminology: `demo_btc.py`/`demo_usdt.py` (this branch's `run.py
@@ -171,27 +171,49 @@ cd market_maker/tests
 python3 -m pytest -q
 ```
 
-53 tests, all pure Python -- no network, no database, nothing touches
+60 tests, all pure Python -- no network, no database, nothing touches
 Nobitex. See README.md's "Testing" section for what's covered (both
 algorithms' strategy logic, env-var config sourcing, `DemoExchangeClient`'s
-simulated fills, the `persist_to_db` flag) and what isn't (`run()`,
-`NobitexExchangeClient.send_order`, `save_to_db` -- anything that's
-inherently live).
+simulated fills, the `persist_to_db` flag, the dashboard's CSV/session
+handling) and what isn't (`run()`, `NobitexExchangeClient.send_order`,
+`save_to_db` -- anything that's inherently live).
 
 ---
 
-## 3. Live PnL chart
+## 3. History dashboard
 
 ```sh
 cd market_maker
-python3 live_plot.py
+python3 dashboard.py
 ```
 
-Reads whatever CSV a `run.py` session wrote (`usdt_track.csv` by default
-in the current script) and serves a live-updating Dash chart at
-`http://localhost:8050`. Read-only against the CSV; doesn't touch Nobitex
-or MySQL itself. Only useful while (or after) a real `run.py` session has
-produced data.
+Serves a live-updating dashboard at `http://localhost:8050` covering all
+four tracks this project can produce -- BTC/USDT × real/demo -- each
+clearly labeled so real trading history is never confused with paper
+runs. Read-only against the CSVs; doesn't touch Nobitex or MySQL itself,
+and auto-refreshes every 20 seconds so it's safe to leave open while a
+real `run.py` or `--mode demo` session is writing to the same file.
+
+Pick a **track** (which CSV) and a **session** (a specific run, or "All
+sessions" to compare multiple runs on one chart), then review:
+
+* **Portfolio wealth** over time (colored by session when comparing).
+* **Inventory & cash** over time.
+* **Selected depth levels & derived spreads** — `Bid Level`/`Ask Level`
+  are logged directly; `Bid Spread`/`Ask Spread` are computed from
+  already-logged `Best Bid`/`Best Ask`/`Bid Price Sent`/`Ask Price Sent`
+  using the same formulas as README.md's Algorithm 1 "Step 5: Reported
+  spreads" section -- nothing new is collected, this is a view over
+  existing columns.
+* **Order activity table** — a sortable, filterable, timestamp-descending
+  table of every round's bid/ask levels, prices sent, and buy/sell
+  size/status, for line-by-line audit review.
+
+If a track's CSV doesn't exist yet (e.g. you haven't run `--mode demo`
+yet), the dashboard says so plainly instead of erroring.
+
+Replaces the old `live_plot.py` (a single live PnL line for one
+hardcoded CSV) -- superseded by this dashboard, no functional loss.
 
 ---
 

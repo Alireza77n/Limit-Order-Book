@@ -675,7 +675,7 @@ market_maker/
   portfolio.py            Nobitex_portfolio: wallet/portfolio valuation
   order_status.py         OrderStatusChecker, OrderCanceller (raw Nobitex calls)
   run.py                  Entry point: --algorithm / --exchange / --profile
-  live_plot.py            Dash live PnL chart, reads the run() CSV output
+  dashboard.py             Dash history dashboard, reads the run() CSV outputs
   strategy/
     base.py                Strategy interface (decide_order contract)
     algo1.py                Algorithm 1's quoting logic (pure, no I/O)
