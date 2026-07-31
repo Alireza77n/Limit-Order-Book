@@ -583,40 +583,58 @@ Compared with Algorithm 1:
 
 # Project structure
 
-The main files in this repository are:
+Full architecture, setup, usage, and current status:
+**[docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md)**.
+
+The main files in `algo1_/`:
 
 ```text
-Algo1.py          Implementation of the custom depth-aware inventory-skewed quoting strategy
-Config.py         Configuration file for inventory limits, tick size, depth caps, and other parameters
-demo_btc.py       Runs the market-making engine using BTC order book data
-demo_usdt.py      Runs the market-making engine using USDT order book data
-live_plot.py      Displays real-time portfolio and PnL visualization
-Order_Status.py   Tracks filled and pending orders
-Portfolio.py      Manages balance, inventory, and PnL calculations
+Algo1.py              SimpleMarketMaker: the run() loop and engine glue
+Config.py             MMConfig: inventory limits, tick size, depth caps, etc.
+                      (loads secrets from .env -- see below)
+demo_btc.py           Runs the market-making engine using BTC order book data
+demo_usdt.py          Runs the market-making engine using USDT order book data
+live_plot.py          Displays real-time portfolio and PnL visualization
+Order_Statuse.py      Tracks filled/pending orders and cancellations
+Portfolio.py          Manages balance, inventory, and PnL calculations
+strategy/             Quoting logic (Algorithm 1 implemented, Algorithm 2 stub)
+exchange/             Exchange-specific I/O (Nobitex today)
+tests/                pytest suite
 ```
+
+`algo2_/research/` holds exploratory notebooks for estimating the
+Avellaneda-Stoikov model's parameters -- Algorithm 2 itself is not yet
+implemented (see docs/PROJECT_REPORT.md §7).
 
 ---
 
 # How to run the project
+
+Copy `algo1_/.env.example` to `algo1_/.env` and fill in your Nobitex API
+token and MySQL credentials -- these are no longer hardcoded in source.
 
 You can run market-making simulations directly using the demo scripts.
 
 For the BTC demo:
 
 ```sh
+cd algo1_
 python demo_btc.py
 ```
 
 For the USDT demo:
 
 ```sh
+cd algo1_
 python demo_usdt.py
 ```
+
+**Both place real orders against Nobitex and require a live MySQL server.**
 
 Before running the demos, check the configuration file:
 
 ```text
-Config.py
+algo1_/Config.py
 ```
 
 Important parameters include:
