@@ -586,17 +586,16 @@ Compared with Algorithm 1:
 Full architecture, setup, usage, and current status:
 **[docs/PROJECT_REPORT.md](docs/PROJECT_REPORT.md)**.
 
-The main files in `algo1_/`:
+The main files in `market_maker/`:
 
 ```text
-Algo1.py              SimpleMarketMaker: the run() loop and engine glue
-Config.py             MMConfig: inventory limits, tick size, depth caps, etc.
+engine.py             SimpleMarketMaker: the run() loop and engine glue
+config.py             MMConfig: inventory limits, tick size, depth caps, etc.
                       (loads secrets from .env -- see below)
-demo_btc.py           Runs the market-making engine using BTC order book data
-demo_usdt.py          Runs the market-making engine using USDT order book data
+run.py                Single entry point: choose --algorithm/--exchange/--profile
 live_plot.py          Displays real-time portfolio and PnL visualization
-Order_Statuse.py      Tracks filled/pending orders and cancellations
-Portfolio.py          Manages balance, inventory, and PnL calculations
+order_status.py       Tracks filled/pending orders and cancellations
+portfolio.py          Manages balance, inventory, and PnL calculations
 strategy/             Quoting logic (Algorithm 1 implemented, Algorithm 2 stub)
 exchange/             Exchange-specific I/O (Nobitex today)
 tests/                pytest suite
@@ -610,26 +609,24 @@ implemented (see docs/PROJECT_REPORT.md §7).
 
 # How to run the project
 
-Copy `algo1_/.env.example` to `algo1_/.env` and fill in your Nobitex API
-token and MySQL credentials -- these are no longer hardcoded in source.
+Copy `market_maker/.env.example` to `market_maker/.env` and fill in your
+Nobitex API token and MySQL credentials -- these are no longer hardcoded
+in source.
 
-You can run market-making simulations directly using the demo scripts.
-
-For the BTC demo:
-
-```sh
-cd algo1_
-python demo_btc.py
-```
-
-For the USDT demo:
+Run via `run.py`, choosing a currency-pair profile (and optionally an
+algorithm/exchange -- both default to today's only implementations):
 
 ```sh
-cd algo1_
-python demo_usdt.py
+cd market_maker
+python run.py --profile btc     # BTC market-making (was demo_btc.py)
+python run.py --profile usdt    # USDT market-making (was demo_usdt.py)
 ```
 
 **Both place real orders against Nobitex and require a live MySQL server.**
+
+Adding a new currency pair, algorithm, or exchange means adding one entry
+to `run.py`'s `PROFILES`/`STRATEGIES`/`EXCHANGES` dicts -- see
+docs/PROJECT_REPORT.md §9.
 
 Before running the demos, check the configuration file:
 

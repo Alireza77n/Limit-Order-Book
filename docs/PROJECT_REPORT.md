@@ -14,87 +14,90 @@ A crypto market-making bot with two intended strategies:
   parameter-estimation notebooks (`algo2_/research/`). See §7.
 
 The engine that runs a strategy live (fetch order book → decide quotes →
-place/cancel orders → track PnL → persist to CSV/MySQL) is exchange-agnostic
-by design: today it talks to Nobitex, and swapping exchanges means writing
-one new class, not touching strategy or engine code.
+place/cancel orders → track PnL → persist to CSV/MySQL) is exchange- and
+strategy-agnostic by design: `run.py` picks which algorithm runs against
+which exchange for which currency pair, and adding a new one of any of
+those is a registry entry, not a new file (see §9).
 
 ## 2. Architecture
 
 ```
-                     ┌─────────────────────┐
-demo_btc.py  ─────►  │  SimpleMarketMaker   │  (the engine: run() loop,
-demo_usdt.py         │      (Algo1.py)      │   inventory/cash/PnL bookkeeping,
-                     └──────────┬───────────┘   CSV + MySQL persistence)
-                                │
-                 ┌──────────────┼──────────────┐
-                 ▼                             ▼
-        ┌─────────────────┐           ┌──────────────────┐
-        │     Strategy      │           │   ExchangeClient   │
-        │ (strategy/base.py) │           │ (exchange/base.py)  │
-        └────────┬─────────┘           └─────────┬────────┘
-                 │                                │
-     ┌───────────┴───────────┐          ┌─────────┴──────────┐
-     ▼                       ▼          ▼                    
+                  ┌─────────────────────┐
+   run.py  ─────► │  SimpleMarketMaker   │  (the engine: run() loop,
+  --algorithm     │      (engine.py)      │   inventory/cash/PnL bookkeeping,
+  --exchange      └──────────┬───────────┘   CSV + MySQL persistence)
+  --profile                  │
+                 ┌───────────┼───────────┐
+                 ▼                       ▼
+        ┌─────────────────┐      ┌──────────────────┐
+        │     Strategy      │      │   ExchangeClient   │
+        │ (strategy/base.py) │      │ (exchange/base.py)  │
+        └────────┬─────────┘      └─────────┬────────┘
+                 │                           │
+     ┌───────────┴───────────┐    ┌──────────┴──────────┐
+     ▼                       ▼    ▼
 Algo1Strategy          Algo2Strategy   NobitexExchangeClient
 (implemented,           (stub, raises  (get_orderbook, send_order,
  fully tested)           NotImplementedError) wallet_balance, order status/
                                               cancellation via
-                                              Order_Statuse.py)
+                                              order_status.py)
 ```
 
-- **`Strategy`** (`algo1_/strategy/base.py`): the only method the engine
-  relies on is `decide_order(orderbook, inventory) -> quote_dict | None`.
-  Anything implementing this can be plugged into `SimpleMarketMaker` via
-  its optional `strategy=` constructor argument (defaults to
-  `Algo1Strategy` if omitted, so existing call sites are unaffected).
-- **`ExchangeClient`** (`algo1_/exchange/base.py`): `get_orderbook`,
+- **`Strategy`** (`market_maker/strategy/base.py`): the only method the
+  engine relies on is `decide_order(orderbook, inventory) -> quote_dict |
+  None`. Anything implementing this can be plugged into `SimpleMarketMaker`
+  via its optional `strategy=` constructor argument (defaults to
+  `Algo1Strategy` if omitted).
+- **`ExchangeClient`** (`market_maker/exchange/base.py`): `get_orderbook`,
   `send_order`, `wallet_balance`, `get_order_list_status`, `cancel_order`,
   `cancel_all_open_orders`, `cancel_old_orders`. `SimpleMarketMaker` takes
   an `exchange=` constructor argument (required) implementing this.
-- **`Portfolio.py`** (`Nobitex_portfolio`): read-only wallet/portfolio
-  valuation helper, independent of the trading engine.
-- **`Order_Statuse.py`** (`OrderStatusChecker`, `OrderCanceller`): raw
+- **`portfolio.py`** (`Nobitex_portfolio`): read-only wallet/portfolio
+  valuation helper, independent of the trading engine. **Still
+  Nobitex-specific** -- not behind `ExchangeClient` (see §8).
+- **`order_status.py`** (`OrderStatusChecker`, `OrderCanceller`): raw
   Nobitex order-status/cancellation HTTP calls, composed inside
   `NobitexExchangeClient` rather than called directly by the engine.
-- **`Config.py`** (`MMConfig`): a single dataclass holding both strategy
+- **`config.py`** (`MMConfig`): a single dataclass holding both strategy
   knobs (`inv_max`, `depth_max`, `commission_perc`, ...) and exchange
   config (`token`, `url_send_order`, ...). Not yet split -- see §8.
+- **`run.py`**: the single entry point. `STRATEGIES`/`EXCHANGES` registries
+  plus named `PROFILES` (currency-pair configs) select what actually runs.
 
 ## 3. Directory structure
 
 ```
-algo1_/
-  Algo1.py               SimpleMarketMaker: the run() loop and engine glue
-  Config.py               MMConfig dataclass; loads secrets from .env
-  Portfolio.py             Nobitex_portfolio: wallet/portfolio valuation
-  Order_Statuse.py         OrderStatusChecker, OrderCanceller (raw Nobitex calls)
-  demo_btc.py              Entry point: runs Algorithm 1 on BTCIRT
-  demo_usdt.py             Entry point: runs Algorithm 1 on USDTIRT
-  live_plot.py             Dash live PnL chart, reads the run() CSV output
+market_maker/
+  engine.py               SimpleMarketMaker: the run() loop and engine glue
+  config.py                MMConfig dataclass; loads secrets from .env
+  portfolio.py              Nobitex_portfolio: wallet/portfolio valuation
+  order_status.py           OrderStatusChecker, OrderCanceller (raw Nobitex calls)
+  run.py                    Entry point: --algorithm / --exchange / --profile
+  live_plot.py              Dash live PnL chart, reads the run() CSV output
   strategy/
-    base.py                Strategy interface (decide_order contract)
-    algo1_strategy.py       Algorithm 1's quoting logic (pure, no I/O)
-    algo2_strategy.py       Algorithm 2 stub (raises NotImplementedError)
+    base.py                 Strategy interface (decide_order contract)
+    algo1.py                 Algorithm 1's quoting logic (pure, no I/O)
+    algo2.py                 Algorithm 2 stub (raises NotImplementedError)
   exchange/
-    base.py                 ExchangeClient interface
-    nobitex.py               NobitexExchangeClient (Nobitex HTTP calls)
-  tests/                    pytest suite (see §6)
-  .env.example              Template for required environment variables
-  .env                      Real secrets, gitignored, not committed
+    base.py                  ExchangeClient interface
+    nobitex.py                NobitexExchangeClient (Nobitex HTTP calls)
+  tests/                     pytest suite (see §6)
+  .env.example               Template for required environment variables
+  .env                       Real secrets, gitignored, not committed
 
 algo2_/
-  research/                 Parameter-estimation notebooks (kappa, sigma);
-                             exploratory, not part of a runnable strategy
+  research/                  Parameter-estimation notebooks (kappa, sigma);
+                              exploratory, not part of a runnable strategy
 
-reports/                    Local-only analysis notes, gitignored
-requirements.txt            Runtime dependencies
-requirements-dev.txt        + pytest
+reports/                     Local-only analysis notes, gitignored
+requirements.txt             Runtime dependencies
+requirements-dev.txt         + pytest
 ```
 
 ## 4. Setup
 
 ```sh
-cd algo1_
+cd market_maker
 python3 -m venv .venv && source .venv/bin/activate   # optional but recommended
 pip install -r ../requirements-dev.txt
 
@@ -120,21 +123,26 @@ a hard requirement of the current engine -- see §8).
 ## 5. Usage
 
 ```sh
-cd algo1_
-python3 demo_btc.py     # runs Algorithm 1 live on BTCIRT
-python3 demo_usdt.py    # runs Algorithm 1 live on USDTIRT
-python3 live_plot.py    # live PnL chart, reads the CSV demo_*.py writes
+cd market_maker
+python3 run.py --profile btc      # Algorithm 1 live on BTCIRT via Nobitex
+python3 run.py --profile usdt     # Algorithm 1 live on USDTIRT via Nobitex
+python3 live_plot.py              # live PnL chart, reads the CSV run.py writes
 ```
+
+`--algorithm` (default `algo1`) and `--exchange` (default `nobitex`) are
+optional; `python3 run.py --help` lists all choices. `--algorithm algo2`
+currently raises `NotImplementedError` when the engine calls
+`decide_order()` -- expected, see §7.
 
 **These place real orders against Nobitex using the token in `.env` and
 require a live MySQL server.** There is no dry-run/paper-trading mode
 today -- test strategy changes via the unit tests (§6), not by running
-the demos.
+`run.py`.
 
 ## 6. Testing
 
 ```sh
-cd algo1_/tests
+cd market_maker/tests
 python3 -m pytest -q
 ```
 
@@ -157,41 +165,42 @@ still opens a real MySQL connection unconditionally (tests construct it via
 
 ## 7. Algorithm 2 status
 
-Before this branch, `algo2_/Alg2.ipynb` (presumably meant to hold the
+Before this work, `algo2_/Alg2.ipynb` (presumably meant to hold the
 Avellaneda-Stoikov implementation) was **empty**. `Kapa Estimation.ipynb`
 and `sigma_estimation.ipynb` (now in `algo2_/research/`) estimate the
 model's κ (order-arrival intensity decay) and σ (volatility) parameters
 from historical data, but reference hardcoded local file paths from the
 original author's machine and don't implement the quoting decision itself.
 
-`algo1_/strategy/algo2_strategy.py` provides `Algo2Strategy`, a `Strategy`
+`market_maker/strategy/algo2.py` provides `Algo2Strategy`, a `Strategy`
 implementation whose `decide_order()` raises `NotImplementedError` --
-scaffolding only, so the engine/tests can already depend on the `Strategy`
-interface. Implementing the real model means: writing the reservation-price
-and optimal-spread formulas from README.md's "Algorithm 2" section, wiring
-in κ/σ (static config values or live estimates from the research notebooks),
-and adding characterization tests before it's considered done.
+scaffolding only, so the engine/tests/`run.py` can already depend on the
+`Strategy` interface. Implementing the real model means: writing the
+reservation-price and optimal-spread formulas from README.md's "Algorithm
+2" section, wiring in κ/σ (static config values or live estimates from the
+research notebooks), and adding characterization tests before it's
+considered done.
 
 ## 8. Known limitations / next steps
 
-- **`Config.py` mixes strategy and exchange config** in one `MMConfig`
+- **`config.py` mixes strategy and exchange config** in one `MMConfig`
   dataclass. Splitting it (e.g. `StrategyConfig` + `ExchangeConfig`) was
-  deferred to keep this refactor small; do it before adding a second
+  deferred to keep each refactor step small; do it before adding a second
   exchange, since exchange-specific fields (`url_send_order`, ...) will
   otherwise leak into every strategy's config.
 - **Persistence (`save_to_db`, the MySQL connection in `__init__`) is not
   behind an interface** -- `SimpleMarketMaker` still requires a live MySQL
   server to be constructed at all. Extracting a `TradeLogStore` interface
   (mirroring `ExchangeClient`) is the natural next seam.
+- **`portfolio.py`'s `Nobitex_portfolio` is not behind `ExchangeClient`** --
+  `run.py`'s `--exchange` flag today only changes order execution/quotes,
+  not portfolio valuation. Abstracting portfolio valuation the same way is
+  a follow-up, not done here.
 - **Git history still contains the original hardcoded secrets** (the
-  Nobitex token and MySQL password, from commits predating this branch).
+  Nobitex token and MySQL password, from commits predating this work).
   Moving them to `.env` stops new exposure but doesn't erase history --
   rotating both credentials is recommended and is a team/repo-owner
   decision, not something done unilaterally here.
-- **The `algo1_/` directory name predates this refactor** and now holds
-  shared engine/exchange code used by both algorithms, not just Algorithm
-  1's. Left as-is to avoid a large, high-blast-radius rename; worth
-  revisiting once Algorithm 2 is a real, runnable implementation.
 - **No dry-run/paper-trading mode** -- there's currently no way to exercise
   the full `run()` loop without placing real orders and needing a live
   MySQL server.
@@ -199,10 +208,13 @@ and adding characterization tests before it's considered done.
 ## 9. Extending
 
 **Add a new algorithm:** implement `Strategy` (`decide_order`) in
-`algo1_/strategy/`, construct `SimpleMarketMaker(cfg, portfolio, exchange,
-strategy=YourStrategy(cfg))`. No engine or exchange changes needed.
+`market_maker/strategy/`, add it to `run.py`'s `STRATEGIES` dict (or
+construct `SimpleMarketMaker(cfg, portfolio, exchange,
+strategy=YourStrategy(cfg))` directly). No engine or exchange changes needed.
 
 **Add a new exchange:** implement `ExchangeClient`
-(`algo1_/exchange/base.py`) in `algo1_/exchange/`, construct
-`SimpleMarketMaker(cfg, portfolio, exchange=YourExchangeClient(...))`. No
-engine or strategy changes needed.
+(`market_maker/exchange/base.py`) in `market_maker/exchange/`, add it to
+`run.py`'s `EXCHANGES` dict. No engine or strategy changes needed.
+
+**Add a new currency pair:** add an entry to `run.py`'s `PROFILES` dict
+with the pair's `MMConfig` values. No new files.
