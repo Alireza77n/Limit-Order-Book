@@ -8,6 +8,7 @@ import pandas as pd
 
 from Config import MMConfig
 from Portfolio import Nobitex_portfolio
+from strategy.base import Strategy
 from strategy.algo1_strategy import Algo1Strategy
 from exchange.base import ExchangeClient
 import pytz
@@ -21,7 +22,8 @@ import mysql.connector
 
 
 class SimpleMarketMaker:
-    def __init__(self, cfg: MMConfig, nobi_portfo: Nobitex_portfolio, exchange: ExchangeClient):
+    def __init__(self, cfg: MMConfig, nobi_portfo: Nobitex_portfolio, exchange: ExchangeClient,
+                 strategy: Optional[Strategy] = None):
         self.cfg = cfg
         self.recent_order_ids: List[str] = []
         self.tracked_orders: Dict[str, Set[str]] = {"buy": set(), "sell": set()}
@@ -42,7 +44,7 @@ class SimpleMarketMaker:
         )
         self.cursor = self.conn.cursor()
         self.exchange = exchange
-        self.strategy = Algo1Strategy(self.cfg)
+        self.strategy = strategy if strategy is not None else Algo1Strategy(self.cfg)
         if self.cfg.exp_ret_min is None:
             self.cfg.exp_ret_min = self.cfg.commission_perc
         if self.cfg.order_size is None:

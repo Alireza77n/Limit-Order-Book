@@ -1,9 +1,10 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from Config import MMConfig
+from strategy.base import Strategy
 
 
-class Algo1Strategy:
+class Algo1Strategy(Strategy):
     """Depth-aware, inventory-skewed quoting strategy (Algorithm 1).
 
     Pure decision logic only: reads `cfg` and a plain order-book dict, no
