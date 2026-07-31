@@ -4,11 +4,6 @@ from Portfolio import Nobitex_portfolio
 from Algo1 import SimpleMarketMaker
 from datetime import datetime, timedelta
 
-%load_ext autoreload
-%autoreload 2
-
-
-
 
 
 cfg = cfg(
