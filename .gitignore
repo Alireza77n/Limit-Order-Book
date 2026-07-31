@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Local env / secrets
+.env
+*.local
+
+# Analysis, audit, and migration reports (local only, never pushed)
+/reports/
+/*.report.md
+/*_AUDIT.md
+/*_REPORT.md
+
+# Data outputs the bot writes at runtime
+*.csv
