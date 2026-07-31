@@ -4,12 +4,14 @@ SimpleMarketMaker.__init__ unconditionally opens a live MySQL connection and
 wires up real Nobitex API clients, so it cannot be constructed normally in
 tests. The quoting logic under test (`_algo1_bid_ask_prices`, `_spread_ok`,
 `_leg_pairs`, `_tick_size`, `_depth_cap`, `_decide_order`) only ever reads
-`self.cfg`, so `make_bot` builds an instance via `__new__` (skipping
-`__init__`) and replays just the config-normalization lines `__init__` would
-have run. This is a test seam only -- production code is untouched.
+`self.cfg` / `self.strategy`, so `make_bot` builds an instance via `__new__`
+(skipping `__init__`) and replays just the config-normalization + strategy
+construction lines `__init__` would have run. This is a test seam only --
+production code is untouched.
 """
 
 from Algo1 import SimpleMarketMaker
+from strategy.algo1_strategy import Algo1Strategy
 
 
 def make_bot(cfg):
@@ -19,6 +21,7 @@ def make_bot(cfg):
         bot.cfg.exp_ret_min = bot.cfg.commission_perc
     if bot.cfg.order_size is None:
         bot.cfg.order_size = bot.cfg.inv_max / 100.0
+    bot.strategy = Algo1Strategy(bot.cfg)
     return bot
 
 
