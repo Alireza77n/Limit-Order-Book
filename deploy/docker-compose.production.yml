@@ -24,6 +24,9 @@ services:
     container_name: lob-session-init
     build:
       context: ..
+      args:
+        LOB_REVISION: ${LOB_REVISION:-uncommitted}
+        LOB_BUILD_DATE: ${LOB_BUILD_DATE:-unknown}
     command:
       - python
       - demo_entrypoint.py

@@ -13,6 +13,7 @@ from demo_entrypoint import SENSITIVE_ENV
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = ROOT / "deploy/docker-compose.production.yml"
+DOCKERFILE_PATH = ROOT / "Dockerfile"
 ENV_PATH = ROOT / "deploy/demo.env"
 SERVICES = ("session-init", "btc-demo", "usdt-demo", "dashboard")
 CONTAINER_NAMES = {
@@ -63,7 +64,7 @@ def _list(block: str, marker: str) -> list[str]:
     return values
 
 
-def _rendered_compose() -> dict:
+def _rendered_compose(extra_env=None) -> dict:
     docker = shutil.which("docker")
     if docker is None:
         pytest.skip("Docker Compose CLI is unavailable")
@@ -72,6 +73,11 @@ def _rendered_compose() -> dict:
     )
     if compose_version.returncode != 0:
         pytest.skip("Docker Compose CLI is unavailable")
+    env = os.environ.copy()
+    env.pop("LOB_REVISION", None)
+    env.pop("LOB_BUILD_DATE", None)
+    if extra_env:
+        env.update(extra_env)
     completed = subprocess.run(
         [
             docker,
@@ -87,12 +93,33 @@ def _rendered_compose() -> dict:
             "json",
         ],
         cwd=ROOT,
+        env=env,
         text=True,
         capture_output=True,
         check=False,
     )
     assert completed.returncode == 0, completed.stderr
     return json.loads(completed.stdout)
+
+
+def test_image_build_provenance_is_resolved_and_stamped_as_oci_labels():
+    revision = "test-revision-not-a-hardcoded-commit"
+    build_date = "2026-08-01T13:59:00Z"
+    model = _rendered_compose({
+        "LOB_REVISION": revision,
+        "LOB_BUILD_DATE": build_date,
+    })
+
+    assert model["services"]["session-init"]["build"]["args"] == {
+        "LOB_BUILD_DATE": build_date,
+        "LOB_REVISION": revision,
+    }
+
+    dockerfile = DOCKERFILE_PATH.read_text()
+    assert "ARG LOB_REVISION=uncommitted" in dockerfile
+    assert "ARG LOB_BUILD_DATE=unknown" in dockerfile
+    assert 'org.opencontainers.image.revision="${LOB_REVISION}"' in dockerfile
+    assert 'org.opencontainers.image.created="${LOB_BUILD_DATE}"' in dockerfile
 
 
 def test_all_service_commands_use_the_guard_and_inner_python():
