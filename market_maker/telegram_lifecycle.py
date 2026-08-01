@@ -1,3 +1,4 @@
+from html import escape
 from typing import Callable, Optional
 
 import requests
@@ -54,71 +55,110 @@ class PaperTelegramReporter:
     def __init__(self, client: TelegramClient) -> None:
         self.client = client
 
+    def round_summary(self, text: str) -> Optional[int]:
+        return self.client.send(text)
+
+    @staticmethod
+    def _currencies(symbol: str) -> tuple[str, str]:
+        normalized = str(symbol).upper()
+        for quote in ("USDT", "IRT", "USD", "EUR", "BTC", "ETH"):
+            if normalized.endswith(quote) and len(normalized) > len(quote):
+                return normalized[:-len(quote)], quote
+        return normalized, "QUOTE"
+
     @staticmethod
     def _submission_text(order: PaperOrder) -> str:
+        base, quote = PaperTelegramReporter._currencies(order.symbol)
+        side = order.side.upper()
+        icon = "🟢" if order.side == "buy" else "🔴"
+        locked_label = "Cash locked" if order.side == "buy" else "Inventory locked"
+        locked_value = (
+            order.remaining_amount * order.limit_price
+            if order.side == "buy" else order.remaining_amount
+        )
+        locked_unit = quote if order.side == "buy" else base
         return (
-            f"🟢 DEMO {order.side.upper()} ORDER OPENED\n\n"
-            f"Symbol: {order.symbol}\n"
-            f"Session: {order.session_id}\n"
-            f"Round: {order.round_no}\n"
-            f"Order ID: {order.client_order_id}\n"
-            f"Level: {order.selected_level}\n"
-            f"Limit price: {order.limit_price:,.8f}\n"
-            f"Original amount: {order.original_amount:.8f}\n"
-            "Matched: 0.00000000\n"
-            f"Remaining: {order.remaining_amount:.8f}\n"
-            "Status: OPEN\n"
-            "Fill model: price/trade/queue simulation"
+            f"{icon} <b>{side} OPENED</b> · DEMO\n"
+            f"<b>{escape(order.symbol)}</b> · Round {order.round_no}\n\n"
+            f"Session: <code>{escape(order.session_id)}</code>\n"
+            f"Order: <code>{escape(order.client_order_id)}</code>\n"
+            f"Amount: {order.original_amount:.8f} {base}\n"
+            f"Limit: {order.limit_price:,.2f} {quote} · Level {order.selected_level}\n"
+            f"Remaining: {order.remaining_amount:.8f} {base}\n"
+            f"{locked_label}: {locked_value:,.2f} {locked_unit}\n"
+            "Status: <b>OPEN</b>"
         )
 
     @staticmethod
     def _event_text(order: PaperOrder, event: PaperEvent) -> str:
+        base, quote = PaperTelegramReporter._currencies(order.symbol)
+        side = order.side.upper()
         if event.status == "cancelled":
+            released_kind = event.released_locked_kind or (
+                "cash" if order.side == "buy" else "inventory"
+            )
+            released_unit = event.released_locked_unit or (
+                quote if order.side == "buy" else base
+            )
             return (
-                "⚪ ORDER CANCELLED\n\n"
-                f"Order ID: {order.client_order_id}\n"
+                f"⚪ <b>{side} CANCELLED</b> · DEMO\n"
+                f"<b>{escape(order.symbol)}</b>\n\n"
+                f"Order: <code>{escape(order.client_order_id)}</code>\n"
                 f"Matched before cancellation: {event.cumulative_matched:.8f}\n"
                 f"Cancelled remainder: {event.cancelled_remainder:.8f}\n"
-                f"Released locked amount: {event.released_locked_amount:.8f}\n"
-                f"Reason: {event.reason}\n"
-                "Status: CANCELLED"
+                f"Released {released_kind}: "
+                f"{event.released_locked_amount:,.2f} {released_unit}\n"
+                f"Reason: <code>{escape(event.reason)}</code>\n"
+                "Status: <b>CANCELLED</b>"
             )
         if event.status == "partially_filled":
             return (
-                "🟡 ORDER PARTIALLY FILLED\n\n"
-                f"Order ID: {order.client_order_id}\n"
-                f"Fill reason: {event.reason}\n"
-                f"New fill: {event.new_fill:.8f}\n"
-                f"Cumulative matched: {event.cumulative_matched:.8f}\n"
-                f"Remaining: {event.remaining:.8f}\n"
-                f"Fill price: {event.fill_price:,.8f}\n"
-                f"Fee on this fill: {event.fee_quote:,.8f}\n"
-                f"Inventory after fill: {event.inventory_after:.8f}\n"
-                f"Cash after fill: {event.cash_after:,.8f}\n"
-                "Status: PARTIALLY_FILLED"
+                f"🟡 <b>{side} PARTIALLY FILLED</b> · DEMO\n"
+                f"<b>{escape(order.symbol)}</b>\n\n"
+                f"Order: <code>{escape(order.client_order_id)}</code>\n"
+                f"New fill: {event.new_fill:.8f} {base}\n"
+                f"Total matched: {event.cumulative_matched:.8f} {base}\n"
+                f"Remaining: {event.remaining:.8f} {base}\n"
+                f"Fill price: {event.fill_price:,.2f} {quote}\n"
+                f"Fee: {event.fee_quote:,.2f} {quote}\n"
+                f"Reason: <code>{escape(event.reason)}</code>\n"
+                "Status: <b>PARTIALLY FILLED</b>"
             )
         return (
-            "✅ ORDER FULLY FILLED\n\n"
-            f"Order ID: {order.client_order_id}\n"
-            f"Fill reason: {event.reason}\n"
-            f"New fill: {event.new_fill:.8f}\n"
-            f"Total matched: {event.cumulative_matched:.8f}\n"
-            "Remaining: 0.00000000\n"
-            f"Average fill price: {order.average_fill_price:,.8f}\n"
-            f"Total order fee: {order.total_fee:,.8f}\n"
-            f"Inventory after fill: {event.inventory_after:.8f}\n"
-            f"Cash after fill: {event.cash_after:,.8f}\n"
-            f"Wealth after fill: {event.wealth_after:,.8f}\n"
-            "Status: FILLED"
+            f"✅ <b>{side} FILLED</b> · DEMO\n"
+            f"<b>{escape(order.symbol)}</b>\n\n"
+            f"Order: <code>{escape(order.client_order_id)}</code>\n"
+            f"New fill: {event.new_fill:.8f} {base}\n"
+            f"Total matched: {event.cumulative_matched:.8f} {base}\n"
+            f"Average fill: {order.average_fill_price:,.2f} {quote}\n"
+            f"Total fee: {order.total_fee:,.2f} {quote}\n"
+            f"Inventory: {event.inventory_after:.8f} {base}\n"
+            f"Cash: {event.cash_after:,.2f} {quote}\n"
+            f"Wealth: {event.wealth_after:,.2f} {quote}\n"
+            f"Reason: <code>{escape(event.reason)}</code>\n"
+            "Status: <b>FILLED</b>"
         )
 
-    def order_submitted(self, ledger: PaperLedger, order: PaperOrder) -> Optional[int]:
+    def order_submitted(
+        self,
+        ledger: PaperLedger,
+        order: PaperOrder,
+        *,
+        reply_to_message_id: Optional[int] = None,
+    ) -> Optional[int]:
+        if reply_to_message_id is not None and order.telegram_round_message_id is None:
+            ledger.record_telegram_round_parent(
+                order.client_order_id, message_id=reply_to_message_id
+            )
         if order.telegram_submission_message_id is not None:
             return order.telegram_submission_message_id
         if not self.client.configured:
             return None
         ledger.record_telegram_submission(order.client_order_id)
-        message_id = self.client.send(self._submission_text(order))
+        message_id = self.client.send(
+            self._submission_text(order),
+            reply_to_message_id=order.telegram_round_message_id,
+        )
         if message_id is not None:
             ledger.record_telegram_submission(order.client_order_id, message_id=message_id)
         return message_id
@@ -140,7 +180,10 @@ class PaperTelegramReporter:
         ledger.record_telegram_pending(event)
         message_id = self.client.send(
             self._event_text(order, event),
-            reply_to_message_id=order.telegram_submission_message_id,
+            reply_to_message_id=(
+                order.telegram_round_message_id
+                or order.telegram_submission_message_id
+            ),
         )
         if message_id is not None:
             ledger.record_telegram_event(event)
@@ -151,7 +194,11 @@ class PaperTelegramReporter:
             return
         for order in list(ledger.order_history.values()):
             if order.telegram_submission_attempted and order.telegram_submission_message_id is None:
-                self.order_submitted(ledger, order)
+                self.order_submitted(
+                    ledger,
+                    order,
+                    reply_to_message_id=order.telegram_round_message_id,
+                )
             if order.telegram_pending_event:
                 self.order_changed(ledger, PaperEvent(**order.telegram_pending_event))
 

@@ -105,15 +105,33 @@ class DemoExchangeClient(ExchangeClient):
 
     def cancel_order(self, order_id: int, *, now: Optional[datetime] = None) -> Dict[str, Any]:
         event = self.ledger.cancel_order(
-            str(order_id), reason="manual_cancel", now=now or datetime.now(timezone.utc)
+            str(order_id),
+            reason="manual_cancel",
+            now=now or datetime.now(timezone.utc),
+            initiator="operator_or_api",
+            call_site="DemoExchangeClient.cancel_order",
         )
         return {"status": "ok", "order": {"clientOrderId": event.order_id}}
 
-    def cancel_all_open_orders(self, max_pages: int = 10, *, now: Optional[datetime] = None):
+    def cancel_all_open_orders(
+        self,
+        max_pages: int = 10,
+        *,
+        reason: str,
+        initiator: str,
+        call_site: str,
+        now: Optional[datetime] = None,
+    ):
         stamp = now or datetime.now(timezone.utc)
         events = []
         for order_id in list(self.ledger.active_orders):
-            events.append(self.ledger.cancel_order(order_id, reason="stack_shutdown", now=stamp))
+            events.append(self.ledger.cancel_order(
+                order_id,
+                reason=reason,
+                now=stamp,
+                initiator=initiator,
+                call_site=call_site,
+            ))
         return events
 
     def cancel_old_orders(self, max_age_minutes: float, df=None, tracked_orders=None,

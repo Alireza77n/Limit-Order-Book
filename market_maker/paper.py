@@ -38,6 +38,8 @@ class PaperOrder:
     telegram_terminal_reported: bool = False
     round_no: int = 0
     telegram_pending_event: Optional[dict] = None
+    telegram_round_message_id: Optional[int] = None
+    cancellation_context: Optional[dict] = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,14 @@ class PaperEvent:
     wealth_after: float = 0.0
     cancelled_remainder: float = 0.0
     released_locked_amount: float = 0.0
+    released_locked_kind: Optional[str] = None
+    released_locked_unit: Optional[str] = None
+    initiator: Optional[str] = None
+    call_site: Optional[str] = None
+    session_id: Optional[str] = None
+    symbol: Optional[str] = None
+    process_id: int = 0
+    timestamp: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -209,6 +219,8 @@ class PaperLedger:
             values.setdefault("telegram_terminal_reported", False)
             values.setdefault("round_no", 0)
             values.setdefault("telegram_pending_event", None)
+            values.setdefault("telegram_round_message_id", None)
+            values.setdefault("cancellation_context", None)
             values["created_at"] = datetime.fromisoformat(values["created_at"])
             values["updated_at"] = datetime.fromisoformat(values["updated_at"])
             order = PaperOrder(**values)
@@ -452,6 +464,13 @@ class PaperLedger:
             order.telegram_submission_message_id = int(message_id)
         self._persist()
 
+    def record_telegram_round_parent(
+        self, client_order_id: str, *, message_id: int
+    ) -> None:
+        order = self.get_order(client_order_id)
+        order.telegram_round_message_id = int(message_id)
+        self._persist()
+
     def record_telegram_event(self, event: PaperEvent) -> None:
         order = self.get_order(event.order_id)
         if event.status in {"partially_filled", "filled"}:
@@ -662,19 +681,52 @@ class PaperLedger:
                 events.append(event)
         return events
 
-    def cancel_order(self, client_order_id: str, *, reason: str, now: datetime) -> PaperEvent:
+    @staticmethod
+    def _symbol_currencies(symbol: str) -> tuple[str, str]:
+        normalized = str(symbol).upper()
+        for quote in ("USDT", "IRT", "USD", "EUR", "BTC", "ETH"):
+            if normalized.endswith(quote) and len(normalized) > len(quote):
+                return normalized[:-len(quote)], quote
+        return normalized, "QUOTE"
+
+    def cancel_order(
+        self,
+        client_order_id: str,
+        *,
+        reason: str,
+        now: datetime,
+        initiator: str = "paper_ledger",
+        call_site: str = "PaperLedger.cancel_order",
+    ) -> PaperEvent:
         order = self.get_order(client_order_id)
         if order.status not in {"open", "partially_filled"}:
             raise ValueError(f"Order is not cancellable: {client_order_id}")
         remainder = order.remaining_amount
         released = remainder * order.limit_price if order.side == "buy" else remainder
+        base_currency, quote_currency = self._symbol_currencies(order.symbol)
+        released_kind = "cash" if order.side == "buy" else "inventory"
+        released_unit = quote_currency if order.side == "buy" else base_currency
+        process_id = os.getpid()
+        cancellation_context = {
+            "reason": str(reason),
+            "initiator": str(initiator),
+            "call_site": str(call_site),
+            "session_id": self.session_id,
+            "symbol": self.symbol,
+            "process_id": process_id,
+            "timestamp": now.isoformat(),
+            "released_locked_amount": released,
+            "released_locked_kind": released_kind,
+            "released_locked_unit": released_unit,
+        }
         order.status = "cancelled"
         order.fill_reason = reason
+        order.cancellation_context = cancellation_context
         order.updated_at = now
         self.active_orders.pop(client_order_id, None)
         self._persist()
         snap = self.snapshot()
-        return PaperEvent(
+        event = PaperEvent(
             order_id=client_order_id,
             status="cancelled",
             reason=reason,
@@ -685,12 +737,41 @@ class PaperLedger:
             wealth_after=snap.wealth,
             cancelled_remainder=remainder,
             released_locked_amount=released,
+            released_locked_kind=released_kind,
+            released_locked_unit=released_unit,
+            initiator=str(initiator),
+            call_site=str(call_site),
+            session_id=self.session_id,
+            symbol=self.symbol,
+            process_id=process_id,
+            timestamp=now.isoformat(),
         )
+        print(json.dumps({
+            "event": "paper_order_cancelled",
+            "reason": event.reason,
+            "initiator": event.initiator,
+            "call_site": event.call_site,
+            "session_id": event.session_id,
+            "symbol": event.symbol,
+            "process_id": event.process_id,
+            "order_id": event.order_id,
+            "released_locked_amount": event.released_locked_amount,
+            "released_locked_kind": event.released_locked_kind,
+            "released_locked_unit": event.released_locked_unit,
+            "timestamp": event.timestamp,
+        }, sort_keys=True), flush=True)
+        return event
 
     def cancel_stale(self, *, max_age_seconds: float, now: datetime) -> List[PaperEvent]:
         events = []
         for order_id in list(self.active_orders):
             order = self.active_orders[order_id]
             if (now - order.created_at).total_seconds() > max_age_seconds:
-                events.append(self.cancel_order(order_id, reason="stale_timeout", now=now))
+                events.append(self.cancel_order(
+                    order_id,
+                    reason="stale_timeout",
+                    now=now,
+                    initiator="paper_ledger_stale_monitor",
+                    call_site="PaperLedger.cancel_stale",
+                ))
         return events

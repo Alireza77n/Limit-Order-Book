@@ -90,18 +90,21 @@ def test_submission_message_is_sent_once_and_id_is_persisted(tmp_path):
     post = _Post([_Response(200, {"ok": True, "result": {"message_id": 101}})])
     reporter = PaperTelegramReporter(TelegramClient("token", "chat", post=post))
 
-    assert reporter.order_submitted(ledger, order) == 101
+    ledger.record_telegram_round_parent(order.client_order_id, message_id=77)
+    assert reporter.order_submitted(ledger, order, reply_to_message_id=77) == 101
     assert reporter.order_submitted(ledger, order) == 101
 
     restored = PaperLedger.load(tmp_path / "paper.json").get_order("buy-1")
     assert restored.telegram_submission_message_id == 101
+    assert restored.telegram_round_message_id == 77
     assert restored.telegram_submission_attempted is True
     assert len(post.calls) == 1
-    assert "DEMO BUY ORDER OPENED" in post.calls[0][1]["text"]
+    assert post.calls[0][1]["reply_to_message_id"] == 77
+    assert "BUY OPENED" in post.calls[0][1]["text"]
     assert "shared-session" in post.calls[0][1]["text"]
 
 
-def test_partial_and_final_fill_reply_once_to_original_message(tmp_path):
+def test_partial_and_final_fill_reply_once_to_round_parent(tmp_path):
     ledger = _ledger(tmp_path)
     order = _order(ledger)
     post = _Post([
@@ -110,7 +113,7 @@ def test_partial_and_final_fill_reply_once_to_original_message(tmp_path):
         _Response(200, {"ok": True, "result": {"message_id": 103}}),
     ])
     reporter = PaperTelegramReporter(TelegramClient("token", "chat", post=post))
-    reporter.order_submitted(ledger, order)
+    reporter.order_submitted(ledger, order, reply_to_message_id=77)
 
     partial = ledger.apply_cumulative_fill(
         "buy-1", cumulative_matched=0.4, fill_price=99, reason="trade_cross", now=NOW
@@ -124,10 +127,10 @@ def test_partial_and_final_fill_reply_once_to_original_message(tmp_path):
     reporter.order_changed(ledger, final)
 
     assert len(post.calls) == 3
-    assert post.calls[1][1]["reply_to_message_id"] == 101
-    assert post.calls[2][1]["reply_to_message_id"] == 101
+    assert post.calls[1][1]["reply_to_message_id"] == 77
+    assert post.calls[2][1]["reply_to_message_id"] == 77
     assert "PARTIALLY FILLED" in post.calls[1][1]["text"]
-    assert "FULLY FILLED" in post.calls[2][1]["text"]
+    assert "BUY FILLED" in post.calls[2][1]["text"]
     assert ledger.get_order("buy-1").telegram_last_reported_matched == pytest.approx(1)
 
 
@@ -139,7 +142,7 @@ def test_cancellation_replies_once_and_preserves_matched_amount(tmp_path):
         _Response(200, {"ok": True, "result": {"message_id": 102}}),
     ])
     reporter = PaperTelegramReporter(TelegramClient("token", "chat", post=post))
-    reporter.order_submitted(ledger, order)
+    reporter.order_submitted(ledger, order, reply_to_message_id=77)
     ledger.apply_cumulative_fill(
         "buy-1", cumulative_matched=0.4, fill_price=100, reason="trade_cross", now=NOW
     )
@@ -149,8 +152,10 @@ def test_cancellation_replies_once_and_preserves_matched_amount(tmp_path):
     reporter.order_changed(ledger, event)
 
     assert len(post.calls) == 2
-    assert post.calls[1][1]["reply_to_message_id"] == 101
+    assert post.calls[1][1]["reply_to_message_id"] == 77
     assert "Matched before cancellation: 0.40000000" in post.calls[1][1]["text"]
+    assert "Released cash: 60.00 IRT" in post.calls[1][1]["text"]
+    assert "Reason: <code>stale_timeout</code>" in post.calls[1][1]["text"]
     assert ledger.get_order("buy-1").telegram_terminal_reported is True
 
 

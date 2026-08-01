@@ -27,7 +27,7 @@ from pathlib import Path
 
 from config import MMConfig, RESULTS_DIR, TRADING_PROFILES, demo_csv_path
 from portfolio import Nobitex_portfolio
-from engine import SimpleMarketMaker
+from engine import CoordinatedShutdown, SimpleMarketMaker
 from exchange.nobitex import NobitexExchangeClient
 from exchange.demo import DemoExchangeClient
 from strategy.algo1 import Algo1Strategy
@@ -47,7 +47,7 @@ EXCHANGES = {
 
 def _shutdown_signal_handler(signum, frame):
     """Route container stop signals through the engine's cleanup path."""
-    raise KeyboardInterrupt
+    raise CoordinatedShutdown(signum)
 
 
 def install_shutdown_signal_handlers() -> None:

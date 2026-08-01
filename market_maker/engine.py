@@ -43,6 +43,14 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 TEHRAN_TZ = pytz.timezone("Asia/Tehran")
 
 
+class CoordinatedShutdown(KeyboardInterrupt):
+    """Raised only by the installed SIGTERM/SIGINT coordination handler."""
+
+    def __init__(self, signum: int):
+        self.signum = int(signum)
+        super().__init__(f"coordinated shutdown signal {self.signum}")
+
+
 
 
 class SimpleMarketMaker:
@@ -328,6 +336,25 @@ class SimpleMarketMaker:
         Returns True only when Telegram returns HTTP success, JSON ok=true,
         and a message identifier."""
         return self.telegram_client.send(text) is not None
+
+    def _safe_reporter_call(self, method_name: str, *args, **kwargs):
+        method = getattr(self.telegram_reporter, method_name, None)
+        if method is None:
+            return None
+        try:
+            return method(*args, **kwargs)
+        except Exception as exc:
+            print(json.dumps({
+                "event": "telegram_reporting_error",
+                "method": method_name,
+                "session_id": str(self.session),
+                "symbol": self.pair,
+                "process_id": os.getpid(),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "timestamp": self.now_provider().isoformat(),
+            }, sort_keys=True), flush=True)
+            return None
 
     def _mode_tag(self) -> str:
         """Prominent, unmissable badge for the very first line of every
@@ -803,7 +830,20 @@ class SimpleMarketMaker:
         if method is None:
             self.no_quote_monitor.suppress_pending()
             return
-        message_id = method(decision)
+        try:
+            message_id = method(decision)
+        except Exception as exc:
+            print(json.dumps({
+                "event": "telegram_reporting_error",
+                "method": getattr(method, "__name__", "no_quote_notification"),
+                "session_id": str(self.session),
+                "symbol": self.pair,
+                "process_id": os.getpid(),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "timestamp": self.now_provider().isoformat(),
+            }, sort_keys=True), flush=True)
+            return
         if message_id is not None:
             self.no_quote_monitor.mark_delivered(decision, message_id)
             return
@@ -910,6 +950,67 @@ class SimpleMarketMaker:
                     for column, value in financial_fields.items():
                         order_df.at[index, column] = value
 
+    def _finish_demo_session(
+        self,
+        order_df: pd.DataFrame,
+        *,
+        reason: str,
+        initiator: str,
+        call_site: str,
+    ) -> None:
+        stamp = self.now_provider()
+        events = self.exchange.cancel_all_open_orders(
+            reason=reason,
+            initiator=initiator,
+            call_site=call_site,
+            now=stamp,
+        )
+        ledger = self.exchange.ledger
+        snapshot = ledger.snapshot(
+            valuation_price=getattr(ledger, "valuation_price", 0.0)
+        )
+        scopes = ledger.fee_scopes()
+        try:
+            self._sync_demo_order_rows(
+                order_df,
+                changed_order_ids={event.order_id for event in events},
+                snapshot=snapshot,
+                scopes=scopes,
+            )
+            self._update_demo_result_orders(
+                events,
+                snapshot=snapshot,
+                scopes=scopes,
+            )
+        except Exception as exc:
+            print(json.dumps({
+                "event": "demo_shutdown_result_update_error",
+                "reason": reason,
+                "session_id": str(self.session),
+                "symbol": self.pair,
+                "process_id": os.getpid(),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "timestamp": stamp.isoformat(),
+            }, sort_keys=True), flush=True)
+        for event in events:
+            self._safe_reporter_call("order_changed", ledger, event)
+
+    def _safe_demo_flush(self) -> None:
+        try:
+            self.exchange.ledger.compact()
+            self.result_store.export_bounded_csv()
+        except Exception as exc:
+            print(json.dumps({
+                "event": "demo_final_flush_error",
+                "session_id": str(self.session),
+                "symbol": self.pair,
+                "process_id": os.getpid(),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "timestamp": self.now_provider().isoformat(),
+            }, sort_keys=True), flush=True)
+
     def _run_demo(self) -> pd.DataFrame:
         csv_path = self.csv_path or os.path.join(RESULTS_DIR, "track_demo.csv")
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
@@ -921,6 +1022,7 @@ class SimpleMarketMaker:
         round_no = self.result_store.latest_round_no(str(self.session), self.pair)
         run_rounds = 0
         round_target = float(self.monotonic_provider())
+        termination = None
         try:
             while self._within_horizon():
                 run_rounds += 1
@@ -930,7 +1032,7 @@ class SimpleMarketMaker:
                 now = self.now_provider()
                 retry_pending = getattr(self.telegram_reporter, "retry_pending", None)
                 if retry_pending is not None:
-                    retry_pending(self.exchange.ledger)
+                    self._safe_reporter_call("retry_pending", self.exchange.ledger)
                 self._deliver_no_quote_decision(self.no_quote_monitor.pending_decision())
                 try:
                     ob = self._get_orderbook()
@@ -987,7 +1089,9 @@ class SimpleMarketMaker:
                     round_fee=round_fee,
                 )
                 for event in lifecycle_events:
-                    self.telegram_reporter.order_changed(self.exchange.ledger, event)
+                    self._safe_reporter_call(
+                        "order_changed", self.exchange.ledger, event
+                    )
                 ledger.compact()
 
                 diagnostic = self._algo1_diagnostic_document(
@@ -1039,7 +1143,6 @@ class SimpleMarketMaker:
                         )
                         if result_id:
                             sell_order = ledger.get_order(result_id)
-                            self.telegram_reporter.order_submitted(ledger, sell_order)
                         else:
                             sell_reason = "rejected"
                     else:
@@ -1070,12 +1173,47 @@ class SimpleMarketMaker:
                         )
                         if result_id:
                             buy_order = ledger.get_order(result_id)
-                            self.telegram_reporter.order_submitted(ledger, buy_order)
                         else:
                             buy_reason = "rejected"
 
                 snapshot = ledger.snapshot(valuation_price=last_price)
                 scopes = ledger.fee_scopes()
+                round_message = self._format_round_message(
+                    round_no,
+                    now.astimezone(TEHRAN_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                    best_bid,
+                    best_ask,
+                    last_price,
+                    bid_price,
+                    ask_price,
+                    bid_level,
+                    ask_level,
+                    snapshot.inventory,
+                    snapshot.cash,
+                    snapshot.wealth,
+                    int(buy_order is not None),
+                    buy_order.original_amount if buy_order is not None else 0.0,
+                    buy_order.limit_price if buy_order is not None else None,
+                    buy_order.client_order_id if buy_order is not None else None,
+                    int(sell_order is not None),
+                    sell_order.original_amount if sell_order is not None else 0.0,
+                    sell_order.limit_price if sell_order is not None else None,
+                    sell_order.client_order_id if sell_order is not None else None,
+                    round_fee,
+                    scopes.pair_all_time,
+                    scopes.all_symbols_all_time,
+                )
+                round_parent_id = self._safe_reporter_call(
+                    "round_summary", round_message
+                )
+                for submitted_order in (buy_order, sell_order):
+                    if submitted_order is not None:
+                        self._safe_reporter_call(
+                            "order_submitted",
+                            ledger,
+                            submitted_order,
+                            reply_to_message_id=round_parent_id,
+                        )
                 row = {
                     "Session_id": str(self.session),
                     "Algorithm": self.algorithm_id,
@@ -1122,31 +1260,56 @@ class SimpleMarketMaker:
                     limit=self.cfg.demo_csv_export_max_rows
                 )
                 round_target = self._wait_for_next_round(round_target)
-        except KeyboardInterrupt:
-            print("Interrupted by user.")
+            termination = {
+                "reason": "session_end",
+                "initiator": "demo_engine",
+                "call_site": "SimpleMarketMaker._run_demo.session_end",
+            }
+        except CoordinatedShutdown as exc:
+            termination = {
+                "reason": "coordinated_stack_shutdown",
+                "initiator": f"signal:{exc.signum}",
+                "call_site": "SimpleMarketMaker._run_demo.coordinated_signal",
+            }
+            print(f"Coordinated shutdown requested by signal {exc.signum}.")
+        except KeyboardInterrupt as exc:
+            # A module reload in an embedding process can create another
+            # CoordinatedShutdown class identity. The explicit signal field,
+            # not a generic KeyboardInterrupt, remains the shutdown proof.
+            signum = getattr(exc, "signum", None)
+            if signum is not None:
+                termination = {
+                    "reason": "coordinated_stack_shutdown",
+                    "initiator": f"signal:{int(signum)}",
+                    "call_site": "SimpleMarketMaker._run_demo.coordinated_signal",
+                }
+                print(f"Coordinated shutdown requested by signal {int(signum)}.")
+            else:
+                termination = {
+                    "reason": "session_end",
+                    "initiator": "interactive_keyboard_interrupt",
+                    "call_site": "SimpleMarketMaker._run_demo.keyboard_interrupt",
+                }
+                print("Interrupted by user.")
+        except Exception as exc:
+            print(json.dumps({
+                "event": "demo_worker_exit",
+                "reason": "worker_fatal_exit",
+                "initiator": "unhandled_exception",
+                "call_site": "SimpleMarketMaker._run_demo",
+                "session_id": str(self.session),
+                "symbol": self.pair,
+                "process_id": os.getpid(),
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "active_order_ids": sorted(self.exchange.ledger.active_orders),
+                "timestamp": self.now_provider().isoformat(),
+            }, sort_keys=True), flush=True)
+            raise
         finally:
-            shutdown_time = self.now_provider()
-            shutdown_events = self.exchange.cancel_all_open_orders(now=shutdown_time)
-            ledger = self.exchange.ledger
-            shutdown_snapshot = ledger.snapshot(
-                valuation_price=getattr(ledger, "valuation_price", 0.0)
-            )
-            shutdown_scopes = ledger.fee_scopes()
-            self._sync_demo_order_rows(
-                order_df,
-                changed_order_ids={event.order_id for event in (shutdown_events or [])},
-                snapshot=shutdown_snapshot,
-                scopes=shutdown_scopes,
-            )
-            self._update_demo_result_orders(
-                shutdown_events or [],
-                snapshot=shutdown_snapshot,
-                scopes=shutdown_scopes,
-            )
-            for event in shutdown_events or []:
-                self.telegram_reporter.order_changed(self.exchange.ledger, event)
-            ledger.compact()
-            self.result_store.export_bounded_csv()
+            if termination is not None:
+                self._finish_demo_session(order_df, **termination)
+            self._safe_demo_flush()
         return self.result_store.load_view()
 
     def run(self) -> pd.DataFrame:

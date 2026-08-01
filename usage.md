@@ -10,9 +10,9 @@ project *is* and how it's architected, see [README.md](README.md).
 | [Live trading](#1-live-trading-real-money-real-account) | `python run.py --profile btc\|usdt` | Yes | **Yes -- real money** | **Yes** |
 | [Demo / paper trading](#1b-demo-mode-real-market-data-simulated-orders) | `python run.py --profile btc\|usdt --mode demo` | **Yes** | No -- simulated | No |
 | [Automated tests](#2-automated-tests-no-account-no-money-no-database) | `pytest -q` | No | No | No |
-| [History dashboard](#3-history-dashboard) | `python dashboard.py` | No (reads local CSVs) | No | No |
+| [History dashboard](#3-history-dashboard) | `python dashboard.py` | No (reads local SQLite/CSV results) | No | No |
 | [Research notebooks](#4-research-notebooks-read-only) | open in Jupyter | No | No | No |
-| [Docker](#6-docker) | `docker compose up -d --build` | Yes (demo mode) | No -- simulated | No |
+| [Docker](#6-docker) | `docker compose up -d --build --wait` | Yes (demo mode) | No -- simulated | No |
 
 Note on terminology: `demo_btc.py`/`demo_usdt.py` (this branch's `run.py
 --profile btc/usdt --mode real`, the default) were **never** a simulated
@@ -102,6 +102,8 @@ python run.py --help
 --exchange {nobitex}       Exchange providing real market data. Default: nobitex.
 --mode {real,demo}         real: real orders, needs MySQL (default).
                            demo: simulated orders, no MySQL -- see §1b.
+--continuous               run until intentionally stopped; ignore profile
+                           round/time-horizon limits.
 ```
 
 Adding a new currency pair is a `config.TRADING_PROFILES` entry; adding a
@@ -122,13 +124,17 @@ Optional, off by default. Set both `TELEGRAM_BOT_TOKEN` and
 
 - A **startup message** when `run()` begins: symbol, algorithm, commission
   rate, session id.
-- A **message every round**: the quote decided (or "no quote this
-  round"), best bid/ask/last, current inventory/cash/wealth, whether a
-  buy/sell was actually sent (with size and price), the **transaction
-  cost for that round**, the **cumulative cost paid for this symbol**,
-  and the **cumulative cost paid across all symbols combined**.
+- Persisted paper-order submission and lifecycle messages. Each round's
+  summary message is the parent thread; submitted-order, fill, and
+  cancellation updates for that round reply to it when Telegram returns a
+  usable message ID (see §6.8 for the exact reason vocabulary).
+- A sustained **no-quote alert** after the configured count or duration,
+  containing the reason, candidate spreads/prices, commission,
+  `exp_ret_min`, and required threshold. Cooldown and state-change rules
+  prevent repeated alert spam; a later valid quote resets the episode and
+  can emit a recovery message.
 
-Every message -- startup and round alike -- opens with a prominent
+Every notification opens with a prominent
 🧪 **DEMO MODE** / 🔴 **LIVE MODE** badge as its first line, so real and
 paper-trading messages can never be mistaken for each other while
 scrolling a chat that has both. Section headers (Quote / Market /
@@ -138,18 +144,13 @@ console logs) are in **Asia/Tehran local time** explicitly, regardless of
 the host or container's own system timezone -- Docker containers default
 to UTC, so this is computed with `pytz`, not left to the OS.
 
-Cumulative totals are tracked in a small local JSON file
-(`market_maker/results/costs_<mode>.json`, gitignored, never committed) keyed
-by trading pair -- this is what lets a BTC process and a separately-running
-USDT process each report a combined total that includes the other's costs,
-since every `run.py` invocation is its own process (§1b's "run both at
-once"). No locking: a lost update on a rare simultaneous write from two
-processes is an accepted tradeoff for a notification feature, not
-something the trading logic itself depends on.
+Cumulative Demo fees are stored in the locked
+`market_maker/results/paper_fee_scopes.json` document. It records pair,
+session, and all-symbol totals and uses per-order cumulative high-watermarks
+so recovered partial fills cannot be charged twice.
 
-Both the notification call and the cost-tracking write are best-effort --
-a Telegram/network hiccup or a file-write failure is caught and logged,
-never allowed to crash the trading loop.
+Telegram delivery is best-effort: a network hiccup is persisted as pending
+and retried without mutating paper accounting.
 
 ---
 
@@ -160,12 +161,14 @@ exact same real, live Nobitex order book -- the only thing that changes is
 what happens after a quote is decided:
 
 - **Order book, prices, spreads: real.** `DemoExchangeClient` delegates
-  `get_orderbook`/`wallet_balance` straight to the real Nobitex client.
-  Nothing about how a quote is computed changes.
+  only public order-book reads to the real Nobitex client. It does not
+  delegate wallet access. Nothing about how a quote is computed changes.
 - **Orders: simulated, never sent to Nobitex.** Instead of calling
-  Nobitex's order-placement endpoint, a simulated order is recorded
-  locally and reported back as instantly and fully filled. No real order
-  is ever placed; no real money moves.
+  Nobitex's order-placement endpoint, an open paper order is recorded in
+  the canonical local ledger. Configured level-1 delay/fraction, price
+  touch, explicit trade evidence, optional queue-ahead, partial fills,
+  stale cancellation, and shutdown cancellation drive its lifecycle. No
+  real order is ever placed; no real money moves.
 - **Transaction cost: simulated realistically.** Each simulated fill's fee
   is `amount * commission_perc` (buys, base currency) or
   `amount * price * commission_perc` (sells, quote currency) -- the same
@@ -184,11 +187,15 @@ what happens after a quote is decided:
   starting capital to size orders against).
 - **No MySQL required.** `persist_to_db=False` in demo mode -- the engine
   never opens a database connection.
-- **Results still saved completely** -- to a separate CSV so demo runs
-  never mix with real trading history: `btc_track.csv` → `btc_track_demo.csv`
-  (same for USDT). Every column real mode logs (inventory, cash, portfolio
-  wealth, bid/ask levels and prices, buy/sell size and status, timestamps)
-  is logged identically in demo mode.
+- **Results are durable and bounded.** SQLite is the canonical append/upsert
+  store (`btc_track_demo.sqlite3` / `usdt_track_demo.sqlite3`). The familiar
+  Demo CSV files are atomic, bounded dashboard exports rather than an
+  unbounded history rewrite. Paper state is persisted separately and old
+  terminal orders are archived before hot-state pruning.
+- **Profitability protection remains authoritative.** If Algorithm 1 finds
+  no candidate above `commission_perc + exp_ret_min`, Demo records a
+  `no_quote` round and sends no paper order. The monitor records the exact
+  reason and candidate diagnostics; it never forces a quote.
 
 ```sh
 cd market_maker
@@ -196,10 +203,10 @@ python run.py --profile btc  --mode demo    # paper trade BTCIRT
 python run.py --profile usdt --mode demo    # paper trade USDTIRT
 ```
 
-**Run both at once:** each `run()` is a self-contained blocking loop with
-its own state (own CSV, own session) -- there's no shared state between a
-BTC run and a USDT run. Running both simultaneously just means two
-separate process invocations, e.g. in two terminals (or backgrounded):
+**Run both natively:** each `run()` is a blocking worker with isolated
+per-symbol order state. Without `DEMO_SESSION_FILE`, native invocations
+generate their own session IDs. Running both simultaneously means two
+process invocations, for example:
 
 ```sh
 cd market_maker
@@ -207,15 +214,13 @@ python run.py --profile btc  --mode demo &
 python run.py --profile usdt --mode demo &
 ```
 
-Or use Docker Compose (§6), which runs both plus the dashboard as three
-containers with one command.
+Or use Docker Compose (§6), which runs both workers plus the shared-session
+initializer and dashboard with one command.
 
-**Simplification, stated plainly:** demo fills assume the full requested
-amount executes instantly at the quoted price -- no partial fills, no
-slippage, no queue position or latency modeling. This is a reasonable
-first approximation for exercising the strategy against real prices, not
-a fill-probability model. See `exchange/demo.py`'s docstring for the
-upgrade path if that matters for your use case.
+The simulator remains an approximation, not an exchange matching engine.
+Its level-1 fast-fill and optional queue model are deterministic operating
+assumptions; they do not model every source of latency, slippage, or queue
+priority on Nobitex.
 
 Only `--algorithm algo1` is meaningful today (the current goal); `algo2`
 still raises `NotImplementedError` in demo mode exactly as in real mode.
@@ -224,31 +229,17 @@ still raises `NotImplementedError` in demo mode exactly as in real mode.
 
 ## 2. Automated tests
 
+From the repository root:
+
 ```sh
-cd market_maker/tests
 python3 -m pytest -q
 ```
 
-67 tests. **65 are pure Python** (no network, no database, nothing touches
-Nobitex) covering both algorithms' strategy logic, env-var config
-sourcing, `DemoExchangeClient`'s simulated fills, the `persist_to_db`
-flag, `run.make_cfg`'s real-vs-demo config sourcing, and the dashboard's
-CSV/session handling. **The other 2
-(`test_demo_end_to_end.py`) make real network calls** to Nobitex's public
-orderbook endpoint (no auth, read-only, nothing placed) and actually run
-the full `run()` loop for 2 rounds, once per profile (BTC, USDT), with
-`NobitexExchangeClient.send_order` monkeypatched to raise if it's ever
-called -- proving demo mode's real control flow, not just its pieces in
-isolation, never places a real order. These two skip cleanly (not fail)
-if the network is unreachable, and add ~10-20s to the run since each
-round is a real request.
-
-Still nothing here needs a real Nobitex account, MySQL, or places real
-orders -- this remains the only mode safe to run without either.
-
-See README.md's "Testing" section for the full breakdown of what's
-covered and what isn't (`run()` beyond 2 rounds, `send_order` against
-Nobitex itself, `save_to_db` -- anything inherently live and unbounded).
+The current suite has 171 deterministic tests. It uses mocks and replay
+fixtures for exchange, Telegram, lifecycle, restart, accounting, retention,
+dashboard, and two-symbol end-to-end behavior. It does not require a
+Nobitex account, public network access, Telegram, or MySQL, and it does not
+place real orders.
 
 ---
 
@@ -262,9 +253,9 @@ python3 dashboard.py
 Serves a live-updating dashboard at `http://localhost:8050` covering all
 four tracks this project can produce -- BTC/USDT × real/demo -- each
 clearly labeled so real trading history is never confused with paper
-runs. Read-only against the CSVs; doesn't touch Nobitex or MySQL itself,
-and auto-refreshes every 20 seconds so it's safe to leave open while a
-real `run.py` or `--mode demo` session is writing to the same file.
+runs. For Demo tracks it prefers the sibling SQLite result store and
+falls back to CSV; Real tracks remain CSV-compatible. It does not touch
+Nobitex or MySQL and auto-refreshes every 20 seconds.
 
 **Layout:** a toolbar card (track picker, session picker, a colored
 real/demo status badge with icon + label -- never color alone) sits above
@@ -323,10 +314,10 @@ don't place orders or touch any live account.
 Kept here for anyone comparing against the state before `--mode demo`
 existed, and as an honest limitations list:
 
-- No fill-probability, slippage, or queue-position modeling -- see §1b.
-- No simulated wallet balance -- `wallet_balance()` in demo mode returns
-  the real account's real balance (read-only, no risk), it isn't tracked
-  as a simulated portfolio separately from `inv_initial`/`cash_initial`.
+- The deterministic paper fill/queue model is not a complete exchange
+  matching or slippage model -- see §1b.
+- No authenticated wallet access. Demo portfolio state comes from the
+  configured initial cash/inventory and canonical paper ledger.
 - Algorithm 2 is still just a stub in demo mode, same as real mode.
 - No built-in way to run more than one profile in a single process --
   see §1b's "run both at once" for the two-process approach, or §6 for
@@ -336,43 +327,232 @@ existed, and as an honest limitations list:
 
 ## 6. Docker
 
-Runs both pairs in demo mode plus the dashboard as three containers
-sharing one `results/` volume, so the dashboard sees both bots' live
-output. One image (`Dockerfile`, repo root), three services
-(`docker-compose.yml`).
+Docker Compose runs the whole operational Demo stack: one session
+initializer, continuous BTC and USDT paper workers, and the dashboard.
+All services use the root `Dockerfile` and share the results bind mount.
+
+### 6.1 Requirements
+
+- Docker Desktop or Docker Engine with Compose v2.
+- Outbound access to Nobitex's public order-book endpoint.
+- Port 8050 available for the dashboard.
+- No Nobitex order token or MySQL server is required for Demo mode.
+
+Run every command below from the repository root:
+
+```sh
+cd /Users/parsaoryani/Documents/Limit-Order-Book
+```
+
+`market_maker/.env` is optional. Create it only when you want Telegram
+notifications or need to override documented environment settings:
 
 ```sh
 cp market_maker/.env.example market_maker/.env
-# fill in real values -- NOBITEX_API_TOKEN not required for demo mode's
-# market-data reads, but TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID must be set
-# here if you want notifications from the containers
-
-docker compose up -d --build   # builds the image, starts all three services
-docker compose logs -f btc-demo usdt-demo   # follow both bots' output
-docker compose down            # stop everything
+# Edit TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID if notifications are wanted.
+# Do not add a real Nobitex order token for a Demo-only deployment.
 ```
 
-Services (all built from the same image, repo root `Dockerfile`):
+The file is supplied at container start and excluded from the image by
+`.dockerignore`.
 
-| Service | Command | Port |
-|---|---|---|
-| `btc-demo` | `run.py --profile btc --mode demo` | none |
-| `usdt-demo` | `run.py --profile usdt --mode demo` | none |
-| `dashboard` | `dashboard.py` | `8050` (http://localhost:8050) |
+### 6.2 Build and start the entire project
 
-`market_maker/.env` is passed in at container start via `env_file`, never
-baked into the image (see `.dockerignore`). `market_maker/results/` is a
-bind mount, so CSVs and `costs_demo.json` land in the same place whether
-you run natively or in Docker -- `config.RESULTS_DIR` resolves identically
-either way.
+Build all images without starting containers:
 
-**No real (`--mode real`) service is defined** -- real mode needs a
-reachable MySQL server, out of scope while the project's focus is demo
-mode. Point `MYSQL_HOST` at your own server and add a service with
-`command: ["python", "run.py", "--profile", "btc"]` (no `--mode demo`) if
-you need it later.
+```sh
+docker compose build
+```
 
-The image sets `PYTHONUNBUFFERED=1` -- without it, Python fully buffers
-stdout when it isn't attached to a terminal (always true in a container),
-so `docker compose logs` would show nothing for a long time even though
-the bot is running correctly and writing results.
+Build changed images, start the full stack in the background, and wait for
+health checks:
+
+```sh
+docker compose up -d --build --wait
+```
+
+Expected services:
+
+| Service | Command/role | Expected state | Port |
+|---|---|---|---|
+| `session-init` | creates or reuses the shared stack session | exited (0) | none |
+| `btc-demo` | `run.py --profile btc --mode demo --continuous` | healthy | none |
+| `usdt-demo` | `run.py --profile usdt --mode demo --continuous` | healthy | none |
+| `dashboard` | `dashboard.py` | healthy | 8050 |
+
+Check them:
+
+```sh
+docker compose ps -a
+```
+
+Open the dashboard at <http://localhost:8050>.
+
+### 6.3 Monitor the running stack
+
+Follow all application logs:
+
+```sh
+docker compose logs -f btc-demo usdt-demo dashboard
+```
+
+Follow one worker or show its last 200 lines:
+
+```sh
+docker compose logs -f usdt-demo
+docker compose logs --tail 200 btc-demo
+```
+
+Watch CPU, memory, network, and process counts:
+
+```sh
+docker stats
+```
+
+Confirm health and restart state:
+
+```sh
+docker compose ps
+```
+
+Compose container names include the project-directory name and can vary.
+Use `docker compose ps -q btc-demo` when a command needs the exact ID:
+
+```sh
+docker inspect "$(docker compose ps -q btc-demo)" \
+  --format 'health={{.State.Health.Status}} restarts={{.RestartCount}} oom={{.State.OOMKilled}}'
+```
+
+Do not open a live bind-mounted SQLite WAL directly from macOS while the
+containers are writing. On Docker Desktop, inspect it from a Linux
+container instead, or stop the workers first. The dashboard already reads
+the stores safely from inside the Compose environment. Never move, rename,
+copy over, or delete a live `.sqlite3`, `-wal`, or `-shm` file; stop both
+workers first and confirm they have exited before handling those files.
+
+### 6.4 Results and retention
+
+Normal Compose writes to `market_maker/results/`:
+
+```text
+stack_session.json                         shared BTC/USDT session
+btc_track_demo.sqlite3                     canonical BTC round store
+usdt_track_demo.sqlite3                    canonical USDT round store
+btc_track_demo.csv / usdt_track_demo.csv   bounded dashboard exports
+paper_<session>_<symbol>.json               hot paper ledger/account
+paper_<session>_<symbol>_archive*.jsonl     rotated terminal-order archives
+paper_fee_scopes.json                       fee totals/high-watermarks
+```
+
+Default limits are 10,000 rows in each CSV export, 100,000 durable result
+rows per symbol store, 1,000 hot terminal paper orders, and 10,000,000
+bytes per archive segment. Adjust the corresponding `MMConfig` fields in
+`market_maker/config.py` if another operational envelope is required.
+
+USDT may legitimately show `no_quote` for every round. Algorithm 1 refuses
+paper orders when no candidate clears the configured profitability
+threshold. The dashboard exposes the consecutive count, duration, reason,
+alert state, and exact candidate diagnostics. A valid quote resets the
+episode.
+
+### 6.5 Restart and session behavior
+
+Restart one worker while preserving the current shared session:
+
+```sh
+docker compose restart usdt-demo
+docker compose ps usdt-demo
+```
+
+The worker resumes its persisted round sequence and no-quote episode.
+Starting a duplicate worker for the same symbol fails closed through the
+worker lease.
+
+Stopping every worker and later starting the full stack creates a new
+stack session. Previous sessions remain queryable in SQLite/dashboard
+history.
+
+### 6.6 Credential-empty validation stack
+
+For audits and safe live-public-data testing, combine the normal Compose
+file with the validation override:
+
+```sh
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.validation.yml \
+  up -d --build --wait
+```
+
+This explicitly empties Nobitex order, Telegram, and MySQL credentials and
+writes to `.docker-validation-results/` instead of the normal results
+directory.
+
+Use the same file combination for status, logs, stop, and teardown:
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.validation.yml ps -a
+docker compose -f docker-compose.yml -f docker-compose.validation.yml logs -f
+docker compose -f docker-compose.yml -f docker-compose.validation.yml stop
+docker compose -f docker-compose.yml -f docker-compose.validation.yml down
+```
+
+### 6.7 Stop and remove the stack
+
+Gracefully stop workers while retaining the containers:
+
+```sh
+docker compose stop
+```
+
+SIGTERM/SIGINT is routed through typed coordinated cleanup. Local open paper
+orders are cancelled with the exact reason `coordinated_stack_shutdown`,
+final state is persisted, worker leases are released, and workers exit
+normally. An unexpected worker exception does **not** cancel open paper
+orders; Docker can restart the same session and restore/reconcile them.
+
+Stop and remove containers and the Compose network while preserving the
+bind-mounted result files:
+
+```sh
+docker compose down
+```
+
+Rebuild after code or dependency changes:
+
+```sh
+docker compose up -d --build --wait
+```
+
+**No real (`--mode real`) service is defined.** The supplied Compose stack
+cannot place real Nobitex orders and does not connect to production MySQL.
+Real deployment requires a separate, deliberately reviewed service and is
+outside this Demo stack.
+
+The image sets `PYTHONUNBUFFERED=1`, so worker output appears promptly in
+`docker compose logs`.
+
+### 6.8 Demo Telegram order messages and cancellation reasons
+
+Each completed Demo round sends one main summary containing the quote,
+market, portfolio, submitted/not-submitted orders, and fee scopes. `BUY
+OPENED`, `SELL OPENED`, partial-fill, fill, and cancellation messages reply
+to that round summary, so one round stays together in Telegram.
+
+| Reason | Meaning |
+|---|---|
+| `stale_timeout` | configured paper-order lifetime expired |
+| `manual_cancel` | operator/API explicitly cancelled one paper order |
+| `session_end` | finite Demo round limit or time horizon ended normally |
+| `coordinated_stack_shutdown` | installed SIGTERM/SIGINT handler initiated cleanup |
+| `worker_fatal_exit` | logged exit classification; active orders are preserved for same-session retry, not automatically cancelled |
+
+Legacy state may contain the old `stack_shutdown` value. New code never
+creates it. Structured cancellation logs include the initiator, call site,
+session, symbol, process ID, timestamp, order ID, and released lock
+value/unit.
+
+For a buy, released lock is quote-currency cash: `remaining amount × limit
+price`. Cancelling a 1 USDT paper buy at 90 IRT therefore releases `90.00
+IRT`. For a sell, released lock is base-currency inventory and is reported
+as USDT or BTC.

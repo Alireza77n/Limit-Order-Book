@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import signal
 
 import pytest
 
@@ -57,9 +58,14 @@ class RecordingReporter:
         self.changes = []
         self.no_quote_alerts = []
         self.no_quote_recoveries = []
+        self.round_summaries = []
 
-    def order_submitted(self, ledger, order):
-        self.submissions.append((order.client_order_id, order.status))
+    def round_summary(self, text):
+        self.round_summaries.append(text)
+        return 700 + len(self.round_summaries)
+
+    def order_submitted(self, ledger, order, *, reply_to_message_id=None):
+        self.submissions.append((order.client_order_id, order.status, reply_to_message_id))
 
     def order_changed(self, ledger, event):
         self.changes.append((event.order_id, event.status, event.reason))
@@ -139,8 +145,16 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     assert result["inv_current"].iloc[1] == pytest.approx(0.999)
     assert result["cash_current"].iloc[1] == pytest.approx(910.0)
     assert result["Round Fee"].iloc[1] == pytest.approx(0.09)
-    assert [status for _, status in reporter.submissions] == ["open", "open", "open"]
+    assert [status for _, status, _ in reporter.submissions] == ["open", "open", "open"]
+    assert [parent for _, _, parent in reporter.submissions] == [701, 702, 702]
+    assert len(reporter.round_summaries) == 2
+    assert "🧪 <b>DEMO MODE</b>" in reporter.round_summaries[0]
+    assert "<b>USDTIRT</b> · Round 1" in reporter.round_summaries[0]
+    assert "<b>Orders</b>" in reporter.round_summaries[0]
     assert [status for _, status, _ in reporter.changes] == ["filled", "cancelled", "cancelled"]
+    assert [reason for _, _, reason in reporter.changes] == [
+        "level1_fast_fill", "session_end", "session_end",
+    ]
 
 
 def test_demo_queue_ahead_uses_displayed_selected_level_volume(tmp_path):
@@ -214,6 +228,103 @@ def test_demo_engine_recovers_after_temporary_market_data_failure(tmp_path):
 
     assert len(result) == 1
     assert result.iloc[0]["Round"] == 2
+    assert all(
+        order.fill_reason != "stack_shutdown"
+        for order in bot.exchange.ledger.order_history.values()
+    )
+
+
+def test_telegram_reporter_failure_does_not_cancel_or_stop_rounds(tmp_path):
+    class FailingReporter(RecordingReporter):
+        def round_summary(self, text):
+            raise OSError("telegram unavailable")
+
+        def order_submitted(self, ledger, order, *, reply_to_message_id=None):
+            raise OSError("telegram unavailable")
+
+    cfg = run.make_cfg("usdt", mode="demo", session_id="telegram-retry-session")
+    cfg.output_csv = str(tmp_path / "telegram.csv")
+    cfg.demo_state_path = str(tmp_path / "telegram-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "telegram-fees.json")
+    cfg.cash_initial = 1_000.0
+    cfg.order_size = 1.0
+    cfg.max_rounds = 1
+    cfg.time_step = 0
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    bot.telegram_reporter = FailingReporter()
+    bot.now_provider = lambda: T0
+    bot.sleep_fn = lambda seconds: None
+
+    result = bot.run()
+
+    assert len(result) == 1
+    assert {order.fill_reason for order in bot.exchange.ledger.order_history.values()} == {
+        "session_end"
+    }
+
+
+def test_worker_fatal_exit_preserves_orders_for_same_session_retry(tmp_path):
+    cfg = run.make_cfg("usdt", mode="demo", session_id="fatal-retry-session")
+    cfg.output_csv = str(tmp_path / "fatal.csv")
+    cfg.demo_state_path = str(tmp_path / "fatal-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "fatal-fees.json")
+    cfg.cash_initial = 1_000.0
+    cfg.order_size = 1.0
+    cfg.max_rounds = 2
+    cfg.time_step = 0
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    bot.now_provider = lambda: T0
+    bot.sleep_fn = lambda seconds: None
+    bot._ensure_demo_operations(cfg.output_csv)
+    bot.result_store.append_round = lambda row: (_ for _ in ()).throw(OSError("disk fault"))
+
+    with pytest.raises(OSError, match="disk fault"):
+        bot.run()
+
+    assert bot.exchange.ledger.active_orders
+    assert all(
+        order.fill_reason != "stack_shutdown"
+        for order in bot.exchange.ledger.active_orders.values()
+    )
+
+    restored = run.make_bot(cfg, mode="demo")
+    assert set(restored.exchange.ledger.active_orders) == set(bot.exchange.ledger.active_orders)
+
+
+def test_coordinated_signal_is_the_only_stack_shutdown_cancellation(tmp_path):
+    cfg = run.make_cfg("usdt", mode="demo", session_id="coordinated-session")
+    cfg.output_csv = str(tmp_path / "coordinated.csv")
+    cfg.demo_state_path = str(tmp_path / "coordinated-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "coordinated-fees.json")
+    cfg.cash_initial = 1_000.0
+    cfg.order_size = 1.0
+    cfg.max_rounds = 2
+    cfg.time_step = 1
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    times = iter([T0, T0 + timedelta(seconds=1)])
+    bot.now_provider = lambda: next(times)
+    bot.sleep_fn = lambda seconds: (_ for _ in ()).throw(
+        run.CoordinatedShutdown(signal.SIGTERM)
+    )
+
+    result = bot.run()
+
+    assert len(result) == 1
+    assert bot.exchange.ledger.active_orders == {}
+    cancelled = [
+        order for order in bot.exchange.ledger.order_history.values()
+        if order.status == "cancelled"
+    ]
+    assert cancelled
+    assert {order.fill_reason for order in cancelled} == {
+        "coordinated_stack_shutdown"
+    }
 
 
 def test_demo_csv_failure_is_reported_without_terminating(monkeypatch, tmp_path):

@@ -48,8 +48,9 @@ def test_shutdown_signal_handlers_turn_sigterm_into_clean_interrupt(monkeypatch)
 
     assert signal.SIGTERM in installed
     assert signal.SIGINT in installed
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(run.CoordinatedShutdown) as raised:
         installed[signal.SIGTERM](signal.SIGTERM, None)
+    assert raised.value.signum == signal.SIGTERM
 
 
 def test_monotonic_deadline_subtracts_work_and_skips_missed_intervals():

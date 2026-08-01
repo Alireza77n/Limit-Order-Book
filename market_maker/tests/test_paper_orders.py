@@ -216,6 +216,54 @@ def test_cancel_preserves_matched_amount_and_releases_remaining_lock():
     assert "partial-buy" not in ledger.active_orders
     assert "partial-buy" in ledger.order_history
     assert ledger.snapshot().locked_cash == 0
+    assert event.released_locked_amount == pytest.approx(600.0)
+    assert event.released_locked_kind == "cash"
+    assert event.released_locked_unit == "IRT"
+    assert event.initiator == "paper_ledger"
+    assert event.call_site == "PaperLedger.cancel_order"
+    assert event.session_id == "shared-session"
+    assert event.symbol == "USDTIRT"
+    assert event.process_id > 0
+    assert event.timestamp == (T0 + timedelta(minutes=11)).isoformat()
+
+
+def test_one_usdt_buy_at_ninety_releases_ninety_irt():
+    ledger = PaperLedger(
+        session_id="shared-session",
+        symbol="USDTIRT",
+        initial_inventory=10.0,
+        initial_cash=10_000.0,
+        commission_perc=0.001,
+        valuation_price=100.0,
+        state_path=None,
+    )
+    ledger.submit_order(
+        side="buy", limit_price=90.0, amount=1.0, selected_level=4,
+        client_order_id="ninety-irt", now=T0,
+    )
+
+    event = ledger.cancel_order(
+        "ninety-irt", reason="manual_cancel", now=T0 + timedelta(seconds=1),
+        initiator="operator", call_site="test.manual_cancel",
+    )
+
+    assert event.released_locked_amount == pytest.approx(90.0)
+    assert event.released_locked_kind == "cash"
+    assert event.released_locked_unit == "IRT"
+    assert event.initiator == "operator"
+    assert event.call_site == "test.manual_cancel"
+    assert ledger.get_order("ninety-irt").cancellation_context == {
+        "reason": "manual_cancel",
+        "initiator": "operator",
+        "call_site": "test.manual_cancel",
+        "session_id": "shared-session",
+        "symbol": "USDTIRT",
+        "process_id": event.process_id,
+        "timestamp": (T0 + timedelta(seconds=1)).isoformat(),
+        "released_locked_amount": 90.0,
+        "released_locked_kind": "cash",
+        "released_locked_unit": "IRT",
+    }
 
 
 def test_stale_cancellation_only_targets_expired_active_orders():
@@ -234,4 +282,3 @@ def test_stale_cancellation_only_targets_expired_active_orders():
     assert [event.order_id for event in events] == ["old"]
     assert ledger.get_order("old").status == "cancelled"
     assert ledger.get_order("fresh").status == "open"
-
