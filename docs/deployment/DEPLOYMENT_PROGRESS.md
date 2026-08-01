@@ -899,3 +899,78 @@ A separate deployment prompt for driving that rollout was prepared
 alongside this entry -- same server (`ubuntu@185.206.95.141`), same
 project path, same rollback script, gated on the same Sarkhatti-health and
 zero-real-call checks as the prior deployment.
+
+## 2026-08-02 — Admin HTML frontend production deployment
+
+Deployed target `a2bd3fbb7d20591c5a945d383fcbd9b6165bf8a8` by
+fast-forwarding only `parsaoryani/admin-demo-control` and `production`.
+`main` remained unchanged at `ba44366ba266b4e00d9da9467a888ef4f8492727`.
+
+Pre-deployment audit found Sarkhatti healthy and unchanged: container ID
+`4ffa1cdf90fef73f8f068fd646c84c1bf0f85cb5f0ef02a21c676d87425d57f5`,
+restart count `0`, the recorded loopback ports/mount, and the recorded
+Compose/env/Nginx hashes. Five local health requests returned `200` in
+0.006-0.015 seconds. The LOB USDT worker already had restart count `6`
+before this release; Docker state/events showed it was currently running,
+healthy, not restarting/OOM-killed, and retaining the shared session. This
+pre-existing count did not change during the release.
+
+Backed up the unchanged LOB Nginx site to
+`runtime/backups/nginx-html-20260801T212139Z/lob-dashboard`; source and
+backup SHA-256 are both
+`afa6b48048cb0791c4db68375021233ce5ff88de1659b3593ac2af47fa6163c1`.
+No Nginx file, certificate, auth file, or service was modified or reloaded.
+
+The `admin` service has no Compose `build` stanza; `session-init` owns the
+shared `limit-order-book-demo:local` build definition. Built that image
+with revision label `a2bd3fbb7d20591c5a945d383fcbd9b6165bf8a8`, then ran only:
+
+```bash
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env --env-file deploy/admin.env \
+  up -d --no-deps --force-recreate admin
+```
+
+Only `lob-admin` changed container ID (to
+`8cae4d75477cfcf3fa442227c04dda4f752f6c1b5a90bfef78a47e42bc348020`).
+Sarkhatti, BTC, USDT, and dashboard IDs and restart counts remained exact.
+All five containers were healthy, none was OOM-killed, and ports 8652/8653
+remained loopback-only. The LOB services used about 402 MiB combined at
+the post-deploy sample; host available RAM was 888 MiB and swap usage was
+107 MiB.
+
+Live authenticated verification (using a short-lived signed test session;
+production credentials were neither printed nor changed) proved all ten
+admin pages return `200 text/html`. A headerless `/admin/` request retained
+the exact JSON keys `control_lock_held`, `recent_audit`, `session_id`, and
+`workers`. Invalid `commission_perc=5.0` returned `400 text/html` and
+created no queue command or audit record. One safe Create Backup request
+returned `200` and produced exactly one successful `create_backup` audit
+entry. Logout redirected correctly. Public unauthenticated HTTPS remained
+Basic-Auth protected (`401`).
+
+The exact built commit had already passed the full local release gate:
+326 tests, compileall, rollback shell syntax, Compose config, and clean Git
+checks. An optional attempt to rerun focused tests inside the minimal
+production image could not start because `pytest` is intentionally absent;
+this did not mutate the stack. Runtime logs were clean of traceback,
+`stack_shutdown`, real-order, and production-credential patterns. Every
+container retained `DEMO_STARTUP_GUARD_OK real_operations=disabled`. The
+shared session stayed `demo-20260801T180639Z-ecdabcde3c06` with state hash
+`641900ea35d321a8c6be06388765c86728a8fc015b82ac41aebb0ad8db8353aa`.
+
+Rollback remains limited to this project. To roll back only the admin code,
+build the prior revision `a4707439a88699053a88d415296d030d8251c119`
+through the shared `session-init` build definition and force-recreate only
+`admin`. The full project rollback remains:
+
+```bash
+cd /home/ubuntu/limit-order-book
+./deploy/rollback.sh
+```
+
+That full rollback removes only the Limit Order Book stack and its dedicated
+Nginx/auth files; it does not touch Sarkhatti. Current status is a successful
+short deployment verification, not long-term readiness evidence. Exact next
+step: monitor the session hash, USDT restart count (baseline `6`), memory,
+audit cardinality, and Sarkhatti invariants over an extended interval.
