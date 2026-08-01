@@ -1,0 +1,96 @@
+import sqlite3
+
+import pandas as pd
+
+from result_store import DemoResultStore
+
+
+COLUMNS = [
+    "Session_id",
+    "Crypto",
+    "Round",
+    "Timestamp",
+    "Buy Order ID",
+    "Buy Status",
+    "Sell Order ID",
+    "Sell Status",
+    "cash_current",
+]
+
+
+def row(round_no, *, buy_id=None, sell_id=None):
+    return {
+        "Session_id": "session-1",
+        "Crypto": "BTCIRT",
+        "Round": round_no,
+        "Timestamp": f"2026-08-01 12:00:{round_no:02d}",
+        "Buy Order ID": buy_id,
+        "Buy Status": "open" if buy_id else "no_quote",
+        "Sell Order ID": sell_id,
+        "Sell Status": "open" if sell_id else "no_quote",
+        "cash_current": 100.0,
+    }
+
+
+def test_append_and_indexed_lifecycle_update_preserve_prior_rows(tmp_path):
+    store = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS)
+    store.append_round(row(1, buy_id="buy-1"))
+    store.append_round(row(2, buy_id="buy-2"))
+
+    store.update_order_rows(
+        {"buy-1": {"Buy Status": "filled"}},
+        {"buy-1": {"cash_current": 90.0}},
+    )
+
+    view = store.load_view()
+    assert list(view["Round"]) == [1, 2]
+    assert view.loc[0, "Buy Status"] == "filled"
+    assert view.loc[0, "cash_current"] == 90.0
+    assert view.loc[1, "Buy Status"] == "open"
+
+
+def test_bounded_export_and_compaction(tmp_path):
+    csv_path = tmp_path / "btc.csv"
+    store = DemoResultStore(
+        tmp_path / "btc.sqlite3",
+        COLUMNS,
+        csv_export_path=csv_path,
+        csv_export_max_rows=3,
+    )
+    for number in range(1, 7):
+        store.append_round(row(number))
+
+    store.export_bounded_csv()
+
+    assert list(pd.read_csv(csv_path)["Round"]) == [4, 5, 6]
+    assert store.compact(retain_rows=4) == 2
+    assert list(store.load_view()["Round"]) == [3, 4, 5, 6]
+
+
+def test_legacy_csv_import_is_idempotent(tmp_path):
+    csv_path = tmp_path / "legacy.csv"
+    pd.DataFrame([row(1), row(2)]).to_csv(csv_path, index=False)
+    store = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS)
+
+    assert store.import_legacy_csv_once(csv_path) == 2
+    assert store.import_legacy_csv_once(csv_path) == 0
+    assert len(store.load_view()) == 2
+
+
+def test_append_updates_existing_round_instead_of_duplicating(tmp_path):
+    store = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS)
+    store.append_round(row(1, buy_id="first"))
+    store.append_round(row(1, buy_id="replacement"))
+
+    view = store.load_view()
+    assert len(view) == 1
+    assert view.iloc[0]["Buy Order ID"] == "replacement"
+
+
+def test_sqlite_indexes_order_ids(tmp_path):
+    store = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS)
+    with sqlite3.connect(store.db_path) as connection:
+        indexes = {record[1] for record in connection.execute("PRAGMA index_list(rounds)")}
+
+    assert "idx_rounds_buy_order_id" in indexes
+    assert "idx_rounds_sell_order_id" in indexes
