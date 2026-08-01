@@ -97,6 +97,9 @@ class PaperLedger:
         queue_enabled: bool = False,
         state_path=None,
         fee_state_path=None,
+        archive_path=None,
+        hot_terminal_order_limit: int = 1_000,
+        archive_max_bytes: int = 10_000_000,
     ) -> None:
         if not 0 < level1_fill_fraction <= 1:
             raise ValueError("level1_fill_fraction must be in (0, 1]")
@@ -112,9 +115,20 @@ class PaperLedger:
         self.queue_enabled = bool(queue_enabled)
         self.state_path = Path(state_path) if state_path is not None else None
         self.fee_state_path = Path(fee_state_path) if fee_state_path is not None else None
+        if archive_path is not None:
+            self.archive_path = Path(archive_path)
+        elif self.state_path is not None:
+            self.archive_path = self.state_path.with_name(
+                f"{self.state_path.stem}-archive.jsonl"
+            )
+        else:
+            self.archive_path = None
+        self.hot_terminal_order_limit = max(0, int(hot_terminal_order_limit))
+        self.archive_max_bytes = max(1, int(archive_max_bytes))
         self.fees_quote = 0.0
         self.active_orders: Dict[str, PaperOrder] = {}
         self.order_history: Dict[str, PaperOrder] = {}
+        self._archived_order_ids = self._load_archived_order_ids()
 
     @staticmethod
     def _atomic_json_write(path: Path, document: dict) -> None:
@@ -140,7 +154,7 @@ class PaperLedger:
         if self.state_path is None:
             return
         document = {
-            "version": 1,
+            "version": 2,
             "config": {
                 "session_id": self.session_id,
                 "symbol": self.symbol,
@@ -150,6 +164,9 @@ class PaperLedger:
                 "level1_fill_fraction": self.level1_fill_fraction,
                 "queue_enabled": self.queue_enabled,
                 "fee_state_path": str(self.fee_state_path) if self.fee_state_path else None,
+                "archive_path": str(self.archive_path) if self.archive_path else None,
+                "hot_terminal_order_limit": self.hot_terminal_order_limit,
+                "archive_max_bytes": self.archive_max_bytes,
             },
             "account": {
                 "inventory": self.inventory,
@@ -181,6 +198,9 @@ class PaperLedger:
             queue_enabled=config["queue_enabled"],
             state_path=path,
             fee_state_path=config.get("fee_state_path"),
+            archive_path=config.get("archive_path"),
+            hot_terminal_order_limit=config.get("hot_terminal_order_limit", 1_000),
+            archive_max_bytes=config.get("archive_max_bytes", 10_000_000),
         )
         ledger.fees_quote = float(account.get("fees_quote", 0.0))
         for order_document in document.get("orders", []):
@@ -197,20 +217,45 @@ class PaperLedger:
             ledger.active_orders[order_id] = ledger.order_history[order_id]
         return ledger
 
+    @staticmethod
+    def _migrate_fee_document(document: dict) -> dict:
+        applied_events = document.pop("applied_events", {})
+        high_watermarks = document.setdefault("order_high_watermarks", {})
+        for event_id, fee_quote in applied_events.items():
+            try:
+                order_key, cumulative_text = event_id.rsplit(":", 1)
+                cumulative = float(cumulative_text)
+            except (AttributeError, TypeError, ValueError):
+                continue
+            record = high_watermarks.setdefault(
+                order_key, {"cumulative_amount": 0.0, "fee_quote": 0.0}
+            )
+            record["cumulative_amount"] = max(
+                float(record.get("cumulative_amount", 0.0)), cumulative
+            )
+            record["fee_quote"] = float(record.get("fee_quote", 0.0)) + float(fee_quote)
+        return document
+
     def _fee_document(self) -> dict:
         if self.fee_state_path is None:
-            return {
+            return self._migrate_fee_document({
                 "sessions": {self.session_id: {self.symbol: self.fees_quote}},
                 "all_time": {self.symbol: self.fees_quote},
-            }
+            })
         if not self.fee_state_path.exists():
-            return {"sessions": {}, "all_time": {}}
+            return self._migrate_fee_document({"sessions": {}, "all_time": {}})
         try:
-            return json.loads(self.fee_state_path.read_text())
+            return self._migrate_fee_document(json.loads(self.fee_state_path.read_text()))
         except (OSError, ValueError, TypeError):
-            return {"sessions": {}, "all_time": {}}
+            return self._migrate_fee_document({"sessions": {}, "all_time": {}})
 
-    def _record_shared_fee(self, fee_quote: float, *, event_id: str) -> None:
+    def _record_shared_fee(
+        self,
+        fee_quote: float,
+        *,
+        order_id: str,
+        cumulative_amount: float,
+    ) -> None:
         if self.fee_state_path is None:
             return
         self.fee_state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,15 +263,141 @@ class PaperLedger:
         with lock_path.open("a+") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             document = self._fee_document()
-            applied_events = document.setdefault("applied_events", {})
-            if event_id in applied_events:
+            order_key = f"{self.session_id}:{self.symbol}:{order_id}"
+            high_watermarks = document.setdefault("order_high_watermarks", {})
+            existing = high_watermarks.get(order_key, {})
+            if cumulative_amount <= float(existing.get("cumulative_amount", 0.0)) + EPSILON:
+                # Persist the normalized v2 document even when this call is a
+                # duplicate of a migrated v1 event.
+                self._atomic_json_write(self.fee_state_path, document)
                 return
             session = document.setdefault("sessions", {}).setdefault(self.session_id, {})
             session[self.symbol] = float(session.get(self.symbol, 0.0)) + fee_quote
             all_time = document.setdefault("all_time", {})
             all_time[self.symbol] = float(all_time.get(self.symbol, 0.0)) + fee_quote
-            applied_events[event_id] = float(fee_quote)
+            high_watermarks[order_key] = {
+                "cumulative_amount": float(cumulative_amount),
+                "fee_quote": float(existing.get("fee_quote", 0.0)) + float(fee_quote),
+            }
             self._atomic_json_write(self.fee_state_path, document)
+
+    def _archive_candidates(self) -> List[PaperOrder]:
+        terminal = [
+            order for order in self.order_history.values()
+            if order.status in {"filled", "cancelled", "rejected"}
+            and order.client_order_id not in self.active_orders
+            and order.telegram_pending_event is None
+            and not (
+                order.telegram_submission_attempted
+                and order.telegram_submission_message_id is None
+            )
+        ]
+        terminal.sort(key=lambda order: (order.updated_at, order.client_order_id))
+        if len(terminal) <= self.hot_terminal_order_limit:
+            return []
+        return terminal[: len(terminal) - self.hot_terminal_order_limit]
+
+    def _archive_files(self) -> List[Path]:
+        if self.archive_path is None:
+            return []
+        pattern = f"{self.archive_path.stem}*{self.archive_path.suffix}"
+        files = list(self.archive_path.parent.glob(pattern))
+
+        def segment_number(path: Path) -> int:
+            if path == self.archive_path:
+                return 0
+            suffix = path.stem.removeprefix(f"{self.archive_path.stem}.")
+            try:
+                return int(suffix) + 1
+            except ValueError:
+                return 0
+
+        return sorted(files, key=segment_number)
+
+    def _load_archived_order_ids(self) -> set:
+        archived = set()
+        for archive_file in self._archive_files():
+            try:
+                lines = archive_file.read_text().splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                try:
+                    record = json.loads(line)
+                except (TypeError, ValueError):
+                    continue
+                if record.get("record_type") == "paper_order" and record.get("order_id"):
+                    archived.add(str(record["order_id"]))
+        return archived
+
+    def _archive_segment(self, encoded_size: int) -> Path:
+        files = self._archive_files()
+        if not files:
+            return self.archive_path
+        latest = files[-1]
+        if latest.stat().st_size + encoded_size <= self.archive_max_bytes:
+            return latest
+        index = len(files)
+        return self.archive_path.with_name(
+            f"{self.archive_path.stem}.{index:04d}{self.archive_path.suffix}"
+        )
+
+    def _append_archive_record(self, order: PaperOrder) -> bool:
+        if self.archive_path is None or order.client_order_id in self._archived_order_ids:
+            return False
+        fee_record = self._fee_document().get("order_high_watermarks", {}).get(
+            f"{self.session_id}:{self.symbol}:{order.client_order_id}"
+        )
+        record = {
+            "record_type": "paper_order",
+            "version": 1,
+            "session_id": self.session_id,
+            "symbol": self.symbol,
+            "order_id": order.client_order_id,
+            "order": self._order_document(order),
+            "fee_high_watermark": fee_record,
+        }
+        encoded = json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n"
+        archive_file = self._archive_segment(len(encoded.encode("utf-8")))
+        archive_file.parent.mkdir(parents=True, exist_ok=True)
+        with archive_file.open("a") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        self._archived_order_ids.add(order.client_order_id)
+        return True
+
+    def _prune_fee_high_watermarks(self, order_ids) -> None:
+        if self.fee_state_path is None or not order_ids:
+            return
+        lock_path = self.fee_state_path.with_name(f".{self.fee_state_path.name}.lock")
+        with lock_path.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            document = self._fee_document()
+            high_watermarks = document.setdefault("order_high_watermarks", {})
+            for order_id in order_ids:
+                high_watermarks.pop(
+                    f"{self.session_id}:{self.symbol}:{order_id}", None
+                )
+            self._atomic_json_write(self.fee_state_path, document)
+
+    def compact(self) -> int:
+        candidates = self._archive_candidates()
+        if not candidates:
+            return 0
+        for order in candidates:
+            self._append_archive_record(order)
+        removed_ids = [order.client_order_id for order in candidates]
+        original_history = dict(self.order_history)
+        try:
+            for order_id in removed_ids:
+                self.order_history.pop(order_id, None)
+            self._persist()
+        except Exception:
+            self.order_history = original_history
+            raise
+        self._prune_fee_high_watermarks(removed_ids)
+        return len(removed_ids)
 
     def fee_scopes(self) -> FeeScopes:
         document = self._fee_document()
@@ -384,11 +555,11 @@ class PaperLedger:
             self.cash += new_fill * price - quote_fee
             fee_quote = quote_fee
         self.fees_quote += fee_quote
-        fee_event_id = (
-            f"{self.session_id}:{self.symbol}:{client_order_id}:"
-            f"{cumulative:.12g}"
+        self._record_shared_fee(
+            fee_quote,
+            order_id=client_order_id,
+            cumulative_amount=cumulative,
         )
-        self._record_shared_fee(fee_quote, event_id=fee_event_id)
 
         order.fill_notional += new_fill * price
         order.matched_amount = cumulative
