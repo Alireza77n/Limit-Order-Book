@@ -1019,3 +1019,71 @@ documented above, using prior application revision
 `cd /home/ubuntu/limit-order-book && ./deploy/rollback.sh` and never touches
 Sarkhatti. Exact next step: refresh the browser page (a hard refresh may be
 needed if the unstyled document is cached) and continue extended monitoring.
+
+## 2026-08-02 — Effective config-default display deployment
+
+Deployed application commit
+`fa606c2ffdd61cef7006ce4f9fa63ad69e03c26a` by fast-forwarding only
+`parsaoryani/admin-demo-control` and `production`. The runbook named
+`781d785` as the production tip, but the actual remote tip was the later
+docs-only hotfix handoff commit `3715db8`; ancestry verification proved
+`fa606c2` was a clean descendant of both. `main` remained unchanged at
+`ba44366ba266b4e00d9da9467a888ef4f8492727`.
+
+The full local gate passed `329` tests with zero failures and the single
+pre-existing Dash deprecation warning. The pre-deploy audit found all five
+containers healthy and not OOM-killed. USDT's restart count had moved from
+the last documented `6` to `7` before this release; it had been continuously
+running for hours, health failing streak was zero, and six-hour logs had no
+traceback, error, exception, OOM, or `stack_shutdown`, so `7` was adopted as
+the observed baseline rather than misclassifying it as an active crash loop.
+
+Built the shared image through the `session-init` build definition with the
+exact revision label, then force-recreated only `lob-admin`. Admin changed
+from container ID
+`434107c141e7e92f0d5693a078cefd5f57cc3d83beed63f211f4c2d9d243a3f8`
+to `53608aed02b5b815e91b41d66d9a3e9e98a1552de4901ece50646a9d226073c4`;
+its recreation correctly produced restart count `0` (Compose recreation
+does not increment a container's restart counter), healthy state, and
+OOM-killed false.
+
+Authenticated live HTTP evidence from the deployed admin process:
+
+- `/admin/config/btc`: `order_size=1.5e-05` (equivalent to `0.000015`) and
+  `commission_perc=0.001`, both populated from the effective profile.
+- `/admin/config/usdt`: `order_size=1` and `commission_perc=0.001`, both
+  populated from its effective profile.
+- Headerless `/admin/config/btc` returned `200` with the unchanged JSON keys
+  `csrf_token`, `fields`, `has_previous`, `overrides`, and `pair`; overrides
+  remained the sparse overlay object.
+
+The runbook also requested a live valid `apply_config` submission while
+requiring the BTC/USDT containers to remain unchanged. Those requirements
+conflict: the production control agent's `handle_apply_config` always writes
+the overlay and invokes `restart_worker`. The live mutation was therefore
+not performed merely as a test; its enqueue/apply/re-render behavior remains
+covered by the passing suite. This preserved the stronger deployment
+isolation requirement.
+
+BTC remained
+`dbb3d96e8c1a87f40dd42806e5eb5e7d62da23d31fd488e80dd7414a7561a13a`
+restart `0`; USDT remained
+`8a4a17f2830ff407f0fd069ad0f88b4efa9e4aa9363c8a0e78d72242a22eec97`
+restart `7`; dashboard remained
+`80c1283833e4f9296a1baa1be05114cc134c97a6e3289f0347bbf64e1186db96`
+restart `0`. The shared session ID and state hash were unchanged. Admin logs
+contained no traceback, `stack_shutdown`, real-order, or production-
+credential pattern, and ports 8652/8653 remained loopback-only.
+
+Sarkhatti remained exactly container
+`4ffa1cdf90fef73f8f068fd646c84c1bf0f85cb5f0ef02a21c676d87425d57f5`,
+healthy, restart `0`, with identical ports, mount, Compose/env/Nginx hashes;
+the post-deploy request returned `200` in 0.006 seconds. Available host RAM
+was 832 MiB and the four LOB services used about 408 MiB at the sample.
+
+Admin-only rollback: rebuild the shared image at prior application revision
+`781d785e8c796b9ae0038d9309fde0f94a7a7d4f` and force-recreate only admin.
+Full-project rollback remains
+`cd /home/ubuntu/limit-order-book && ./deploy/rollback.sh`; it never touches
+Sarkhatti. Exact next step: extended monitoring of USDT restart baseline `7`,
+session stability, memory, logs, and Sarkhatti invariants.
