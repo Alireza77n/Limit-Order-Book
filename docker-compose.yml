@@ -11,23 +11,53 @@
 # server and swap a service's command below if/when that's needed.
 
 services:
+  session-init:
+    build: .
+    command:
+      ["python", "session.py", "stack-init", "--path", "/app/market_maker/results/stack_session.json", "--worker-lock", "/app/market_maker/results/.worker_btcirt.lock", "--worker-lock", "/app/market_maker/results/.worker_usdtirt.lock"]
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: "no"
+
   btc-demo:
     build: .
-    command: ["python", "run.py", "--profile", "btc", "--mode", "demo"]
+    command: ["python", "run.py", "--profile", "btc", "--mode", "demo", "--continuous"]
     env_file:
       - market_maker/.env
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
     volumes:
       - ./market_maker/results:/app/market_maker/results
     restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   usdt-demo:
     build: .
-    command: ["python", "run.py", "--profile", "usdt", "--mode", "demo"]
+    command: ["python", "run.py", "--profile", "usdt", "--mode", "demo", "--continuous"]
     env_file:
       - market_maker/.env
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
     volumes:
       - ./market_maker/results:/app/market_maker/results
     restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
 
   dashboard:
     build: .
@@ -39,3 +69,8 @@ services:
     ports:
       - "8050:8050"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8050', timeout=3).raise_for_status()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3

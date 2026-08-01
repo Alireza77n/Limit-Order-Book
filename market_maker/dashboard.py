@@ -44,10 +44,14 @@ TRACKS = {
 }
 
 ACTIVITY_COLUMNS = [
-    "Timestamp", "Session_id", "Bid Level", "Ask Level",
-    "Bid Price Sent", "Ask Price Sent",
-    "Buy Size", "Buy Sent", "Buy Status",
-    "Sell Size", "Sell Sent", "Sell Status",
+    "Timestamp", "Session_id", "Round", "Quote Status", "No Quote Reason",
+    "Bid Level", "Ask Level", "Bid Price", "Ask Price",
+    "Buy Order ID", "Buy Status", "Buy Not Sent Reason",
+    "Buy Original Amount", "Buy Matched Amount", "Buy Remaining Amount",
+    "Buy Fill Reason", "Buy Locked Cash", "Buy Telegram Message ID",
+    "Sell Order ID", "Sell Status", "Sell Not Sent Reason",
+    "Sell Original Amount", "Sell Matched Amount", "Sell Remaining Amount",
+    "Sell Fill Reason", "Sell Locked Inventory", "Sell Telegram Message ID",
 ]
 
 # ---------- Design tokens (dataviz skill: validated reference palette) ----------
@@ -95,9 +99,38 @@ def with_derived_spreads(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
     df["Mid Price"] = (df["Best Bid"] + df["Best Ask"]) / 2.0
-    df["Bid Spread"] = df["Mid Price"] - df["Bid Price Sent"]
-    df["Ask Spread"] = df["Ask Price Sent"] - df["Mid Price"]
+    bid_column = "Bid Price" if "Bid Price" in df.columns else "Bid Price Sent"
+    ask_column = "Ask Price" if "Ask Price" in df.columns else "Ask Price Sent"
+    df["Bid Spread"] = df["Mid Price"] - df[bid_column]
+    df["Ask Spread"] = df[ask_column] - df["Mid Price"]
     return df
+
+
+def activity_records(df: pd.DataFrame, limit: int = 200) -> List[dict]:
+    """Return dashboard rows from the same explicit lifecycle fields as CSV.
+
+    Older Real-mode CSVs are tolerated by filling unavailable explicit fields;
+    the original status values remain visible until Real reporting is migrated.
+    """
+    activity = df.copy()
+    legacy_aliases = {
+        "Bid Price": "Bid Price Sent",
+        "Ask Price": "Ask Price Sent",
+        "Buy Original Amount": "Buy Size",
+        "Sell Original Amount": "Sell Size",
+    }
+    for target, source in legacy_aliases.items():
+        if target not in activity.columns and source in activity.columns:
+            activity[target] = activity[source]
+    for column in ACTIVITY_COLUMNS:
+        if column not in activity.columns:
+            activity[column] = None
+    return (
+        activity[ACTIVITY_COLUMNS]
+        .sort_values("Timestamp", ascending=False)
+        .head(limit)
+        .to_dict("records")
+    )
 
 
 def session_ids(df: pd.DataFrame) -> List:
@@ -310,10 +343,10 @@ def refresh_dashboard(track_key, session_id, _):
     levels_fig = _line_chart(df, ["Bid Level", "Ask Level"], "Selected depth levels")
     spreads_fig = _line_chart(df, ["Bid Spread", "Ask Spread"], "Quoted spreads")
 
-    activity = df[ACTIVITY_COLUMNS].sort_values("Timestamp", ascending=False).head(200)
+    activity = activity_records(df)
     status = f"{len(df)} rows" + ("" if comparing else f" — session {session_id}")
 
-    return status, wealth_fig, inv_fig, cash_fig, levels_fig, spreads_fig, activity.to_dict("records")
+    return status, wealth_fig, inv_fig, cash_fig, levels_fig, spreads_fig, activity
 
 
 if __name__ == "__main__":

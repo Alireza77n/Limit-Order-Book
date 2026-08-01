@@ -1,0 +1,34 @@
+services:
+  session-init:
+    volumes:
+      - ./.docker-validation-results:/app/market_maker/results
+
+  btc-demo:
+    environment:
+      NOBITEX_API_TOKEN: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CHAT_ID: ""
+      MYSQL_USER: ""
+      MYSQL_PASSWORD: ""
+    volumes:
+      - ./.docker-validation-results:/app/market_maker/results
+
+  usdt-demo:
+    environment:
+      NOBITEX_API_TOKEN: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CHAT_ID: ""
+      MYSQL_USER: ""
+      MYSQL_PASSWORD: ""
+    volumes:
+      - ./.docker-validation-results:/app/market_maker/results
+
+  dashboard:
+    environment:
+      NOBITEX_API_TOKEN: ""
+      TELEGRAM_BOT_TOKEN: ""
+      TELEGRAM_CHAT_ID: ""
+      MYSQL_USER: ""
+      MYSQL_PASSWORD: ""
+    volumes:
+      - ./.docker-validation-results:/app/market_maker/results

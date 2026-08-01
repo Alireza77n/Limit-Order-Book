@@ -2,9 +2,8 @@ import json
 import math
 import time
 import numpy as np
-import requests
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, Tuple, List, Set  # add Set
 import pandas as pd
 
@@ -13,6 +12,8 @@ from portfolio import Nobitex_portfolio
 from strategy.base import Strategy
 from strategy.algo1 import Algo1Strategy
 from exchange.base import ExchangeClient
+from safety import enforce_engine_safety
+from telegram_lifecycle import PaperTelegramReporter, TelegramClient
 import pytz
 from datetime import datetime, timedelta
 import os
@@ -45,8 +46,12 @@ TEHRAN_TZ = pytz.timezone("Asia/Tehran")
 class SimpleMarketMaker:
     def __init__(self, cfg: MMConfig, nobi_portfo: Nobitex_portfolio, exchange: ExchangeClient,
                  strategy: Optional[Strategy] = None, persist_to_db: bool = True):
+        enforce_engine_safety(cfg.mode, exchange, persist_to_db)
         self.cfg = cfg
         self.recent_order_ids: List[str] = []
+        self.order_history_ids: Set[str] = set()
+        self.processed_matched_amounts: Dict[str, float] = {}
+        self.processed_order_fees: Dict[str, float] = {}
         self.tracked_orders: Dict[str, Set[str]] = {"buy": set(), "sell": set()}
         self.csv_path = cfg.output_csv
         self.nobi_portfo = nobi_portfo
@@ -56,7 +61,11 @@ class SimpleMarketMaker:
         self.cash_initial = cfg.cash_initial
         self.session=cfg.session
         self.persist_to_db = persist_to_db
-        self.mode_label = "real" if persist_to_db else "demo"
+        self.mode_label = cfg.mode
+        self.now_provider = lambda: datetime.now(timezone.utc)
+        self.sleep_fn = time.sleep
+        self.telegram_client = TelegramClient(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+        self.telegram_reporter = PaperTelegramReporter(self.telegram_client)
 
         # Connect to MySQL (use your existing DB) -- skipped entirely in
         # demo/paper-trading mode so a demo run never touches the real
@@ -87,6 +96,8 @@ class SimpleMarketMaker:
         return target.replace(hour=0, minute=0, second=0, microsecond=0)
 
     def _within_horizon(self) -> bool:
+        if getattr(self.cfg, "continuous", False):
+            return True
         return (self.horizon_dt - datetime.now()).total_seconds() > 0
 
     def seconds_to_horizon(self) -> int:
@@ -97,7 +108,7 @@ class SimpleMarketMaker:
 
     def get_status_orders(self,status) -> List[Dict]:
         orders = self.exchange.get_order_list_status(
-            status=status, details=2, page_size=100, max_pages=1
+            status=status, details=2, page_size=100, max_pages=100
         )
     
         want_pair = str(self.cfg.pair).upper()
@@ -112,6 +123,43 @@ class SimpleMarketMaker:
                 filtered.append(o)
     
         return filtered
+
+    def _active_order_ids(self) -> Set[str]:
+        return set(self.recent_order_ids) | self.tracked_orders["buy"] | self.tracked_orders["sell"]
+
+    def _prune_cancelled_active_ids(self, cancelled_ids) -> Set[str]:
+        cancelled = {str(value) for value in (cancelled_ids or set())}
+        if not cancelled:
+            return set()
+        self.recent_order_ids = [
+            client_id for client_id in self.recent_order_ids if client_id not in cancelled
+        ]
+        self.tracked_orders["buy"] -= cancelled
+        self.tracked_orders["sell"] -= cancelled
+        return cancelled
+
+    def _cancel_owned_open_orders(self, max_pages: int = 10) -> Set[str]:
+        owned = self._active_order_ids()
+        cancelled = self.exchange.cancel_all_open_orders(
+            max_pages=max_pages,
+            pair=self.cfg.pair,
+            owned_client_order_ids=owned,
+        )
+        return self._prune_cancelled_active_ids(cancelled)
+
+    def _cancel_owned_stale_orders(
+        self, max_age_minutes: float, df: Optional[pd.DataFrame] = None
+    ) -> Set[str]:
+        owned = self._active_order_ids()
+        cancelled = self.exchange.cancel_old_orders(
+            max_age_minutes=max_age_minutes,
+            df=df,
+            tracked_orders=self.tracked_orders,
+            pair=self.cfg.pair,
+            owned_client_order_ids=owned,
+            max_pages=100,
+        )
+        return self._prune_cancelled_active_ids(cancelled)
 
     
 
@@ -204,25 +252,38 @@ class SimpleMarketMaker:
     def _decide_order(self, ob: Dict[str, Any], inv_current: float) -> Optional[Dict[str, Any]]:
         return self.strategy.decide_order(ob, inv_current)
 
+    def _emit_algo1_diagnostic(
+        self, ob: Dict[str, Any], inv_current: float, *, round_no: int
+    ) -> None:
+        if not getattr(self.cfg, "algo1_diagnostics_enabled", False):
+            return
+        diagnostic_method = getattr(self.strategy, "diagnostics", None)
+        if diagnostic_method is None:
+            return
+        document = diagnostic_method(
+            ob, inv_current, round_no=round_no, session_id=self.session
+        )
+        path = self.cfg.algo1_diagnostics_path or os.path.join(
+            RESULTS_DIR, f"{self.pair.lower()}_algo1_diagnostics.jsonl"
+        )
+        directory = os.path.dirname(path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with open(path, "a") as diagnostic_file:
+            diagnostic_file.write(json.dumps(document, sort_keys=True) + "\n")
+
     # ---------- Wallet / order endpoints ----------
     # NOTE: exchange-specific I/O now lives in exchange/nobitex.py (NobitexExchangeClient).
     def wallet_balance(self, currency: str) -> Optional[float]:
         return self.exchange.wallet_balance(currency)
 
     # ---------- Telegram notifications ----------
-    def _notify_telegram(self, text: str) -> None:
+    def _notify_telegram(self, text: str) -> bool:
         """Best-effort push to Telegram. No-ops if unconfigured; never
-        raises, so a network hiccup can't take down the trading loop."""
-        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-            return
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
-                timeout=10,
-            )
-        except Exception as e:
-            print(f"Telegram notify failed: {e}")
+        raises, so a network hiccup can't take down the trading loop.
+        Returns True only when Telegram returns HTTP success, JSON ok=true,
+        and a message identifier."""
+        return self.telegram_client.send(text) is not None
 
     def _mode_tag(self) -> str:
         """Prominent, unmissable badge for the very first line of every
@@ -232,8 +293,46 @@ class SimpleMarketMaker:
             return "\U0001F9EA <b>DEMO MODE</b> — simulated, no real orders"
         return "\U0001F534 <b>LIVE MODE</b> — real orders, real money"
 
+    # ---------- Startup message (sent once per pair+mode, not per restart) ----------
+    def _startup_key(self) -> str:
+        """Marker identity: one startup announcement per pair and mode, so
+        Docker's `restart: unless-stopped` (which restarts the container
+        every time a run finishes) doesn't spam a new "Market Maker
+        Connected" message per session."""
+        return f"{self.pair}_{self.mode_label}"
+
+    def _startup_notified(self) -> bool:
+        """True if this pair+mode already announced its startup. The marker
+        file lives in results/ (the shared Docker volume), so it survives
+        container restarts; delete results/startup_notified_*.json to
+        re-enable the startup message on the next launch."""
+        path = os.path.join(RESULTS_DIR, f"startup_notified_{self._startup_key()}.json")
+        try:
+            if os.path.exists(path):
+                with open(path) as f:
+                    json.load(f)
+                return True
+        except Exception as e:
+            print(f"Startup marker read failed: {e}")
+        return False
+
+    def _mark_startup_notified(self) -> None:
+        path = os.path.join(RESULTS_DIR, f"startup_notified_{self._startup_key()}.json")
+        try:
+            os.makedirs(RESULTS_DIR, exist_ok=True)
+            with open(path, "w") as f:
+                json.dump({"notified_at": datetime.now(TEHRAN_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                           "session": self.session}, f)
+        except Exception as e:
+            print(f"Startup marker write failed: {e}")
+
     def _notify_startup(self) -> None:
-        self._notify_telegram(
+        if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
+            return
+        if self._startup_notified():
+            print(f"Startup notification already sent for {self._startup_key()}; skipping.")
+            return
+        sent = self._notify_telegram(
             f"{self._mode_tag()}\n\n"
             f"<b>Market Maker Connected</b>\n\n"
             f"Symbol: <b>{self.pair}</b>\n"
@@ -241,6 +340,8 @@ class SimpleMarketMaker:
             f"Commission: <b>{self.cfg.commission_perc:.2%}</b>\n"
             f"Session: <code>{self.session}</code>"
         )
+        if sent:
+            self._mark_startup_notified()
 
     def _format_round_message(
         self, round_no: int, stamp: str,
@@ -441,46 +542,52 @@ class SimpleMarketMaker:
 
     def update_inventory_and_cash(self,statuse, inv_coin: float, inv_cash: float) -> Tuple[float, float]:
         """
-        Adjust balances for *executed* orders (status=close/Done).
-        Deduct trading fees accordingly.
-        Only process each order once (remove clientOrderId after update).
+        Apply only the new delta from each cumulative exchange update.
+        Active partials stay tracked; terminal orders leave active tracking while
+        their cumulative checkpoints and immutable history remain available.
         """
-        orders = self.get_status_orders(statuse)  # fetch only our own tracked closed orders
+        statuses = ("open", "close") if statuse == "all" else (statuse,)
+        by_client_id: Dict[str, Dict[str, Any]] = {}
+        for status in statuses:
+            for order in self.get_status_orders(status):
+                client_id = str(order.get("clientOrderId") or "")
+                if client_id:
+                    by_client_id[client_id] = order
+        orders = list(by_client_id.values())
         print("Closed orders considered for update:", orders)
 
         inv_delta = inv_coin
         cash_delta = inv_cash
-
-        # (optional) get last price just in case you need it
-        ob = self._get_orderbook()
-        last_price = float(ob.get("lastTradePrice")) if ob else 0.0
-
-        # Transaction cost for this round, converted to quote-currency (IRT)
-        # terms so it's comparable/summable across pairs -- buy fees are
-        # charged in the base asset (fee * price), sell fees already in quote.
         self.last_round_fee_irt = 0.0
 
         for order in orders:
-            order_type = order.get("type")
+            order_type = str(order.get("type") or "").lower()
             clid = str(order.get("clientOrderId") or "")
-            matched = float(order.get("matchedAmount", 0.0))  # executed volume
+            if not clid or clid not in self._active_order_ids():
+                continue
+            matched = max(0.0, float(order.get("matchedAmount") or 0.0))
             price = float(order.get("price", 0.0))
-            fee = float(order.get("_raw", {}).get("fee", 0.0))  # may be str
+            cumulative_fee = max(0.0, float(order.get("_raw", {}).get("fee") or 0.0))
+            processed_matched = self.processed_matched_amounts.get(clid, 0.0)
+            processed_fee = self.processed_order_fees.get(clid, 0.0)
+            matched_delta = max(0.0, matched - processed_matched)
+            fee_delta = max(0.0, cumulative_fee - processed_fee)
 
             if order_type == "buy":
-                # Fee is deducted from the base asset
-                inv_delta += (matched - fee)
-                cash_delta -= matched * price
-                self.last_round_fee_irt += fee * price
+                inv_delta += matched_delta - fee_delta
+                cash_delta -= matched_delta * price
+                self.last_round_fee_irt += fee_delta * price
             elif order_type == "sell":
-                # Fee is deducted from the quote asset
-                inv_delta -= matched
-                cash_delta += matched * price - fee
-                self.last_round_fee_irt += fee
+                inv_delta -= matched_delta
+                cash_delta += matched_delta * price - fee_delta
+                self.last_round_fee_irt += fee_delta
 
-            # ✅ Remove this order ID so it won't be processed again
-            if clid in self.recent_order_ids:
-                self.recent_order_ids.remove(clid)
+            self.processed_matched_amounts[clid] = max(processed_matched, matched)
+            self.processed_order_fees[clid] = max(processed_fee, cumulative_fee)
+            status = str(order.get("status") or "").lower()
+            remaining = float(order.get("unmatchedAmount") or 0.0)
+            if status in {"done", "close", "closed", "filled"} and remaining <= 1e-12:
+                self._prune_cancelled_active_ids({clid})
 
         return inv_delta, cash_delta
 
@@ -522,6 +629,7 @@ class SimpleMarketMaker:
         if result_id:
             # Track for both PnL close-processing and UI status updates
             self.recent_order_ids.append(result_id)
+            self.order_history_ids.add(result_id)
             if order_type == "buy":
                 self.tracked_orders["buy"].add(result_id)
             else:
@@ -534,6 +642,340 @@ class SimpleMarketMaker:
 
     # ---------- Main loop (uses wallet_balance + send_order) ----------
 
+    DEMO_COLUMNS = [
+        "Session_id", "Algorithm", "Crypto", "Mode", "Round", "Timestamp",
+        "Quote Status", "No Quote Reason", "Bid Level", "Ask Level",
+        "inv_current", "cash_current", "Locked Cash", "Locked Inventory",
+        "Available Cash", "Available Inventory", "Portfolio Wealth",
+        "Best Bid", "Best Ask", "Last Price", "Bid Price", "Ask Price",
+        "Buy Order ID", "Buy Status", "Buy Not Sent Reason", "Buy Original Amount",
+        "Buy Matched Amount", "Buy Processed Matched Amount", "Buy Remaining Amount",
+        "Buy Fill Reason", "Buy Selected Level", "Buy Limit Price", "Buy Locked Cash",
+        "Buy Telegram Message ID",
+        "Sell Order ID", "Sell Status", "Sell Not Sent Reason", "Sell Original Amount",
+        "Sell Matched Amount", "Sell Processed Matched Amount", "Sell Remaining Amount",
+        "Sell Fill Reason", "Sell Selected Level", "Sell Limit Price", "Sell Locked Inventory",
+        "Sell Telegram Message ID",
+        "Round Fee", "Session Pair Fee", "Session All Symbols Fee",
+        "Pair All Time Fee", "All Symbols All Time Fee",
+    ]
+
+    @staticmethod
+    def _demo_side_fields(side: str, order, not_sent_reason: Optional[str]) -> Dict[str, Any]:
+        title = side.title()
+        locked = 0.0
+        if order is not None and order.status in {"open", "partially_filled"}:
+            locked = order.remaining_amount * order.limit_price if side == "buy" else order.remaining_amount
+        if order is not None:
+            lifecycle_status = order.status
+        elif not_sent_reason == "no_quote":
+            lifecycle_status = "no_quote"
+        elif not_sent_reason == "rejected":
+            lifecycle_status = "rejected"
+        elif not_sent_reason:
+            lifecycle_status = f"not_sent_{not_sent_reason}"
+        else:
+            lifecycle_status = "submission_failed"
+        fields = {
+            f"{title} Order ID": order.client_order_id if order else None,
+            f"{title} Status": lifecycle_status,
+            f"{title} Not Sent Reason": None if order else not_sent_reason,
+            f"{title} Original Amount": order.original_amount if order else 0.0,
+            f"{title} Matched Amount": order.matched_amount if order else 0.0,
+            f"{title} Processed Matched Amount": order.processed_matched_amount if order else 0.0,
+            f"{title} Remaining Amount": order.remaining_amount if order else 0.0,
+            f"{title} Fill Reason": order.fill_reason if order else None,
+            f"{title} Selected Level": order.selected_level if order else None,
+            f"{title} Limit Price": order.limit_price if order else None,
+            f"{title} Telegram Message ID": order.telegram_submission_message_id if order else None,
+        }
+        fields[f"{title} Locked Cash" if side == "buy" else f"{title} Locked Inventory"] = locked
+        return fields
+
+    def _demo_queue_ahead(self, ob: Dict[str, Any], side: str, level: int) -> float:
+        if not self.cfg.demo_queue_enabled:
+            return 0.0
+        book_side = "bids" if side == "buy" else "asks"
+        try:
+            return max(0.0, float(ob[book_side][int(level)][1]))
+        except (KeyError, IndexError, TypeError, ValueError):
+            return 0.0
+
+    def _demo_no_quote_reason(self, ob: Dict[str, Any], inventory: float) -> str:
+        reason_method = getattr(self.strategy, "no_quote_reason", None)
+        if reason_method is None:
+            return "strategy_returned_no_quote"
+        return str(reason_method(ob, inventory))
+
+    @staticmethod
+    def _write_demo_csv(order_df: pd.DataFrame, csv_path: str) -> bool:
+        try:
+            order_df.to_csv(csv_path, index=False)
+            return True
+        except (OSError, ValueError) as exc:
+            print(f"Demo CSV persistence failed: {exc}")
+            return False
+
+    def _sync_demo_order_rows(
+        self,
+        order_df: pd.DataFrame,
+        *,
+        changed_order_ids=None,
+        snapshot=None,
+        scopes=None,
+        round_fee: Optional[float] = None,
+    ) -> None:
+        ledger = self.exchange.ledger
+        changed = set(changed_order_ids or set())
+        # A first ``.loc`` append can let pandas narrow all-zero columns to
+        # integer dtype. Lifecycle updates may then legitimately write fees or
+        # textual statuses, so keep the explicit mixed CSV schema writable.
+        for column in order_df.columns:
+            if order_df[column].dtype != object:
+                order_df[column] = order_df[column].astype(object)
+        for side in ("buy", "sell"):
+            title = side.title()
+            id_column = f"{title} Order ID"
+            if id_column not in order_df.columns:
+                continue
+            for index, order_id in order_df[id_column].items():
+                if not isinstance(order_id, str) or not order_id:
+                    continue
+                try:
+                    order = ledger.get_order(order_id)
+                except KeyError:
+                    continue
+                fields = self._demo_side_fields(side, order, None)
+                for column, value in fields.items():
+                    order_df.at[index, column] = value
+                if order_id in changed and snapshot is not None:
+                    financial_fields = {
+                        "inv_current": snapshot.inventory,
+                        "cash_current": snapshot.cash,
+                        "Locked Cash": snapshot.locked_cash,
+                        "Locked Inventory": snapshot.locked_inventory,
+                        "Available Cash": snapshot.available_cash,
+                        "Available Inventory": snapshot.available_inventory,
+                        "Portfolio Wealth": snapshot.wealth,
+                    }
+                    if round_fee is not None:
+                        financial_fields["Round Fee"] = round_fee
+                    if scopes is not None:
+                        financial_fields.update({
+                            "Session Pair Fee": scopes.session_pair,
+                            "Session All Symbols Fee": scopes.session_all_symbols,
+                            "Pair All Time Fee": scopes.pair_all_time,
+                            "All Symbols All Time Fee": scopes.all_symbols_all_time,
+                        })
+                    for column, value in financial_fields.items():
+                        order_df.at[index, column] = value
+
+    def _run_demo(self) -> pd.DataFrame:
+        csv_path = self.csv_path or os.path.join(RESULTS_DIR, "track_demo.csv")
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        if os.path.exists(csv_path):
+            try:
+                order_df = pd.read_csv(csv_path).astype(object)
+                for column in self.DEMO_COLUMNS:
+                    if column not in order_df.columns:
+                        order_df[column] = None
+                order_df = order_df[self.DEMO_COLUMNS]
+            except Exception:
+                order_df = pd.DataFrame(columns=self.DEMO_COLUMNS, dtype=object)
+        else:
+            order_df = pd.DataFrame(columns=self.DEMO_COLUMNS, dtype=object)
+        self._write_demo_csv(order_df, csv_path)
+
+        self._notify_startup()
+        round_no = 0
+        try:
+            while self._within_horizon():
+                round_no += 1
+                if self.cfg.max_rounds and round_no > self.cfg.max_rounds:
+                    break
+                now = self.now_provider()
+                retry_pending = getattr(self.telegram_reporter, "retry_pending", None)
+                if retry_pending is not None:
+                    retry_pending(self.exchange.ledger)
+                try:
+                    ob = self._get_orderbook()
+                except Exception as exc:
+                    print(f"Market data retrieval failed: {exc}")
+                    self.sleep_fn(self.cfg.time_step)
+                    continue
+                if not ob:
+                    self.sleep_fn(self.cfg.time_step)
+                    continue
+                try:
+                    best_bid = float(ob["bids"][0][0])
+                    best_ask = float(ob["asks"][0][0])
+                    last_price = float(ob["lastTradePrice"])
+                except (KeyError, IndexError, TypeError, ValueError):
+                    self.sleep_fn(self.cfg.time_step)
+                    continue
+
+                trade_price = ob.get("tradePrice")
+                traded_volume = ob.get("tradedVolume")
+                try:
+                    trade_price = float(trade_price) if trade_price is not None else None
+                    traded_volume = float(traded_volume) if traded_volume is not None else None
+                except (TypeError, ValueError):
+                    trade_price = traded_volume = None
+                fill_events = self.exchange.process_market(
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                    last_price=last_price,
+                    trade_price=trade_price,
+                    traded_volume=traded_volume,
+                    now=now,
+                )
+                cancel_events = self.exchange.ledger.cancel_stale(
+                    max_age_seconds=self.cfg.cancel_after_minutes * 60,
+                    now=now,
+                )
+                lifecycle_events = fill_events + cancel_events
+                round_fee = sum(event.fee_quote for event in fill_events)
+                ledger = self.exchange.ledger
+                snapshot = ledger.snapshot(valuation_price=last_price)
+                scopes = ledger.fee_scopes()
+                self._sync_demo_order_rows(
+                    order_df,
+                    changed_order_ids={event.order_id for event in lifecycle_events},
+                    snapshot=snapshot,
+                    scopes=scopes,
+                    round_fee=round_fee,
+                )
+                for event in lifecycle_events:
+                    self.telegram_reporter.order_changed(self.exchange.ledger, event)
+
+                self._emit_algo1_diagnostic(ob, snapshot.inventory, round_no=round_no)
+                quote = self._decide_order(ob, snapshot.inventory)
+                quote_status = "quote_generated" if quote is not None else "no_quote"
+                no_quote_reason = (
+                    None if quote is not None
+                    else self._demo_no_quote_reason(ob, snapshot.inventory)
+                )
+                bid_price = float(quote["bid"]) if quote else None
+                ask_price = float(quote["ask"]) if quote else None
+                bid_level = int(quote["bid level"]) if quote else None
+                ask_level = int(quote["ask level"]) if quote else None
+
+                buy_order = sell_order = None
+                buy_reason = sell_reason = "no_quote" if quote is None else None
+                if quote is not None:
+                    sell_amount = max(
+                        0.0,
+                        min(self.cfg.order_size, snapshot.available_inventory - float(self.cfg.inv_min)),
+                    )
+                    if sell_amount > 1e-10:
+                        sell_id = (
+                            f"{self.pair.lower()}-sell-{round_no}-{int(now.timestamp() * 1000)}"
+                        )
+                        result_id = self.exchange.send_order(
+                            "sell", self.cfg.currency_1, self.cfg.currency_2,
+                            sell_amount, ask_price, sell_id,
+                            selected_level=ask_level,
+                            queue_ahead=self._demo_queue_ahead(ob, "sell", ask_level),
+                            round_no=round_no,
+                            now=now,
+                        )
+                        if result_id:
+                            sell_order = ledger.get_order(result_id)
+                            self.telegram_reporter.order_submitted(ledger, sell_order)
+                        else:
+                            sell_reason = "rejected"
+                    else:
+                        sell_reason = "insufficient_inventory"
+
+                    snapshot = ledger.snapshot(valuation_price=last_price)
+                    buy_locked_amount = sum(
+                        order.remaining_amount for order in ledger.active_orders.values()
+                        if order.side == "buy"
+                    )
+                    affordable = snapshot.available_cash / bid_price if bid_price and bid_price > 0 else 0.0
+                    buy_amount = max(0.0, min(self.cfg.order_size, affordable))
+                    if buy_amount <= 1e-10:
+                        buy_reason = "insufficient_cash"
+                    elif buy_locked_amount + snapshot.inventory + self.cfg.order_size >= self.cfg.inv_max:
+                        buy_reason = "inventory_cap"
+                    else:
+                        buy_id = (
+                            f"{self.pair.lower()}-buy-{round_no}-{int(now.timestamp() * 1000)}"
+                        )
+                        result_id = self.exchange.send_order(
+                            "buy", self.cfg.currency_1, self.cfg.currency_2,
+                            buy_amount, bid_price, buy_id,
+                            selected_level=bid_level,
+                            queue_ahead=self._demo_queue_ahead(ob, "buy", bid_level),
+                            round_no=round_no,
+                            now=now,
+                        )
+                        if result_id:
+                            buy_order = ledger.get_order(result_id)
+                            self.telegram_reporter.order_submitted(ledger, buy_order)
+                        else:
+                            buy_reason = "rejected"
+
+                snapshot = ledger.snapshot(valuation_price=last_price)
+                scopes = ledger.fee_scopes()
+                row = {
+                    "Session_id": str(self.session),
+                    "Algorithm": self.algorithm_id,
+                    "Crypto": self.pair,
+                    "Mode": "demo",
+                    "Round": round_no,
+                    "Timestamp": now.astimezone(TEHRAN_TZ).strftime("%Y-%m-%d %H:%M:%S"),
+                    "Quote Status": quote_status,
+                    "No Quote Reason": no_quote_reason,
+                    "Bid Level": bid_level,
+                    "Ask Level": ask_level,
+                    "inv_current": snapshot.inventory,
+                    "cash_current": snapshot.cash,
+                    "Locked Cash": snapshot.locked_cash,
+                    "Locked Inventory": snapshot.locked_inventory,
+                    "Available Cash": snapshot.available_cash,
+                    "Available Inventory": snapshot.available_inventory,
+                    "Portfolio Wealth": snapshot.wealth,
+                    "Best Bid": best_bid,
+                    "Best Ask": best_ask,
+                    "Last Price": last_price,
+                    "Bid Price": bid_price,
+                    "Ask Price": ask_price,
+                    "Round Fee": round_fee,
+                    "Session Pair Fee": scopes.session_pair,
+                    "Session All Symbols Fee": scopes.session_all_symbols,
+                    "Pair All Time Fee": scopes.pair_all_time,
+                    "All Symbols All Time Fee": scopes.all_symbols_all_time,
+                }
+                row.update(self._demo_side_fields("buy", buy_order, buy_reason))
+                row.update(self._demo_side_fields("sell", sell_order, sell_reason))
+                order_df.loc[len(order_df)] = [row.get(column) for column in self.DEMO_COLUMNS]
+                self._write_demo_csv(order_df, csv_path)
+                self.sleep_fn(self.cfg.time_step)
+        except KeyboardInterrupt:
+            print("Interrupted by user.")
+        finally:
+            shutdown_time = self.now_provider()
+            shutdown_events = self.exchange.cancel_all_open_orders(now=shutdown_time)
+            ledger = self.exchange.ledger
+            shutdown_snapshot = ledger.snapshot(
+                valuation_price=getattr(ledger, "valuation_price", 0.0)
+            )
+            shutdown_scopes = ledger.fee_scopes()
+            self._sync_demo_order_rows(
+                order_df,
+                changed_order_ids={event.order_id for event in (shutdown_events or [])},
+                snapshot=shutdown_snapshot,
+                scopes=shutdown_scopes,
+            )
+            for event in shutdown_events or []:
+                self.telegram_reporter.order_changed(self.exchange.ledger, event)
+            self._write_demo_csv(order_df, csv_path)
+        try:
+            return pd.read_csv(csv_path)
+        except (OSError, ValueError, pd.errors.EmptyDataError):
+            return order_df
+
     def run(self) -> pd.DataFrame:
         """
         Main market-making loop.
@@ -545,6 +987,9 @@ class SimpleMarketMaker:
         - Persists updates by rewriting the CSV each round.
         """
         
+        if self.mode_label == "demo":
+            return self._run_demo()
+
         round_no = 0
     
         # Ensure tracking containers exist
@@ -657,7 +1102,7 @@ class SimpleMarketMaker:
     
                 # ---- (C) Update inventory/cash based on newly closed orders (PnL) ----
                 inv_delta, cash_delta = self.update_inventory_and_cash(
-                    statuse='close',
+                    statuse='all',
                     inv_coin=inv_coins[-1],
                     inv_cash=inv_cash[-1]
                 )
@@ -672,10 +1117,9 @@ class SimpleMarketMaker:
                 print(f"[{stamp}] Inventory={inv_current:.6f}, Cash={cash_current:.2f}, Wealth={portfolio_wealth:.2f}")
     
                 # ---- (C2) Cancel stale orders & reflect cancellations in DF/tracking ----
-                self.exchange.cancel_old_orders(
+                self._cancel_owned_stale_orders(
                     max_age_minutes=self.cfg.cancel_after_minutes,
                     df=order_df,
-                    tracked_orders=self.tracked_orders
                 )
     
                 # ---- (D) Decide & place orders ----
@@ -687,6 +1131,7 @@ class SimpleMarketMaker:
                 buy_size_value = 0.0  # NEW: will store actual submitted buy size
                 sell_size_value = 0.0 # NEW: will store actual submitted sell size
     
+                self._emit_algo1_diagnostic(ob, float(inv_current), round_no=round_no)
                 res = self._decide_order(ob, float(inv_current))
                 if res is not None:
                     bid_price = float(res["bid"])
@@ -784,7 +1229,7 @@ class SimpleMarketMaker:
         finally:
             print("Cancelling all open orders before exit...")
             try:
-                self.exchange.cancel_all_open_orders(max_pages=10)
+                self._cancel_owned_open_orders(max_pages=10)
                 
 
                 # Optional: final reconciliation
@@ -806,7 +1251,3 @@ class SimpleMarketMaker:
         if self.persist_to_db:
             self.save_to_db(order_df)
         return order_df
-
-
-
-

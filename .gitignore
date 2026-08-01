@@ -17,4 +17,7 @@ __pycache__/
 # Data outputs the bot writes at runtime (market_maker/results/)
 *.csv
 market_maker/results/*.json
+market_maker/results/*.lock
 !market_maker/results/.gitkeep
+docs/
+.docker-validation-results/

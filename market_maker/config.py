@@ -34,16 +34,26 @@ class MMConfig:
     # inherited position). Change this to start demo runs somewhere other
     # than flat, without touching run.py.
     demo_inv_initial: float = 0.0
+    demo_level1_fast_fill_enabled: bool = True
+    demo_level1_fill_delay_seconds: float = 0.0
+    demo_level1_fill_fraction: float = 1.0
+    demo_queue_enabled: bool = False
+    demo_state_path: Optional[str] = None
+    demo_fee_state_path: Optional[str] = None
+    algo1_diagnostics_enabled: bool = False
+    algo1_diagnostics_path: Optional[str] = None
 
 
     # Loop / time controls
     time_step: int = 60                            # seconds between rounds
     time_horizon_days: int = 1                     # until midnight of +N days
     max_rounds: Optional[int] = None
+    continuous: bool = False
     # None = run to horizon
     output_csv: str =None   # <-- NEW
     
-    session: float = None
+    session: Any = None
+    mode: str = "real"
 
 
     # API auth endpoints (required to read balances / place orders)
@@ -78,7 +88,7 @@ def demo_csv_path(real_path: str) -> str:
 # place, rather than hunting through run.py or dashboard.py.
 TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
     "btc": dict(
-        commission_perc=0.0025,
+        commission_perc=0.0010,
         cancel_after_minutes=10,
         algorithm_id="1btc",
         depth_max=10,
@@ -99,7 +109,7 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         output_csv=os.path.join(RESULTS_DIR, "btc_track.csv"),
     ),
     "usdt": dict(
-        commission_perc=0.0025,
+        commission_perc=0.0010,
         cancel_after_minutes=10,
         algorithm_id="1usdt",
         depth_max=10,
