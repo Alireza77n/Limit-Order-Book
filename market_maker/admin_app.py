@@ -39,6 +39,8 @@ from demo_config import (
     overlay_path,
     validate_overrides,
 )
+from config import TRADING_PROFILES, demo_csv_path
+from dashboard import activity_records, load_track
 
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
 PAIRS = ("btc", "usdt")
@@ -259,6 +261,23 @@ def _recent_audit(app: Flask, limit: int = 20):
     return entries
 
 
+def _ledger_account(app: Flask, pair: str):
+    """Most recently written paper ledger's `account` block (inventory,
+    cash, valuation_price, fees_quote) for `pair`, read directly -- the
+    same field names paper.py's own save/load round-trip uses."""
+    state_dir = Path(app.config["STATE_DIR"])
+    matches = sorted(
+        state_dir.glob(f"paper_*_{PAIR_LOCK_SUFFIX[pair]}.json"),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
+    if not matches:
+        return None
+    try:
+        return json.loads(matches[0].read_text()).get("account")
+    except (OSError, ValueError):
+        return None
+
+
 RESET_GLOBS = ("*_demo.csv", "*_demo.sqlite3", "paper_*.json", "paper_*_archive.jsonl", "paper_fee_scopes.json")
 
 
@@ -476,6 +495,55 @@ def _register_routes(app: Flask) -> None:
             buffer, mimetype="application/zip", as_attachment=True,
             download_name=f"{backup_name}.zip",
         )
+
+    @app.route("/admin/orders")
+    @login_required
+    def admin_orders():
+        pair = request.args.get("pair", "btc")
+        if pair not in PAIRS:
+            return ("unknown pair", 400)
+        # Join against this app's own RESULTS_DIR (not the global profile
+        # path) so a ro-mounted runtime/results in production, or a tmp
+        # dir in tests, is what actually gets read.
+        csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
+        csv_path = os.path.join(app.config["RESULTS_DIR"], csv_name)
+        df = load_track(csv_path)  # dashboard.py's own pure loader -- not re-implemented here
+        if df is None:
+            return jsonify({"orders": []})
+        return jsonify({"orders": activity_records(df)})
+
+    @app.route("/admin/balances")
+    @login_required
+    def admin_balances():
+        return jsonify({pair: _ledger_account(app, pair) for pair in PAIRS})
+
+    @app.route("/admin/logs")
+    @login_required
+    def admin_logs():
+        pair = request.args.get("pair", "btc")
+        if pair not in PAIRS:
+            return ("unknown pair", 400)
+        state_dir = Path(app.config["STATE_DIR"])
+        matches = sorted(
+            state_dir.glob(f"paper_*_{PAIR_LOCK_SUFFIX[pair]}_archive.jsonl"),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        if not matches:
+            return jsonify({"entries": []})
+        entries = []
+        for line in matches[0].read_text().splitlines()[-200:]:
+            try:
+                entries.append(json.loads(line))
+            except ValueError:
+                continue
+        return jsonify({"entries": entries})
+
+    @app.route("/admin/audit")
+    @login_required
+    def admin_audit():
+        limit = request.args.get("limit", "200")
+        limit = int(limit) if limit.isdigit() else 200
+        return jsonify({"audit": _recent_audit(app, limit=limit)})
 
 
 @csrf_protected
