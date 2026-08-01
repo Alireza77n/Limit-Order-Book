@@ -25,7 +25,13 @@ import signal
 from datetime import datetime
 from pathlib import Path
 
-from config import MMConfig, RESULTS_DIR, TRADING_PROFILES, demo_csv_path
+from config import (
+    DEMO_STATE_DIR,
+    MMConfig,
+    TRADING_PROFILES,
+    demo_csv_path,
+    demo_state_path,
+)
 from portfolio import Nobitex_portfolio
 from engine import CoordinatedShutdown, SimpleMarketMaker
 from exchange.nobitex import NobitexExchangeClient
@@ -79,12 +85,12 @@ def make_cfg(
         # starts flat by default, no inherited real position.
         cfg.inv_initial = cfg.demo_inv_initial
         safe_session = str(cfg.session).replace("/", "_")
-        cfg.demo_state_path = os.path.join(
-            RESULTS_DIR, f"paper_{safe_session}_{cfg.pair.lower()}.json"
+        cfg.demo_state_path = demo_state_path(
+            f"paper_{safe_session}_{cfg.pair.lower()}.json"
         )
-        cfg.demo_fee_state_path = os.path.join(RESULTS_DIR, "paper_fee_scopes.json")
-        cfg.demo_archive_path = os.path.join(
-            RESULTS_DIR, f"paper_{safe_session}_{cfg.pair.lower()}_archive.jsonl"
+        cfg.demo_fee_state_path = demo_state_path("paper_fee_scopes.json")
+        cfg.demo_archive_path = demo_state_path(
+            f"paper_{safe_session}_{cfg.pair.lower()}_archive.jsonl"
         )
     return cfg
 
@@ -168,7 +174,7 @@ def main():
     cfg = make_cfg(args.profile, args.mode, continuous=args.continuous)
     bot = make_bot(cfg, args.algorithm, args.exchange, args.mode)
     if args.mode == "demo":
-        lease_path = os.path.join(RESULTS_DIR, f".worker_{cfg.pair.lower()}.lock")
+        lease_path = os.path.join(DEMO_STATE_DIR, f".worker_{cfg.pair.lower()}.lock")
         with WorkerLease(lease_path, identity=f"{cfg.pair}-demo"):
             bot.run()
     else:

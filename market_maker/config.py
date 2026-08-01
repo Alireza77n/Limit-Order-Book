@@ -79,7 +79,13 @@ class MMConfig:
 # Where run() writes its CSV output -- anchored to this file's own
 # directory (not the process's CWD) so run.py and dashboard.py agree on
 # the same location regardless of where each is launched from.
-RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+_PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.environ.get("LOB_RESULTS_DIR", os.path.join(_PACKAGE_DIR, "results"))
+DEMO_STATE_DIR = os.environ.get("LOB_STATE_DIR", RESULTS_DIR)
+
+
+def demo_state_path(filename: str) -> str:
+    return os.path.join(DEMO_STATE_DIR, filename)
 
 
 def demo_csv_path(real_path: str) -> str:
