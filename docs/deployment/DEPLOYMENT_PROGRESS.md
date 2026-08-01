@@ -796,3 +796,106 @@ including a real authenticated admin-to-agent backup round trip. This is not
 long-term readiness evidence. Exact next step: monitor restart counts, memory,
 the shared session ID, control-agent status, audit cardinality, and Sarkhatti's
 baseline again after an extended interval without recreating either project.
+
+## 2026-08-02 — Admin Control Panel HTML frontend (implementation, not deployed)
+
+The admin app deployed above is JSON-only (`GET /admin/` returns a raw JSON
+status object to a browser). Templates and static assets for a full
+server-rendered HTML frontend (`market_maker/templates/admin/*.html`,
+`market_maker/static/admin/{admin.css,admin.js}`) already existed
+uncommitted on this branch, but zero routes rendered them -- `admin_app.py`
+was 100% JSON except a hand-inlined login HTML string, and a `_wants_html()`
+content-negotiation helper existed but was never called from any route body.
+
+This session wired every existing route to content-negotiate: real
+browsers (`Accept: text/html`) get the rendered page; every pre-existing
+JSON caller keeps working unchanged. That last part was verified, not
+assumed -- Flask's test client sends no `Accept` header at all by default,
+which resolves `_wants_html()` to `False`, so all 299 pre-existing tests
+(none of which set an Accept header) hit the exact same JSON branch as
+before. Real browsers send `text/html` explicitly in their Accept header;
+bare `curl`/`Accept: */*` also resolves to HTML, matching the "HTML by
+default, JSON on explicit request" intent; `?format=json` / `?format=html`
+force either explicitly.
+
+Three functional bugs were found and fixed while wiring the pre-built
+templates in (none were previously exercised by any test):
+
+- `config.html` used `{% if field_type is bool %}` / `is int` -- not valid
+  Jinja test names (Jinja has `boolean`/`integer`, not `bool`/`int`, and
+  the plain `bool`/`int` builtins aren't in the Jinja global namespace
+  either). The config form had never actually rendered before this;
+  compared `.__name__` against string literals instead.
+- `backups.html`'s per-row "Download" link pointed at `admin_export`,
+  which always creates a **new** backup regardless of which row was
+  clicked -- every "Download" button silently created and downloaded a
+  fresh snapshot instead of the one listed in that row. Added
+  `GET /admin/backups/<name>/download`, which zips the named backup's
+  existing files without enqueueing anything, and repointed the link.
+- `base.html` linked to a bare `admin_workers` endpoint that only exists
+  as `/admin/workers/<action>` (POST, requires the action in the URL) --
+  `url_for('admin_workers')` would raise a `BuildError` on every page.
+  Added `GET /admin/workers` as a new endpoint (`admin_workers_page`)
+  that renders the worker-controls page; the POST endpoint keeps its
+  original name and URL so `test_admin_actions.py` needed no changes.
+
+Also closed a gap the template author had clearly anticipated but the
+backend didn't implement: `orders.html` ships a side/buy-sell and
+status filter form, but `admin_orders` ignored both query params
+entirely. Added `_filter_orders()`, exercised by both the HTML and JSON
+branches identically.
+
+`overview.html` (renamed from a pre-existing `index.html`) shows the
+DEMO/PAPER banner, session ID, control-lock state, both worker statuses,
+and recent audit rows, with links to every other section. Worker
+start/stop/restart, cancel-orders, and new-session controls live on a
+dedicated Worker Controls page (`/admin/workers`, linked from Overview's
+Quick Actions and the main nav) rather than duplicated inline on Overview
+-- a deliberate deviation from the original design note's literal page
+layout, kept because the page was already fully built this way and moving
+working, tested markup around for no functional gain isn't worth the
+diff. A `confirmation.html` Jinja macro was factored out of the
+already-duplicated RESTORE/RESET typed-confirmation forms in
+`backups.html` and `recovery.html`.
+
+27 new tests added in `market_maker/tests/test_admin_html_views.py` cover:
+content negotiation itself (default JSON preserved, explicit `Accept:
+text/html` and `?format=` overrides), every page rendering with its
+expected controls and CSRF field, the config apply/validation-error/
+revert paths, order filtering, balances fee-scope data, the backup
+download-bug regression test, typed RESET/RESTORE confirmation still
+enforced server-side through the HTML path, output escaping (a `<script>`
+tag in a log message is not reflected unescaped), the one-audit-entry-
+per-action invariant holding over the HTML path, and friendly HTML error
+pages for CSRF failure (400), unknown routes (404), and operation-in-
+progress (409).
+
+```text
+$ python3 -m pytest -q
+326 passed, 1 warning (pre-existing Dash deprecation notice), 0 failed
+
+$ python3 -m compileall -q market_maker deploy/control_agent.py; echo $?
+0
+
+$ bash -n deploy/rollback.sh; echo $?
+0
+
+$ docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+    --env-file deploy/demo.env config --quiet; echo $?
+0
+```
+
+Also smoke-tested (outside pytest) that all ten authenticated nav pages
+(`/admin/`, `/admin/workers`, `/admin/config/btc`, `/admin/config/usdt`,
+`/admin/orders`, `/admin/balances`, `/admin/backups`, `/admin/recover`,
+`/admin/logs`, `/admin/audit`) return `200 text/html` end-to-end against a
+throwaway app instance with no fixture data.
+
+Committed to `parsaoryani/admin-demo-control` locally (commit `83c4093`,
+"feat: wire HTML admin control panel into existing JSON routes"). **Not
+pushed, not deployed.** Production is still running the JSON-only admin
+app from the prior deployment above; this HTML frontend has not shipped.
+A separate deployment prompt for driving that rollout was prepared
+alongside this entry -- same server (`ubuntu@185.206.95.141`), same
+project path, same rollback script, gated on the same Sarkhatti-health and
+zero-real-call checks as the prior deployment.
