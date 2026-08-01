@@ -14,9 +14,10 @@ APP_DIR="$(realpath -e -- "$EXPECTED_APP_DIR")" || fail "application directory i
 AVAILABLE_SITE="/etc/nginx/sites-available/lob-dashboard"
 ENABLED_SITE="/etc/nginx/sites-enabled/lob-dashboard"
 AUTH_FILE="/etc/nginx/lob-dashboard.htpasswd"
+HASH_CONF="/etc/nginx/conf.d/lob-server-names-hash.conf"
 
-for target in "$AVAILABLE_SITE" "$ENABLED_SITE" "$AUTH_FILE"; do
-    if [[ "$target" != "$AVAILABLE_SITE" && "$target" != "$ENABLED_SITE" && "$target" != "$AUTH_FILE" ]]; then
+for target in "$AVAILABLE_SITE" "$ENABLED_SITE" "$AUTH_FILE" "$HASH_CONF"; do
+    if [[ "$target" != "$AVAILABLE_SITE" && "$target" != "$ENABLED_SITE" && "$target" != "$AUTH_FILE" && "$target" != "$HASH_CONF" ]]; then
         fail "unexpected deletion target"
     fi
 done
@@ -37,6 +38,12 @@ fi
 if [[ -e "$AUTH_FILE" || -L "$AUTH_FILE" ]]; then
     [[ ! -L "$AUTH_FILE" && -f "$AUTH_FILE" ]] || fail "auth file is not a regular file"
     targets_to_remove+=("$AUTH_FILE")
+fi
+
+if [[ -e "$HASH_CONF" || -L "$HASH_CONF" ]]; then
+    [[ ! -L "$HASH_CONF" && -f "$HASH_CONF" ]] || fail "server-name hash config is not a regular file"
+    [[ "$(cat -- "$HASH_CONF")" == "server_names_hash_bucket_size 128;" ]] || fail "server-name hash config has unexpected content"
+    targets_to_remove+=("$HASH_CONF")
 fi
 
 cd "$APP_DIR"

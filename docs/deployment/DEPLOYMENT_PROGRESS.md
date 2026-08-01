@@ -428,3 +428,104 @@ docker compose -p limit-order-book down
 ```
 
 Exact next step: commit this corrected evidence, push the code and documentation commits through the authorized branch flow, and use only the provenance-bound image ID/revision during the separate server-side nip.io DNS, certificate, authentication, and startup gate.
+
+## 2026-08-01 — Server deployment checkpoint (stack healthy, Nginx pending)
+
+Completed work:
+
+- Re-ran the pre-start Sarkhatti gate and confirmed container ID `4ffa1cdf90fef73f8f068fd646c84c1bf0f85cb5f0ef02a21c676d87425d57f5`, healthy state, restart count `0`, original start time, loopback ports, and `/home/ubuntu/sarkhatti/data:/app/data` mount were unchanged.
+- Cloned only the `production` branch into `/home/ubuntu/limit-order-book` at commit `ff5f000ff13f61be3f3d470de26ee1fac3cb69e8` and created isolated `runtime/results`, `runtime/state`, `runtime/logs`, and `runtime/backups` directories.
+- Built `limit-order-book-demo:local` on the server. Immutable image ID: `sha256:07951518ba38b63c1a22101ee9a8777ea2de88678c3353f066115d333ded86d2`; OCI revision: `ff5f000ff13f61be3f3d470de26ee1fac3cb69e8`; OCI build date: `2026-08-01T14:20:37Z`; size: `145046369` bytes.
+- Started only Compose project `limit-order-book` with `--no-build`. `lob-session-init` exited `0`; `lob-btc-demo`, `lob-usdt-demo`, and `lob-dashboard` became healthy with zero restarts.
+- Confirmed workers publish no host ports and the dashboard publishes only `127.0.0.1:8652->8050/tcp`.
+- Confirmed all three long-running services executed the Demo startup guard once and contain no Nobitex, MySQL, or Telegram environment variables.
+- Ran immutable-image guard canaries: real worker mode, non-empty `NOBITEX_API_TOKEN`, and non-empty `MYSQL_PASSWORD` each exited `1` before the success marker or execution canary; the safe Demo forwarding control exited `0` with both markers.
+- Confirmed one shared session ID, `demo-20260801T142243Z-911eaa88ba00`, created once at `2026-08-01T14:22:43.698018+00:00`.
+- Measured current memory: BTC `58.1 MiB`, USDT `63.21 MiB`, dashboard `82.98 MiB` (about `204 MiB` combined), with `925 MiB` host RAM available and `1.9 GiB` swap free.
+- Rechecked Sarkhatti after build and startup: its identity, health, restart count, start time, ports, and mount remained unchanged.
+
+Commands executed included:
+
+```bash
+LOB_REVISION=ff5f000ff13f61be3f3d470de26ee1fac3cb69e8 \
+LOB_BUILD_DATE=2026-08-01T14:20:37Z \
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env build
+
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env up -d --no-build
+
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env ps -a
+docker stats --no-stream sarkhatti lob-btc-demo lob-usdt-demo lob-dashboard
+```
+
+Files changed on the server: only files under `/home/ubuntu/limit-order-book`, the dedicated Docker image, containers, and network for Compose project `limit-order-book`. No Sarkhatti file or configuration was changed. No Nginx file or certificate has been changed yet.
+
+Problems: two early disposable smoke wrappers had incorrect test assumptions/argument order. They did not mutate either application and did not invalidate the effective Compose configuration. The corrected direct immutable-image commands produced the rejection evidence recorded above.
+
+Rollback at this checkpoint:
+
+```bash
+cd /home/ubuntu/limit-order-book
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env down
+```
+
+Exact next step: back up current Nginx configuration, install the dedicated HTTP-only ACME bootstrap server block for `dashboard.185-206-95-141.nip.io`, run `nginx -t`, reload Nginx, obtain the separate certificate, then install the authenticated HTTPS server block after another `nginx -t`.
+
+## 2026-08-01 — Dashboard HTTPS and final short-run validation
+
+Completed work:
+
+- Backed up `/etc/nginx/nginx.conf`, `/etc/nginx/sites-available/sarkhatti`, its enabled-link target, and pre-change hashes to `/home/ubuntu/limit-order-book/runtime/backups/nginx-20260801T1429Z` before any successful Nginx reload.
+- Installed the dedicated site `/etc/nginx/sites-available/lob-dashboard`, enabled only that site, created `/etc/nginx/lob-dashboard.htpasswd`, and installed the dedicated compatibility file `/etc/nginx/conf.d/lob-server-names-hash.conf`.
+- Obtained a separate Let's Encrypt certificate for `dashboard.185-206-95-141.nip.io`, valid from 2026-08-01 through 2026-10-30. Certbot installed its normal renewal timer.
+- Installed the final authenticated HTTPS proxy and reloaded (never restarted) Nginx only after `nginx -t` passed.
+- Verified externally: HTTP `301` to HTTPS, unauthenticated HTTPS `401`, authenticated HTTPS `200`, certificate verification result `0`, and direct public access to `185.206.95.141:8652` timed out. The only listener for port 8652 is `127.0.0.1:8652`.
+- Verified the new containers use only network `limit-order-book-internal` and mounts rooted under `/home/ubuntu/limit-order-book/runtime`. No Sarkhatti path is mounted.
+- After more than six minutes, all long-running services remained healthy with zero restarts and zero OOM events; `lob-session-init` remained successfully exited. Logs contained one startup-guard marker per service, zero traceback/error matches, and zero `stack_shutdown`/cancellation matches.
+- Confirmed the shared session file remained exactly one file with the original session ID and creation time. Both BTC and USDT SQLite results contain only that session and `Mode=demo`; synthetic BTC IDs have the local `btcirt-buy-*`/`btcirt-sell-*` form.
+- The deterministic two-symbol zero-call test passed as part of the 209-test suite. It explicitly asserts real send, cancel, bulk-cancel, stale-cancel, and MySQL call counts are all zero. Runtime guard canaries separately rejected real mode and credential injection.
+- Final measured new-stack memory was about 206 MiB, below the 512 MiB target. Host available RAM was about 1.0 GiB with 1.9 GiB swap free.
+- Final Sarkhatti evidence remained identical: container ID, start time, healthy state, restart count `0`, OOM false, mounts, and ports unchanged. Compose, `.env`, and Nginx site hashes remained exactly `66563a50...`, `106edced...`, and `0403e33f...`; five local latency samples were 5.2–6.8 ms.
+- Local release verification after the rollback compatibility update: `209 passed, 1 warning`; `bash -n deploy/rollback.sh` passed; rendered Compose validation passed.
+
+Nginx commands executed:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+sudo certbot certonly --webroot -w /var/www/lob-dashboard-acme \
+  -d dashboard.185-206-95-141.nip.io \
+  --non-interactive --agree-tos --keep-until-expiring
+```
+
+Files changed outside the application directory are limited to:
+
+```text
+/etc/nginx/sites-available/lob-dashboard
+/etc/nginx/sites-enabled/lob-dashboard -> /etc/nginx/sites-available/lob-dashboard
+/etc/nginx/lob-dashboard.htpasswd
+/etc/nginx/conf.d/lob-server-names-hash.conf
+/etc/letsencrypt/live/dashboard.185-206-95-141.nip.io/ (Certbot-managed)
+/etc/letsencrypt/archive/dashboard.185-206-95-141.nip.io/ (Certbot-managed)
+/etc/letsencrypt/renewal/dashboard.185-206-95-141.nip.io.conf (Certbot-managed)
+```
+
+Problem and resolution: the first bootstrap `nginx -t` failed before reload because the existing host-wide `server_names_hash_bucket_size` was insufficient for one more hostname. No running configuration changed. A dedicated removable `lob-server-names-hash.conf` setting the bucket to 128 resolved the compatibility issue; the rollback script now validates and removes that exact file.
+
+Rollback (removes only the new Compose project and its four dedicated Nginx files, then validates and reloads Nginx):
+
+```bash
+cd /home/ubuntu/limit-order-book
+./deploy/rollback.sh
+```
+
+Optional certificate removal after rollback:
+
+```bash
+sudo certbot delete --cert-name dashboard.185-206-95-141.nip.io
+```
+
+Current status: deployment is complete and passed a short-run validation window. This is not evidence of long-term readiness; ongoing operational monitoring remains required. Exact next step for a future session: compare the session ID, restart counts, memory, logs, and Sarkhatti baseline again after an extended observation period without recreating either stack.

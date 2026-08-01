@@ -470,6 +470,7 @@ def test_rollback_is_explicitly_project_scoped_and_fail_closed():
     assert 'AVAILABLE_SITE="/etc/nginx/sites-available/lob-dashboard"' in rollback
     assert 'ENABLED_SITE="/etc/nginx/sites-enabled/lob-dashboard"' in rollback
     assert 'AUTH_FILE="/etc/nginx/lob-dashboard.htpasswd"' in rollback
+    assert 'HASH_CONF="/etc/nginx/conf.d/lob-server-names-hash.conf"' in rollback
     assert '[[ -L "$ENABLED_SITE" ]]' in rollback
     assert 'readlink -- "$ENABLED_SITE"' in rollback
     assert '[[ "$(readlink -- "$ENABLED_SITE")" == "$AVAILABLE_SITE" ]]' in rollback
@@ -477,11 +478,13 @@ def test_rollback_is_explicitly_project_scoped_and_fail_closed():
     assert 'if [[ -e "$AVAILABLE_SITE" || -L "$AVAILABLE_SITE" ]]; then' in rollback
     assert 'if [[ -e "$ENABLED_SITE" || -L "$ENABLED_SITE" ]]; then' in rollback
     assert 'if [[ -e "$AUTH_FILE" || -L "$AUTH_FILE" ]]; then' in rollback
+    assert 'if [[ -e "$HASH_CONF" || -L "$HASH_CONF" ]]; then' in rollback
     assert '[[ ! -L "$AVAILABLE_SITE" && -f "$AVAILABLE_SITE" ]]' in rollback
     assert '[[ ! -L "$AUTH_FILE" && -f "$AUTH_FILE" ]]' in rollback
     assert 'targets_to_remove+=("$AVAILABLE_SITE")' in rollback
     assert 'targets_to_remove+=("$ENABLED_SITE")' in rollback
     assert 'targets_to_remove+=("$AUTH_FILE")' in rollback
+    assert 'targets_to_remove+=("$HASH_CONF")' in rollback
     assert 'sudo rm -- "${targets_to_remove[@]}"' in rollback
     assert "sudo nginx -t" in rollback
     assert "sudo systemctl reload nginx" in rollback
