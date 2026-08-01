@@ -33,6 +33,8 @@ The operator explicitly selected `git@github.com:Alireza77n/Limit-Order-Book.git
 - Task 1 verification evidence: 26 focused entrypoint/Demo-safety/end-to-end tests passed; the full suite passed 191 tests with one pre-existing Dash deprecation warning. The zero-real-call end-to-end assertion remained exact.
 - Added environment-controlled result and state roots in commit `998b1cd`. Demo CSV/SQLite outputs remain in the result root; paper ledgers, fee state, archives, and worker lease files use the state root. Native defaults remain compatible.
 - Task 2 verification evidence: 19 focused runtime/config/session tests and 194 full-suite tests passed with the same pre-existing Dash warning; task review was clean.
+- Added the isolated production Compose stack in commits `79d448d`, `d8cfb35`, and `de41192`. Review initially blocked deployment because forwarded scripts were not executable, the Docker-internal network blocked public market-data egress, stop grace was absent, stale lock files could pass health checks, and raw-YAML tests were too weak. All findings were fixed and re-reviewed.
+- Task 3 final evidence: exact Compose config and image build exited 0; a constrained read-only container printed both the Demo guard and forwarded-command smoke markers; 11 focused contract tests and 205 full-suite tests passed. The resolved Compose JSON enforces four services, one egress-capable dedicated bridge, dashboard-only `127.0.0.1:8652`, exact mounts/hardening, active lease health, and 128/128/192 MiB long-running limits (448 MiB total).
 
 ## Commands executed
 
@@ -176,4 +178,4 @@ The final rollback procedure may additionally remove only the dedicated Limit Or
 
 ## Exact next step
 
-Implement and validate the isolated production Compose model test-first, including loopback-only publishing, resource/log limits, health checks, dedicated mounts/network, and credential-empty environment. Then prepare the independent Nginx/rollback assets.
+Prepare and test the independent Nginx HTTP/HTTPS assets and exact-target rollback script. Then run fresh full local verification and promote the verified SHA to the allowed GitHub branches.
