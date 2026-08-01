@@ -367,3 +367,104 @@ def test_sarkhatti_is_never_referenced_by_deployment_artifacts():
     for path in (ROOT / "deploy").rglob("*"):
         if path.is_file():
             assert "sarkhatti" not in path.read_text().lower()
+
+
+def test_nginx_bootstrap_only_serves_the_acme_challenge():
+    bootstrap = (ROOT / "deploy/nginx/lob-dashboard-http.conf").read_text()
+
+    assert "listen 80;" in bootstrap
+    assert "server_name dashboard.185-206-95-141.sslip.io;" in bootstrap
+    assert "location /.well-known/acme-challenge/" in bootstrap
+    assert "root /var/www/lob-dashboard-acme;" in bootstrap
+    assert "try_files $uri =404;" in bootstrap
+    assert "location /" in bootstrap
+    assert "return 404;" in bootstrap
+    assert "proxy_pass" not in bootstrap
+
+
+def test_nginx_final_site_is_an_authenticated_loopback_proxy():
+    https = (ROOT / "deploy/nginx/lob-dashboard-https.conf").read_text()
+
+    assert https.count("server_name dashboard.185-206-95-141.sslip.io;") == 2
+    assert https.count("listen 80;") == 1
+    assert https.count("listen 443 ssl http2;") == 1
+    assert "return 301 https://$host$request_uri;" in https
+    assert "location /.well-known/acme-challenge/" in https
+    assert "root /var/www/lob-dashboard-acme;" in https
+    assert "try_files $uri =404;" in https
+    assert (
+        "ssl_certificate /etc/letsencrypt/live/dashboard.185-206-95-141.sslip.io/"
+        "fullchain.pem;"
+    ) in https
+    assert (
+        "ssl_certificate_key /etc/letsencrypt/live/dashboard.185-206-95-141.sslip.io/"
+        "privkey.pem;"
+    ) in https
+    assert 'auth_basic "Limit Order Book Dashboard";' in https
+    assert "auth_basic_user_file /etc/nginx/lob-dashboard.htpasswd;" in https
+    for header in (
+        'add_header X-Content-Type-Options "nosniff" always;',
+        'add_header X-Frame-Options "DENY" always;',
+        'add_header Referrer-Policy "strict-origin-when-cross-origin" always;',
+        'add_header Strict-Transport-Security "max-age=31536000" always;',
+    ):
+        assert header in https
+    for setting in (
+        "proxy_pass http://127.0.0.1:8652;",
+        "proxy_http_version 1.1;",
+        "proxy_set_header Host $host;",
+        "proxy_set_header X-Real-IP $remote_addr;",
+        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "proxy_set_header X-Forwarded-Proto $scheme;",
+        "proxy_set_header Upgrade $http_upgrade;",
+        'proxy_set_header Connection "upgrade";',
+        "proxy_buffering off;",
+    ):
+        assert setting in https
+    assert "8642" not in https and "6080" not in https
+
+
+def test_rollback_is_explicitly_project_scoped_and_fail_closed():
+    rollback = (ROOT / "deploy/rollback.sh").read_text()
+
+    assert "set -euo pipefail" in rollback
+    assert 'EXPECTED_APP_DIR="/home/ubuntu/limit-order-book"' in rollback
+    assert 'APP_DIR="$(realpath -e -- "$EXPECTED_APP_DIR")"' in rollback
+    assert '[[ "$APP_DIR" == "$EXPECTED_APP_DIR" ]]' in rollback
+    assert (
+        "docker compose -p limit-order-book -f deploy/docker-compose.production.yml "
+        "--env-file deploy/demo.env down"
+    ) in rollback
+    assert 'AVAILABLE_SITE="/etc/nginx/sites-available/lob-dashboard"' in rollback
+    assert 'ENABLED_SITE="/etc/nginx/sites-enabled/lob-dashboard"' in rollback
+    assert 'AUTH_FILE="/etc/nginx/lob-dashboard.htpasswd"' in rollback
+    assert '[[ -L "$ENABLED_SITE" ]]' in rollback
+    assert 'readlink -- "$ENABLED_SITE"' in rollback
+    assert '[[ "$(readlink -- "$ENABLED_SITE")" == "$AVAILABLE_SITE" ]]' in rollback
+    assert "targets_to_remove=()" in rollback
+    assert 'if [[ -e "$AVAILABLE_SITE" || -L "$AVAILABLE_SITE" ]]; then' in rollback
+    assert 'if [[ -e "$ENABLED_SITE" || -L "$ENABLED_SITE" ]]; then' in rollback
+    assert 'if [[ -e "$AUTH_FILE" || -L "$AUTH_FILE" ]]; then' in rollback
+    assert '[[ ! -L "$AVAILABLE_SITE" && -f "$AVAILABLE_SITE" ]]' in rollback
+    assert '[[ ! -L "$AUTH_FILE" && -f "$AUTH_FILE" ]]' in rollback
+    assert 'targets_to_remove+=("$AVAILABLE_SITE")' in rollback
+    assert 'targets_to_remove+=("$ENABLED_SITE")' in rollback
+    assert 'targets_to_remove+=("$AUTH_FILE")' in rollback
+    assert 'sudo rm -- "${targets_to_remove[@]}"' in rollback
+    assert "sudo nginx -t" in rollback
+    assert "sudo systemctl reload nginx" in rollback
+    assert (
+        "sudo certbot delete --cert-name dashboard.185-206-95-141.sslip.io"
+    ) in rollback
+    for forbidden in (
+        "docker system prune",
+        "docker volume prune",
+        "docker network prune",
+        "docker container prune",
+        "rm -r",
+        "rm -R",
+        "rm -rf",
+        "find ",
+        "xargs",
+    ):
+        assert forbidden not in rollback
