@@ -1,4 +1,5 @@
 import json
+import inspect
 import sys
 from pathlib import Path
 
@@ -235,3 +236,8 @@ def test_process_command_unknown_action_reports_error(tmp_path):
     paths = make_paths(tmp_path)
     result = ca.process_command(paths, {"action": "not_real", "command_id": "x"}, RecordingRunner())
     assert result.ok is False
+
+
+def test_agent_leaves_user_audit_logging_to_admin_app():
+    """One user action must produce exactly one audit record."""
+    assert "append_audit" not in inspect.getsource(ca)

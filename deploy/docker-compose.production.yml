@@ -2,6 +2,7 @@ name: limit-order-book
 
 x-runtime-common: &runtime-common
   image: limit-order-book-demo:local
+  user: "1000:1000"
   env_file:
     - demo.env
   read_only: true

@@ -35,7 +35,6 @@ if _MARKET_MAKER_DIR not in sys.path:
 
 from control_queue import (  # noqa: E402
     ACTIONS,
-    append_audit,
     submit_command,  # noqa: F401  (re-exported for convenience/tests)
     write_result,
 )
@@ -415,11 +414,6 @@ def poll_once(paths: AgentPaths, run_argv: Callable = None) -> int:
             continue
         result = process_command(paths, command, run_argv)
         write_result(paths.control_dir, command["command_id"], result.ok, result.detail)
-        append_audit(paths.control_dir, {
-            "command_id": command["command_id"], "action": command.get("action"),
-            "pair": command.get("pair"), "requested_by": command.get("requested_by"),
-            "ok": result.ok,
-        })
         command_file.unlink(missing_ok=True)
         processed += 1
     return processed

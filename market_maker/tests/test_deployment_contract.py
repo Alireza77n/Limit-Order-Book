@@ -203,6 +203,7 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
     common_text = text.split("\nx-runtime-common:", 1)[1].split("\nservices:\n", 1)[0]
 
     for setting in (
+        'user: "1000:1000"',
         "read_only: true",
         "init: true",
         "/tmp:rw,noexec,nosuid,size=64m",
@@ -374,6 +375,7 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
     for name, values in limits.items():
         cpus, memory_mib, pids, restart, grace, interval, timeout, start_period = values
         service = services[name]
+        assert service["user"] == "1000:1000"
         memory_bytes = memory_mib * 1024 * 1024
         assert service["read_only"] is True
         assert service["init"] is True
