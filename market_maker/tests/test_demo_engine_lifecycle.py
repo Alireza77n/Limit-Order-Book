@@ -278,3 +278,26 @@ def test_demo_engine_records_no_quote_episode_and_alert_state(tmp_path):
     diagnostics = result.iloc[-1]["No Quote Candidate Diagnostics"]
     assert '"commission":0.001' in diagnostics
     assert '"spread":0.01' in diagnostics
+
+
+def test_demo_restart_continues_round_numbers_in_same_session(tmp_path):
+    cfg = run.make_cfg("usdt", mode="demo", session_id="restart-session")
+    cfg.output_csv = str(tmp_path / "restart.csv")
+    cfg.demo_result_db_path = str(tmp_path / "restart.sqlite3")
+    cfg.demo_state_path = str(tmp_path / "restart-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "restart-fees.json")
+    cfg.max_rounds = 1
+    cfg.time_step = 0
+
+    for offset in (0, 2):
+        bot = run.make_bot(cfg, mode="demo")
+        bot.exchange._market_data = DeterministicMarketData()
+        bot.strategy = AlwaysNoQuoteStrategy()
+        bot.telegram_reporter = RecordingReporter()
+        times = iter([T0 + timedelta(seconds=offset), T0 + timedelta(seconds=offset + 1)])
+        bot.now_provider = lambda: next(times)
+        bot.sleep_fn = lambda seconds: None
+        result = bot.run()
+
+    assert list(result["Round"]) == [1, 2]
+    assert list(result["No Quote Consecutive Count"]) == [1, 2]

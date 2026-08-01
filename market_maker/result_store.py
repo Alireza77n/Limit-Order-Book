@@ -133,6 +133,15 @@ class DemoResultStore:
             ).fetchone()
         return int(record[0])
 
+    def latest_round_no(self, session_id: str, symbol: str) -> int:
+        with self._connect() as connection:
+            record = connection.execute(
+                "SELECT COALESCE(MAX(round_no), 0) FROM rounds "
+                "WHERE session_id=? AND symbol=?",
+                (str(session_id), str(symbol)),
+            ).fetchone()
+        return int(record[0])
+
     def update_order_rows(
         self,
         order_fields: Mapping[str, Mapping[str, object]],

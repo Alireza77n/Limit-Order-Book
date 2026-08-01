@@ -918,12 +918,14 @@ class SimpleMarketMaker:
         self.result_store.export_bounded_csv()
 
         self._notify_startup()
-        round_no = 0
+        round_no = self.result_store.latest_round_no(str(self.session), self.pair)
+        run_rounds = 0
         round_target = float(self.monotonic_provider())
         try:
             while self._within_horizon():
+                run_rounds += 1
                 round_no += 1
-                if self.cfg.max_rounds and round_no > self.cfg.max_rounds:
+                if self.cfg.max_rounds and run_rounds > self.cfg.max_rounds:
                     break
                 now = self.now_provider()
                 retry_pending = getattr(self.telegram_reporter, "retry_pending", None)
