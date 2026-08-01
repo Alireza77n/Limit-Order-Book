@@ -23,7 +23,8 @@ services:
     build: .
     command: ["python", "run.py", "--profile", "btc", "--mode", "demo", "--continuous"]
     env_file:
-      - market_maker/.env
+      - path: market_maker/.env
+        required: false
     environment:
       DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
     depends_on:
@@ -43,7 +44,8 @@ services:
     build: .
     command: ["python", "run.py", "--profile", "usdt", "--mode", "demo", "--continuous"]
     env_file:
-      - market_maker/.env
+      - path: market_maker/.env
+        required: false
     environment:
       DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
     depends_on:
@@ -63,7 +65,8 @@ services:
     build: .
     command: ["python", "dashboard.py"]
     env_file:
-      - market_maker/.env
+      - path: market_maker/.env
+        required: false
     volumes:
       - ./market_maker/results:/app/market_maker/results
     ports:
