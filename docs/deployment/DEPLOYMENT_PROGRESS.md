@@ -1,6 +1,6 @@
 # Limit Order Book Deployment Progress
 
-Last updated: 2026-08-01 13:52 UTC
+Last updated: 2026-08-01 14:11 UTC
 
 ## Current checkpoint
 
@@ -182,7 +182,9 @@ The final rollback procedure may additionally remove only the dedicated Limit Or
 
 Run the fresh full local release gate: tests, compilation, exact Compose rendering, image build/size, and unsafe-startup smoke matrix. Record the evidence, then promote the verified SHA to the allowed GitHub branches.
 
-## Task 5 local release-gate evidence (2026-08-01 13:52 UTC)
+## Superseded Task 5 evidence (2026-08-01 13:52 UTC)
+
+**Invalidated by review:** commit `fa6f3fb` did not establish image provenance. The inspected image `Config.Created` predated the tested source commit, the smoke commands used the mutable tag rather than an image ID, and the `RepoDigests` field was described as though it proved a registry artifact. Keep the following record only as rejected historical evidence; the corrected gate below supersedes every success claim in this section.
 
 The full local release gate passed at commit `bb5435160a286a5ce8ca8b1ca7a9d07494ecfb8c` on `parsaoryani/algo1-refactor-testability`. This is a local image verification only; no server or hostname asset was changed.
 
@@ -263,3 +265,166 @@ docker compose -p limit-order-book down
 ```
 
 Exact next step: push and promote this verified SHA through the authorized GitHub branch flow, then complete the separate server-side nip.io DNS, certificate, and authenticated-proxy deployment checks before starting the stack.
+
+## Corrected Task 5 provenance-bound release gate (2026-08-01 14:11 UTC)
+
+The reviewed release gate passes for code commit `fca90fdf6a3417d31f75be8269739e275279bf3c`. Provenance support was introduced in `068e033a64f2397d6f989f69a874a10dba29ed36`; the follow-up `fca90fd` moves revision-dependent OCI metadata after dependency/source layers so a new revision does not invalidate the dependency cache.
+
+TDD evidence:
+
+```text
+RED: test_image_build_provenance_is_resolved_and_stamped_as_oci_labels
+     KeyError: 'args'
+GREEN: focused provenance test: 1 passed
+ORDERING RED: assertion failed because ARG LOB_REVISION preceded pip install
+ORDERING GREEN: focused provenance test: 1 passed
+Focused deployment contract after each implementation: 15 passed
+```
+
+The immutable provenance inputs were selected only after the final code commit:
+
+```text
+LOB_REVISION=fca90fdf6a3417d31f75be8269739e275279bf3c
+LOB_BUILD_DATE=2026-08-01T14:09:11Z
+```
+
+Fresh release commands and results:
+
+```bash
+python3 -m pytest -q
+# 209 passed, 1 warning in 8.33s; exit 0
+
+python3 -m compileall -q market_maker
+# exit 0
+
+LOB_REVISION=fca90fdf6a3417d31f75be8269739e275279bf3c \
+LOB_BUILD_DATE=2026-08-01T14:09:11Z \
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env config
+# exit 0
+
+LOB_REVISION=fca90fdf6a3417d31f75be8269739e275279bf3c \
+LOB_BUILD_DATE=2026-08-01T14:09:11Z \
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env config --format json
+# exit 0; rendered build args exactly match both values above
+
+LOB_REVISION=fca90fdf6a3417d31f75be8269739e275279bf3c \
+LOB_BUILD_DATE=2026-08-01T14:09:11Z \
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env config --quiet
+# exit 0
+
+LOB_REVISION=fca90fdf6a3417d31f75be8269739e275279bf3c \
+LOB_BUILD_DATE=2026-08-01T14:09:11Z \
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env build
+# exit 0; dependency install and source copy were CACHED
+```
+
+The full-suite warning remains Dash's existing `dash_table.DataTable` deprecation warning. The final image inspection is:
+
+```text
+Image ID:          sha256:bdade84f231d8bed76003782063d8968292c256aa961547c317c5194cb70604a
+Config.Created:    2026-08-01T13:20:39.600803804Z
+OCI revision:      fca90fdf6a3417d31f75be8269739e275279bf3c
+OCI created:       2026-08-01T14:09:11Z
+Size:              144570014 bytes
+RepoDigests JSON:  ["limit-order-book-demo@sha256:bdade84f231d8bed76003782063d8968292c256aa961547c317c5194cb70604a"]
+Config.Env:        PATH, LANG, GPG_KEY, PYTHON_VERSION, PYTHON_SHA256, PYTHONUNBUFFERED
+```
+
+`Config.Created` reflects the cached image configuration history and is not used as source provenance. The exact OCI labels bind the image to the tested source commit and selected UTC build date. `RepoDigests` is only local Docker metadata for this unpushed image; it is **not** registry provenance or proof that the image exists in a registry. No secret or user-provided deployment value appears in `Config.Env`. A final-rootfs `find` audit by immutable image ID returned no `.env`, `.docker-validation-results*`, `runtime`, `results`, `.pytest_cache`, `__pycache__`, `*.pyc`, or `tests` path under `/app`.
+
+Every smoke used the immutable image ID. Exact commands, statuses, and complete combined stderr/stdout follow.
+
+Real-mode rejection:
+
+```bash
+docker run --rm \
+  sha256:bdade84f231d8bed76003782063d8968292c256aa961547c317c5194cb70604a \
+  python demo_entrypoint.py python run.py --profile btc --mode real --continuous
+# exit 1
+```
+
+```text
+Traceback (most recent call last):
+  File "/app/market_maker/demo_entrypoint.py", line 55, in <module>
+    main()
+  File "/app/market_maker/demo_entrypoint.py", line 49, in main
+    validate_demo_startup(command, os.environ)
+  File "/app/market_maker/demo_entrypoint.py", line 37, in validate_demo_startup
+    raise DemoStartupError("worker command must explicitly contain --mode demo")
+DemoStartupError: worker command must explicitly contain --mode demo
+```
+
+The guard success marker was absent, proving the command was rejected before `exec`.
+
+Nobitex-token rejection with execution canary:
+
+```bash
+docker run --rm -e NOBITEX_API_TOKEN=nonempty-smoke-value \
+  sha256:bdade84f231d8bed76003782063d8968292c256aa961547c317c5194cb70604a \
+  python demo_entrypoint.py python -c "print('UNSAFE_CANARY_RAN')"
+# exit 1
+```
+
+```text
+Traceback (most recent call last):
+  File "/app/market_maker/demo_entrypoint.py", line 55, in <module>
+    main()
+  File "/app/market_maker/demo_entrypoint.py", line 49, in main
+    validate_demo_startup(command, os.environ)
+  File "/app/market_maker/demo_entrypoint.py", line 40, in validate_demo_startup
+    raise DemoStartupError(f"{name} must be empty in Demo deployment")
+DemoStartupError: NOBITEX_API_TOKEN must be empty in Demo deployment
+```
+
+`UNSAFE_CANARY_RAN` and the guard success marker were both absent.
+
+MySQL-host rejection with execution canary:
+
+```bash
+docker run --rm -e MYSQL_HOST=nonempty-smoke-host \
+  sha256:bdade84f231d8bed76003782063d8968292c256aa961547c317c5194cb70604a \
+  python demo_entrypoint.py python -c "print('UNSAFE_CANARY_RAN')"
+# exit 1
+```
+
+```text
+Traceback (most recent call last):
+  File "/app/market_maker/demo_entrypoint.py", line 55, in <module>
+    main()
+  File "/app/market_maker/demo_entrypoint.py", line 49, in main
+    validate_demo_startup(command, os.environ)
+  File "/app/market_maker/demo_entrypoint.py", line 40, in validate_demo_startup
+    raise DemoStartupError(f"{name} must be empty in Demo deployment")
+DemoStartupError: MYSQL_HOST must be empty in Demo deployment
+```
+
+`UNSAFE_CANARY_RAN` and the guard success marker were both absent.
+
+Safe forwarded-command smoke:
+
+```bash
+docker run --rm \
+  sha256:bdade84f231d8bed76003782063d8968292c256aa961547c317c5194cb70604a \
+  python demo_entrypoint.py python -c "print('SAFE_FORWARDED_COMMAND_OK')"
+# exit 0
+```
+
+```text
+DEMO_STARTUP_GUARD_OK real_operations=disabled
+SAFE_FORWARDED_COMMAND_OK
+```
+
+Problems/cautions: the initial provenance implementation placed `ARG`/`LABEL` before `pip install`, invalidating dependency cache for every revision. A PyPI timeout exposed the defect. Commit `fca90fd` fixes the ordering and a contract assertion prevents regression. The image remains local and unpushed. nip.io DNS/certificate proof remains a separate pre-deployment gate.
+
+Rollback is still a no-op because no server deployment occurred. Future deployed-stack rollback remains exactly:
+
+```bash
+cd /home/ubuntu/limit-order-book
+docker compose -p limit-order-book down
+```
+
+Exact next step: commit this corrected evidence, push the code and documentation commits through the authorized branch flow, and use only the provenance-bound image ID/revision during the separate server-side nip.io DNS, certificate, authentication, and startup gate.
