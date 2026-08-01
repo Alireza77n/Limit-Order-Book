@@ -34,12 +34,13 @@ import control_queue
 from demo_config import (
     FIELD_SPECS,
     OverlayValidationError,
+    apply_overrides,
     has_previous,
     load_overrides,
     overlay_path,
     validate_overrides,
 )
-from config import TRADING_PROFILES, demo_csv_path
+from config import MMConfig, TRADING_PROFILES, demo_csv_path
 from dashboard import activity_records, load_track
 
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
@@ -435,10 +436,27 @@ def _recover_diagnostics(app: Flask):
     }
 
 
-def _config_page_context(pair: str, path, *, error=None, success=None, overrides=None) -> dict:
+def _effective_config_values(pair: str, path) -> dict:
+    """Current effective value of every editable field for `pair`: the
+    profile's own defaults (config.TRADING_PROFILES / MMConfig), with the
+    Demo admin overlay layered on top if one exists -- exactly what a real
+    demo worker would run with (see run.py:make_cfg). Unlike
+    demo_config.load_overrides(), this never comes back sparse/blank for
+    fields nobody has overridden yet."""
+    cfg = MMConfig(session=0, mode="demo", **TRADING_PROFILES[pair])
+    overrides = load_overrides(path)
+    if overrides:
+        apply_overrides(cfg, overrides)
+    return {key: getattr(cfg, key) for key in FIELD_SPECS}
+
+
+def _config_page_context(pair: str, path, *, error=None, success=None, attempted=None) -> dict:
+    values = _effective_config_values(pair, path)
+    if attempted:
+        values = dict(values, **attempted)
     return {
         "pair": pair,
-        "overrides": overrides if overrides is not None else load_overrides(path),
+        "overrides": values,
         "has_previous": has_previous(path),
         "field_order": sorted(FIELD_SPECS),
         "FIELD_SPECS": FIELD_SPECS,
@@ -849,10 +867,9 @@ def _admin_config_post(app: Flask, pair: str, path):
         # Rejected before enqueueing -- nothing submitted. Re-render with the
         # attempted (unsaved) values so the admin doesn't lose their edits.
         if wants_html:
-            merged = dict(load_overrides(path), **overrides)
             return render_template(
                 "admin/config.html",
-                **_config_page_context(pair, path, error=str(exc), overrides=merged),
+                **_config_page_context(pair, path, error=str(exc), attempted=overrides),
             ), 400
         return (str(exc), 400)
 
@@ -867,7 +884,7 @@ def _admin_config_post(app: Flask, pair: str, path):
     if wants_html:
         return render_template(
             "admin/config.html",
-            **_config_page_context(pair, path, success="Configuration applied.", overrides=validated),
+            **_config_page_context(pair, path, success="Configuration applied."),
         )
     return jsonify(result)
 

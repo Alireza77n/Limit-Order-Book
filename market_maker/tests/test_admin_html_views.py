@@ -176,6 +176,36 @@ def test_config_page_renders_known_fields(client):
     assert 'name="csrf_token"' in body
 
 
+def test_config_page_shows_effective_profile_defaults_when_no_overrides_set(client):
+    """Before this fix, unoverridden fields rendered blank (load_overrides()
+    is sparse -- only ever contains fields an admin has explicitly changed).
+    The form must show the actual value a worker is running with -- the
+    profile default -- not blank, even with zero overrides on disk."""
+    _login(client)
+    response = client.get("/admin/config/btc", headers=HTML)
+    body = _html(response)
+    match = re.search(r'name="order_size"[^>]*value="([^"]*)"', body)
+    assert match and match.group(1) != ""
+    assert float(match.group(1)) == pytest.approx(TRADING_PROFILES["btc"]["order_size"])
+    match = re.search(r'name="commission_perc"[^>]*value="([^"]*)"', body)
+    assert float(match.group(1)) == pytest.approx(TRADING_PROFILES["btc"]["commission_perc"])
+
+
+def test_config_page_layers_override_on_top_of_profile_default(client, app):
+    """One field overridden -- that field shows the override, every other
+    field still shows its profile default, not blank."""
+    from demo_config import overlay_path, write_overrides
+    path = overlay_path(app.config["STATE_DIR"], "btc")
+    write_overrides(path, {"order_size": 0.0002})
+    _login(client)
+    response = client.get("/admin/config/btc", headers=HTML)
+    body = _html(response)
+    match = re.search(r'name="order_size"[^>]*value="([^"]*)"', body)
+    assert float(match.group(1)) == pytest.approx(0.0002)
+    match = re.search(r'name="depth_max"[^>]*value="([^"]*)"', body)
+    assert float(match.group(1)) == pytest.approx(TRADING_PROFILES["btc"]["depth_max"])
+
+
 def test_config_apply_html_success_rerenders_with_success_message(client, app, fake_agent):
     token = _login(client)
     response = client.post("/admin/config/btc", data={
