@@ -14,7 +14,9 @@ control-queue actions (see control_queue.ACTIONS).
 
 from __future__ import annotations
 
+import fcntl
 import hmac
+import json
 import os
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -22,13 +24,23 @@ from functools import wraps
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, redirect, request, session as flask_session, url_for
+from flask import Flask, jsonify, redirect, request, session as flask_session, url_for
 from werkzeug.security import check_password_hash
 
 from control_queue import ControlLock, OperationInProgress, await_result, submit_command
 import control_queue
+from demo_config import (
+    FIELD_SPECS,
+    OverlayValidationError,
+    has_previous,
+    load_overrides,
+    overlay_path,
+    validate_overrides,
+)
 
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
+PAIRS = ("btc", "usdt")
+PAIR_LOCK_SUFFIX = {"btc": "btcirt", "usdt": "usdtirt"}
 
 
 def create_app(config: Optional[dict] = None) -> Flask:
@@ -157,21 +169,188 @@ def enqueue_and_wait(app: Flask, action: str, pair=None, payload=None):
     write one audit entry, release the lock. Raises OperationInProgress
     if another management operation is already running."""
     control_dir = app.config["CONTROL_DIR"]
+    return enqueue_batch(app, action, [pair], payload=payload)[0]
+
+
+def enqueue_batch(app: Flask, action: str, pairs, payload=None):
+    """Same as enqueue_and_wait but for one or more pairs under a single
+    held lock (used for the "both" pair selector) -- one audit entry per
+    completed sub-action. Raises OperationInProgress if the lock is held
+    by a concurrent request; nothing is enqueued in that case."""
+    control_dir = app.config["CONTROL_DIR"]
     requested_by = flask_session.get("user", "unknown")
+    results = []
     with ControlLock(control_dir):
-        command_id = submit_command(
-            control_dir, action, pair, requested_by=requested_by, payload=payload,
-        )
-        result = await_result(control_dir, command_id, timeout=app.config["COMMAND_TIMEOUT"])
-        control_queue.append_audit(control_dir, {
-            "command_id": command_id, "action": action, "pair": pair,
-            "requested_by": requested_by, "ok": result.get("ok"),
-        })
-        return result
+        for pair in pairs:
+            command_id = submit_command(
+                control_dir, action, pair, requested_by=requested_by, payload=payload,
+            )
+            result = await_result(control_dir, command_id, timeout=app.config["COMMAND_TIMEOUT"])
+            control_queue.append_audit(control_dir, {
+                "command_id": command_id, "action": action, "pair": pair,
+                "requested_by": requested_by, "ok": result.get("ok"),
+            })
+            results.append(dict(result, pair=pair))
+    return results
+
+
+def _resolve_pairs(selector: Optional[str]):
+    if selector == "both":
+        return list(PAIRS)
+    if selector in PAIRS:
+        return [selector]
+    return None
+
+
+def _worker_running(app: Flask, pair: str) -> bool:
+    lock_path = Path(app.config["STATE_DIR"]) / f".worker_{PAIR_LOCK_SUFFIX[pair]}.lock"
+    if not lock_path.exists():
+        return False
+    try:
+        with lock_path.open("r") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return False
+
+
+def _control_lock_held(app: Flask) -> bool:
+    lock_path = Path(app.config["CONTROL_DIR"]) / "control.lock"
+    if not lock_path.exists():
+        return False
+    try:
+        with lock_path.open("a+") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return False
+
+
+def _session_id(app: Flask) -> Optional[str]:
+    path = Path(app.config["STATE_DIR"]) / "stack_session.json"
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text()).get("session_id")
+    except (OSError, ValueError):
+        return None
+
+
+def _recent_audit(app: Flask, limit: int = 20):
+    path = Path(app.config["CONTROL_DIR"]) / "audit.log"
+    if not path.exists():
+        return []
+    entries = []
+    for line in path.read_text().splitlines()[-limit:]:
+        try:
+            entries.append(json.loads(line))
+        except ValueError:
+            continue
+    return entries
 
 
 def _register_routes(app: Flask) -> None:
     @app.route("/admin/")
     @login_required
     def admin_index():
-        return "<!doctype html><title>Demo Admin</title><p>Demo admin control page.</p>"
+        status = {
+            "session_id": _session_id(app),
+            "control_lock_held": _control_lock_held(app),
+            "workers": {pair: _worker_running(app, pair) for pair in PAIRS},
+            "recent_audit": _recent_audit(app),
+        }
+        return jsonify(status)
+
+    @app.route("/admin/config/<pair>", methods=["GET", "POST"])
+    @login_required
+    def admin_config(pair):
+        if pair not in PAIRS:
+            return ("unknown pair", 404)
+        path = overlay_path(app.config["STATE_DIR"], pair)
+        if request.method == "GET":
+            return jsonify({
+                "pair": pair,
+                "overrides": load_overrides(path),
+                "has_previous": has_previous(path),
+                "fields": sorted(FIELD_SPECS),
+                "csrf_token": get_csrf_token(),
+            })
+        return _admin_config_post(app, pair, path)
+
+    @app.route("/admin/workers/<action>", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_workers(action):
+        if action not in ("start", "stop", "restart"):
+            return ("unknown worker action", 400)
+        pairs = _resolve_pairs(request.form.get("pair"))
+        if pairs is None:
+            return ("invalid pair (expected btc, usdt, or both)", 400)
+        try:
+            results = enqueue_batch(app, f"{action}_worker", pairs)
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        return jsonify({"results": results})
+
+    @app.route("/admin/session/new", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_new_session():
+        try:
+            result = enqueue_and_wait(app, "new_session")
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        return jsonify(result)
+
+    @app.route("/admin/orders/cancel", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_cancel_orders():
+        pairs = _resolve_pairs(request.form.get("pair"))
+        if pairs is None:
+            return ("invalid pair (expected btc, usdt, or both)", 400)
+        try:
+            results = enqueue_batch(app, "cancel_orders", pairs)
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        return jsonify({"results": results})
+
+
+@csrf_protected
+def _admin_config_post(app: Flask, pair: str, path):
+    if request.form.get("action") == "revert":
+        try:
+            result = enqueue_and_wait(app, "rollback_config", pair)
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        return jsonify(result)
+
+    raw = {k: v for k, v in request.form.items() if k in FIELD_SPECS}
+    overrides = {}
+    for key, value in raw.items():
+        expected_type = FIELD_SPECS[key][0]
+        if expected_type is bool:
+            overrides[key] = value in ("true", "on", "1", "True")
+            continue
+        try:
+            overrides[key] = float(value)
+        except ValueError:
+            return (f"invalid value for {key}", 400)
+    try:
+        validated = validate_overrides(overrides)
+    except OverlayValidationError as exc:
+        return (str(exc), 400)  # rejected before enqueueing -- nothing submitted
+
+    try:
+        result = enqueue_and_wait(app, "apply_config", pair, payload={"overrides": validated})
+    except OperationInProgress as exc:
+        return (str(exc), 409)
+    return jsonify(result)
