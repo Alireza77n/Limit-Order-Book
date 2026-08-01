@@ -42,6 +42,8 @@ def test_sensitive_environment_must_be_empty(name):
     ("LOB_RESULTS_DIR", "/home/ubuntu/sarkhatti/data"),
     ("LOB_STATE_DIR", "/app/market_maker/results"),
     ("DEMO_SESSION_FILE", "/tmp/stack_session.json"),
+    ("LOB_CONTROL_DIR", "/app/runtime/results"),
+    ("LOB_BACKUPS_DIR", "/home/ubuntu/sarkhatti/data"),
 ])
 def test_runtime_paths_must_stay_in_dedicated_roots(name, value):
     with pytest.raises(DemoStartupError, match=name):
@@ -52,6 +54,8 @@ def test_runtime_paths_must_stay_in_dedicated_roots(name, value):
     ("LOB_RESULTS_DIR", "/app/runtime/results/../state"),
     ("LOB_STATE_DIR", "/app/runtime/state/../results"),
     ("DEMO_SESSION_FILE", "/app/runtime/state/../results/stack_session.json"),
+    ("LOB_CONTROL_DIR", "/app/runtime/control/../state"),
+    ("LOB_BACKUPS_DIR", "/app/runtime/backups/../results"),
 ])
 def test_runtime_paths_reject_parent_traversal(name, value):
     with pytest.raises(DemoStartupError, match=name):

@@ -172,7 +172,6 @@ def enqueue_and_wait(app: Flask, action: str, pair=None, payload=None):
     """Acquire the control lock, submit a command, wait for its result,
     write one audit entry, release the lock. Raises OperationInProgress
     if another management operation is already running."""
-    control_dir = app.config["CONTROL_DIR"]
     return enqueue_batch(app, action, [pair], payload=payload)[0]
 
 
@@ -343,6 +342,12 @@ def _recover_diagnostics(app: Flask):
 
 
 def _register_routes(app: Flask) -> None:
+    @app.route("/admin/health")
+    def admin_health():
+        # Unauthenticated on purpose -- container healthcheck endpoint,
+        # returns nothing but a 200 and touches no Demo state.
+        return ("ok", 200)
+
     @app.route("/admin/")
     @login_required
     def admin_index():
@@ -576,3 +581,7 @@ def _admin_config_post(app: Flask, pair: str, path):
     except OperationInProgress as exc:
         return (str(exc), 409)
     return jsonify(result)
+
+
+if __name__ == "__main__":
+    create_app().run(host="0.0.0.0", port=8051)

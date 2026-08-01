@@ -15,12 +15,13 @@ ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = ROOT / "deploy/docker-compose.production.yml"
 DOCKERFILE_PATH = ROOT / "Dockerfile"
 ENV_PATH = ROOT / "deploy/demo.env"
-SERVICES = ("session-init", "btc-demo", "usdt-demo", "dashboard")
+SERVICES = ("session-init", "btc-demo", "usdt-demo", "dashboard", "admin")
 CONTAINER_NAMES = {
     "session-init": "lob-session-init",
     "btc-demo": "lob-btc-demo",
     "usdt-demo": "lob-usdt-demo",
     "dashboard": "lob-dashboard",
+    "admin": "lob-admin",
 }
 COMMANDS = {
     "session-init": [
@@ -38,6 +39,7 @@ COMMANDS = {
         "--mode", "demo", "--continuous",
     ],
     "dashboard": ["python", "demo_entrypoint.py", "python", "dashboard.py"],
+    "admin": ["python", "demo_entrypoint.py", "python", "admin_app.py"],
 }
 
 
@@ -163,17 +165,22 @@ def test_demo_entrypoint_forwards_a_representative_inner_python_command():
     assert completed.stdout.rstrip().endswith("FORWARDED_COMMAND_OK")
 
 
-def test_dashboard_is_the_only_service_with_a_loopback_port():
+def test_dashboard_and_admin_are_the_only_services_with_loopback_ports():
     text = COMPOSE_PATH.read_text()
     blocks = _service_blocks(text)
 
     assert _list(blocks["dashboard"], "    ports:") == ["127.0.0.1:8652:8050"]
+    assert _list(blocks["admin"], "    ports:") == ["127.0.0.1:8653:8051"]
     for name in ("session-init", "btc-demo", "usdt-demo"):
         assert "\n    ports:" not in blocks[name]
     assert "privileged:" not in text
     assert "network_mode: host" not in text
     assert "/var/run/docker.sock" not in text
     assert "seccomp:unconfined" not in text
+    # No new *public* exposure: both loopback ports are 127.0.0.1-only.
+    for name in ("dashboard", "admin"):
+        for port_line in _list(blocks[name], "    ports:"):
+            assert port_line.startswith("127.0.0.1:")
 
 
 def test_stack_uses_one_named_bridge_with_outbound_egress():
@@ -213,6 +220,7 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         "btc-demo": ("unless-stopped", "30s", 128, 128),
         "usdt-demo": ("unless-stopped", "30s", 128, 128),
         "dashboard": ("unless-stopped", "20s", 128, 192),
+        "admin": ("unless-stopped", "20s", 128, 192),
     }
     for name, (restart, grace, pids, memory) in expected.items():
         block = blocks[name]
@@ -228,7 +236,7 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         assert "healthcheck:" in block
 
     long_running_memory_mib = sum(expected[name][3] for name in SERVICES[1:])
-    assert long_running_memory_mib <= 448
+    assert long_running_memory_mib <= 640
 
 
 def test_mounts_are_limited_to_separate_results_and_state_roots():
@@ -245,6 +253,12 @@ def test_mounts_are_limited_to_separate_results_and_state_roots():
         assert "/app/runtime/state/stack_session.json" in blocks[name]
     assert _list(blocks["dashboard"], "    volumes:") == [
         "../runtime/results:/app/runtime/results:ro"
+    ]
+    assert _list(blocks["admin"], "    volumes:") == [
+        "../runtime/state:/app/runtime/state:ro",
+        "../runtime/results:/app/runtime/results:ro",
+        "../runtime/backups:/app/runtime/backups:ro",
+        "../runtime/control:/app/runtime/control",
     ]
 
 
@@ -279,11 +293,13 @@ def test_demo_environment_is_the_exact_credential_empty_runtime_map():
     lines = [line for line in ENV_PATH.read_text().splitlines() if line]
     values = dict(line.split("=", 1) for line in lines)
 
-    assert len(lines) == 4
+    assert len(lines) == 6
     assert values == {
         "LOB_RESULTS_DIR": "/app/runtime/results",
         "LOB_STATE_DIR": "/app/runtime/state",
         "DEMO_SESSION_FILE": "/app/runtime/state/stack_session.json",
+        "LOB_CONTROL_DIR": "/app/runtime/control",
+        "LOB_BACKUPS_DIR": "/app/runtime/backups",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
 
@@ -301,6 +317,13 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
     assert str(dashboard_ports[0]["published"]) == "8652"
     assert dashboard_ports[0]["target"] == 8050
     assert dashboard_ports[0]["protocol"] == "tcp"
+    admin_ports = services["admin"]["ports"]
+    assert len(admin_ports) == 1
+    assert admin_ports[0]["mode"] == "ingress"
+    assert admin_ports[0]["host_ip"] == "127.0.0.1"
+    assert str(admin_ports[0]["published"]) == "8653"
+    assert admin_ports[0]["target"] == 8051
+    assert admin_ports[0]["protocol"] == "tcp"
     for name in ("session-init", "btc-demo", "usdt-demo"):
         assert "ports" not in services[name]
 
@@ -327,6 +350,12 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
         "dashboard": [
             (ROOT / "runtime/results", "/app/runtime/results", True),
         ],
+        "admin": [
+            (ROOT / "runtime/state", "/app/runtime/state", True),
+            (ROOT / "runtime/results", "/app/runtime/results", True),
+            (ROOT / "runtime/backups", "/app/runtime/backups", True),
+            (ROOT / "runtime/control", "/app/runtime/control", False),
+        ],
     }
     for name, expected in expected_volumes.items():
         actual = [
@@ -340,6 +369,7 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
         "btc-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
         "usdt-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
         "dashboard": (0.5, 192, 128, "unless-stopped", "20s", "30s", "10s", "20s"),
+        "admin": (0.5, 192, 128, "unless-stopped", "20s", "30s", "10s", "20s"),
     }
     for name, values in limits.items():
         cpus, memory_mib, pids, restart, grace, interval, timeout, start_period = values
@@ -381,6 +411,11 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
         "from urllib.request import urlopen; response = "
         "urlopen('http://127.0.0.1:8050/', timeout=3); assert response.status == 200",
     ]
+    assert services["admin"]["healthcheck"]["test"] == [
+        "CMD", "python", "demo_entrypoint.py", "python", "-c",
+        "from urllib.request import urlopen; response = "
+        "urlopen('http://127.0.0.1:8051/admin/health', timeout=3); assert response.status == 200",
+    ]
     for name, lock_name in (
         ("btc-demo", ".worker_btcirt.lock"),
         ("usdt-demo", ".worker_usdtirt.lock"),
@@ -392,7 +427,7 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
         assert 'load_stack_session("/app/runtime/state/stack_session.json")' in health_test[5]
         assert 'SystemExit("worker lease is not held")' in health_test[5]
 
-    assert sum(limits[name][1] for name in SERVICES[1:]) == 448
+    assert sum(limits[name][1] for name in SERVICES[1:]) == 640
 
 
 def test_sarkhatti_is_never_referenced_by_deployment_artifacts():
@@ -503,3 +538,28 @@ def test_rollback_is_explicitly_project_scoped_and_fail_closed():
         "xargs",
     ):
         assert forbidden not in rollback
+
+
+def test_admin_env_example_has_no_real_secrets_committed():
+    example = (ROOT / "deploy/admin.env.example").read_text()
+    assert "ADMIN_USERNAME=" in example
+    assert "ADMIN_PASSWORD_HASH=replace-with-generated-hash" in example
+    assert "ADMIN_SESSION_SECRET=replace-with-generated-secret" in example
+    gitignore = (ROOT / ".gitignore").read_text()
+    assert "deploy/admin.env" in gitignore.splitlines()
+
+
+def test_admin_service_has_no_docker_socket_or_shell_exec():
+    block = _service_blocks(COMPOSE_PATH.read_text())["admin"]
+    assert "/var/run/docker.sock" not in block
+    assert "CMD-SHELL" not in block
+    assert _list(block, "    command:") == COMMANDS["admin"]
+
+
+def test_control_agent_systemd_unit_runs_a_fixed_argv_no_shell():
+    unit = (ROOT / "deploy/systemd/lob-control-agent.service").read_text()
+    assert "ExecStart=/usr/bin/python3 /home/ubuntu/limit-order-book/deploy/control_agent.py" in unit
+    assert "ExecStart=/bin/sh" not in unit
+    assert "ExecStart=/bin/bash" not in unit
+    assert "NoNewPrivileges=true" in unit
+    assert "User=ubuntu" in unit

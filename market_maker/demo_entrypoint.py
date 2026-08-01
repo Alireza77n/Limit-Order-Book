@@ -20,6 +20,8 @@ ALLOWED_PATHS = {
     "LOB_RESULTS_DIR": PurePosixPath("/app/runtime/results"),
     "LOB_STATE_DIR": PurePosixPath("/app/runtime/state"),
     "DEMO_SESSION_FILE": PurePosixPath("/app/runtime/state"),
+    "LOB_CONTROL_DIR": PurePosixPath("/app/runtime/control"),
+    "LOB_BACKUPS_DIR": PurePosixPath("/app/runtime/backups"),
 }
 
 

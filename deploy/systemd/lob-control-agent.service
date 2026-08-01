@@ -1,0 +1,21 @@
+[Unit]
+Description=Limit Order Book Demo control agent (host-level, Docker/file mutation authority)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/limit-order-book
+ExecStart=/usr/bin/python3 /home/ubuntu/limit-order-book/deploy/control_agent.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/limit-order-book/runtime
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

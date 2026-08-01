@@ -14,13 +14,20 @@ APP_DIR="$(realpath -e -- "$EXPECTED_APP_DIR")" || fail "application directory i
 AVAILABLE_SITE="/etc/nginx/sites-available/lob-dashboard"
 ENABLED_SITE="/etc/nginx/sites-enabled/lob-dashboard"
 AUTH_FILE="/etc/nginx/lob-dashboard.htpasswd"
+ADMIN_AUTH_FILE="/etc/nginx/lob-admin.htpasswd"
 HASH_CONF="/etc/nginx/conf.d/lob-server-names-hash.conf"
 
-for target in "$AVAILABLE_SITE" "$ENABLED_SITE" "$AUTH_FILE" "$HASH_CONF"; do
-    if [[ "$target" != "$AVAILABLE_SITE" && "$target" != "$ENABLED_SITE" && "$target" != "$AUTH_FILE" && "$target" != "$HASH_CONF" ]]; then
+for target in "$AVAILABLE_SITE" "$ENABLED_SITE" "$AUTH_FILE" "$ADMIN_AUTH_FILE" "$HASH_CONF"; do
+    if [[ "$target" != "$AVAILABLE_SITE" && "$target" != "$ENABLED_SITE" && "$target" != "$AUTH_FILE" && "$target" != "$ADMIN_AUTH_FILE" && "$target" != "$HASH_CONF" ]]; then
         fail "unexpected deletion target"
     fi
 done
+
+# Host-level control agent (deploy/systemd/lob-control-agent.service) is not
+# a compose service -- stop it explicitly before touching Docker/nginx state.
+if systemctl list-unit-files lob-control-agent.service >/dev/null 2>&1; then
+    sudo systemctl disable --now lob-control-agent.service || true
+fi
 
 targets_to_remove=()
 
@@ -38,6 +45,11 @@ fi
 if [[ -e "$AUTH_FILE" || -L "$AUTH_FILE" ]]; then
     [[ ! -L "$AUTH_FILE" && -f "$AUTH_FILE" ]] || fail "auth file is not a regular file"
     targets_to_remove+=("$AUTH_FILE")
+fi
+
+if [[ -e "$ADMIN_AUTH_FILE" || -L "$ADMIN_AUTH_FILE" ]]; then
+    [[ ! -L "$ADMIN_AUTH_FILE" && -f "$ADMIN_AUTH_FILE" ]] || fail "admin auth file is not a regular file"
+    targets_to_remove+=("$ADMIN_AUTH_FILE")
 fi
 
 if [[ -e "$HASH_CONF" || -L "$HASH_CONF" ]]; then

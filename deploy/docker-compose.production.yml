@@ -216,6 +216,55 @@ services:
           memory: 192M
           pids: 128
 
+  admin:
+    <<: *runtime-common
+    container_name: lob-admin
+    env_file:
+      - demo.env
+      - path: admin.env
+        required: false
+    command:
+      - python
+      - demo_entrypoint.py
+      - python
+      - admin_app.py
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../runtime/state:/app/runtime/state:ro
+      - ../runtime/results:/app/runtime/results:ro
+      - ../runtime/backups:/app/runtime/backups:ro
+      - ../runtime/control:/app/runtime/control
+    ports:
+      - "127.0.0.1:8653:8051"
+    restart: unless-stopped
+    stop_grace_period: 20s
+    pids_limit: 128
+    cpus: "0.50"
+    mem_limit: 192m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - >-
+          from urllib.request import urlopen;
+          response = urlopen('http://127.0.0.1:8051/admin/health', timeout=3);
+          assert response.status == 200
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 192M
+          pids: 128
+
 networks:
   limit-order-book-internal:
     name: limit-order-book-internal
