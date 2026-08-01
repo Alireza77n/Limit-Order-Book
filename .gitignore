@@ -25,5 +25,5 @@ market_maker/results/*.sqlite3-wal
 market_maker/results/*_archive*.jsonl
 !market_maker/results/.gitkeep
 docs/
-.docker-validation-results/
+.docker-validation-results*/
 .worktrees/
