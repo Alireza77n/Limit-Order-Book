@@ -974,3 +974,48 @@ Nginx/auth files; it does not touch Sarkhatti. Current status is a successful
 short deployment verification, not long-term readiness evidence. Exact next
 step: monitor the session hash, USDT restart count (baseline `6`), memory,
 audit cardinality, and Sarkhatti invariants over an extended interval.
+
+## 2026-08-02 — Admin static-asset routing hotfix
+
+User browser evidence and the live Nginx access log exposed a verification
+gap in the HTML rollout: page documents returned `200 text/html`, but Flask
+generated CSS/JS URLs under `/static/admin/`. Those requests fell outside
+Nginx's dedicated `/admin/` location, were challenged with the dashboard
+credentials, and then proxied to the Dash service, which returned `404`.
+The result was unstyled HTML on every admin page.
+
+Added a failing regression test proving admin pages must generate
+`/admin/static/admin/admin.css` and `/admin/static/admin/admin.js`, observed
+the expected failure, then changed only the Flask static URL prefix. The
+focused test passed and the full suite passed `327` tests with the single
+pre-existing Dash deprecation warning.
+
+Committed and deployed `781d785e8c796b9ae0038d9309fde0f94a7a7d4f` to
+`parsaoryani/admin-demo-control` and `production`; `main` remained unchanged
+at `ba44366ba266b4e00d9da9467a888ef4f8492727`. Built through the shared
+`session-init` image definition and force-recreated only `lob-admin`.
+
+Post-deployment evidence:
+
+- Rendered HTML contains both `/admin/static/...` asset URLs.
+- CSS returns `200 text/css` with 14,724 bytes; JavaScript returns
+  `200 application/javascript` with 6,426 bytes.
+- Public `/admin/static/...` is inside the `Limit Order Book Demo Admin`
+  Basic-Auth realm; the old `/static/...` path remains in the separate
+  dashboard realm.
+- Only the admin container ID changed, to
+  `434107c141e7e92f0d5693a078cefd5f57cc3d83beed63f211f4c2d9d243a3f8`;
+  it is healthy, restart `0`, not OOM-killed, and carries the exact revision
+  label. BTC, USDT, and dashboard IDs/restarts were unchanged.
+- Sarkhatti retained its exact container ID, restart `0`, healthy state,
+  loopback ports, and mount; its sampled request returned `200` in 0.006 s.
+- Nginx configuration remained unchanged and `nginx -t` passed. No Nginx
+  reload was necessary. Admin logs contained no traceback, `stack_shutdown`,
+  real-order, or production-credential pattern.
+
+Rollback is the same admin-only prior-image rebuild/recreate procedure
+documented above, using prior application revision
+`a2bd3fbb7d20591c5a945d383fcbd9b6165bf8a8`; full-project rollback remains
+`cd /home/ubuntu/limit-order-book && ./deploy/rollback.sh` and never touches
+Sarkhatti. Exact next step: refresh the browser page (a hard refresh may be
+needed if the unstyled document is cached) and continue extended monitoring.
