@@ -1,6 +1,6 @@
 # Limit Order Book Deployment Progress
 
-Last updated: 2026-08-01 13:07 UTC
+Last updated: 2026-08-01 13:52 UTC
 
 ## Current checkpoint
 
@@ -181,3 +181,85 @@ The final rollback procedure may additionally remove only the dedicated Limit Or
 ## Exact next step
 
 Run the fresh full local release gate: tests, compilation, exact Compose rendering, image build/size, and unsafe-startup smoke matrix. Record the evidence, then promote the verified SHA to the allowed GitHub branches.
+
+## Task 5 local release-gate evidence (2026-08-01 13:52 UTC)
+
+The full local release gate passed at commit `bb5435160a286a5ce8ca8b1ca7a9d07494ecfb8c` on `parsaoryani/algo1-refactor-testability`. This is a local image verification only; no server or hostname asset was changed.
+
+Commands and results:
+
+```bash
+python3 -m pytest -q
+# 208 passed, 1 warning in 6.53s; exit 0
+
+python3 -m compileall -q market_maker
+# exit 0
+
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env config
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env config --format json
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env config --quiet
+# source, JSON, and quiet validation all exited 0
+
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env build
+# exit 0; resolved python:3.11-slim digest
+# sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
+```
+
+The only test warning was Dash's existing `dash_table.DataTable` deprecation warning. The resolved Compose source and JSON contain the four intended services and only the non-secret demo defaults: `LOB_RESULTS_DIR`, `LOB_STATE_DIR`, `DEMO_SESSION_FILE`, and `PYTHONDONTWRITEBYTECODE`.
+
+Fresh isolated image smoke, each using `docker run --rm limit-order-book-demo:local`:
+
+```text
+real worker command with --mode real: exit 1; DemoStartupError:
+  worker command must explicitly contain --mode demo
+NOBITEX_API_TOKEN=nonempty-smoke-value: exit 1; DemoStartupError:
+  NOBITEX_API_TOKEN must be empty in Demo deployment
+MYSQL_HOST=nonempty-smoke-host: exit 1; DemoStartupError:
+  MYSQL_HOST must be empty in Demo deployment
+safe forwarded python -c: exit 0; output:
+  DEMO_STARTUP_GUARD_OK real_operations=disabled
+  SAFE_FORWARDED_COMMAND_OK
+```
+
+Each rejected case stopped in `demo_entrypoint.py` before the forwarded Python command could run, so no application or network behavior was entered. The safe command was:
+
+```bash
+docker run --rm limit-order-book-demo:local \
+  python demo_entrypoint.py python -c "print('SAFE_FORWARDED_COMMAND_OK')"
+```
+
+Image evidence after the successful build:
+
+```text
+Image ID:     sha256:35ebd8112a1ece4795aed2508d38f5fe0d230e08aa7fbcceedbb41babe4f7dde
+Repo digest:  limit-order-book-demo@sha256:35ebd8112a1ece4795aed2508d38f5fe0d230e08aa7fbcceedbb41babe4f7dde
+Created:      2026-08-01T13:20:39.600803804Z
+Size:         144569302 bytes (`docker image ls` displays 702MB)
+Config.Env:   PATH, LANG, GPG_KEY, PYTHON_VERSION, PYTHON_SHA256, PYTHONUNBUFFERED
+```
+
+`docker inspect` showed no deployment secret or user-supplied value in `Config.Env`. A final-rootfs audit with a guardless `/bin/sh` entrypoint found no `.env`, `.docker-validation-results*`, `runtime`, `results`, `.pytest_cache`, `__pycache__`, `*.pyc`, or `tests` path under `/app`. The Docker build context also excluded the preserved local validation directory.
+
+Final local checks:
+
+```bash
+git diff --check
+# exit 0
+git status --short --branch
+# only the pre-existing untracked .docker-validation-results-pre-cancel-fix-20260801T1148Z/ directory before this ignored-doc update
+```
+
+Problems/cautions: the first two Task 5 build attempts were blocked by transient Docker Hub token-exchange failures; this resumed run rebuilt successfully after registry metadata became available. The image is local-only and has not been pushed. The nip.io hostname requires separate external DNS/certificate proof before server deployment.
+
+Rollback remains a no-op because nothing has been deployed. If a future deployment requires rollback, use only:
+
+```bash
+cd /home/ubuntu/limit-order-book
+docker compose -p limit-order-book down
+```
+
+Exact next step: push and promote this verified SHA through the authorized GitHub branch flow, then complete the separate server-side nip.io DNS, certificate, and authenticated-proxy deployment checks before starting the stack.
