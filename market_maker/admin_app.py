@@ -72,7 +72,7 @@ FIELD_HELP = {
 
 
 def create_app(config: Optional[dict] = None) -> Flask:
-    app = Flask(__name__)
+    app = Flask(__name__, static_url_path="/admin/static")
     cfg = {
         "ADMIN_USERNAME": os.environ.get("ADMIN_USERNAME", ""),
         "ADMIN_PASSWORD_HASH": os.environ.get("ADMIN_PASSWORD_HASH", ""),

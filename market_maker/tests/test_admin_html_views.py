@@ -87,6 +87,17 @@ def test_login_page_is_html_with_form():
     assert 'name="csrf_token"' in body
 
 
+def test_login_page_keeps_static_assets_under_admin_proxy():
+    app = create_app({"TESTING": True})
+
+    response = app.test_client().get("/admin/login")
+
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert 'href="/admin/static/admin/admin.css"' in body
+    assert 'src="/admin/static/admin/admin.js"' in body
+
+
 # ---------- Overview: HTML for browsers, JSON preserved by default ----------
 
 def test_overview_default_still_returns_json(client):
