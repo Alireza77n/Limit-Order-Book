@@ -27,6 +27,7 @@ services:
     command:
       - python
       - demo_entrypoint.py
+      - python
       - session.py
       - stack-init
       - --path
@@ -46,6 +47,7 @@ services:
         - CMD
         - python
         - demo_entrypoint.py
+        - python
         - session.py
         - load
         - --path
@@ -67,6 +69,7 @@ services:
     command:
       - python
       - demo_entrypoint.py
+      - python
       - run.py
       - --profile
       - btc
@@ -80,15 +83,29 @@ services:
       - ../runtime/results:/app/runtime/results
       - ../runtime/state:/app/runtime/state
     restart: unless-stopped
+    stop_grace_period: 30s
     pids_limit: 128
     cpus: "0.50"
     mem_limit: 160m
     healthcheck:
       test:
-        - CMD-SHELL
-        - >-
-          test -s /app/runtime/state/.worker_btcirt.lock && python demo_entrypoint.py
-          session.py load --path /app/runtime/state/stack_session.json >/dev/null
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_btcirt.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
       interval: 30s
       timeout: 10s
       retries: 3
@@ -106,6 +123,7 @@ services:
     command:
       - python
       - demo_entrypoint.py
+      - python
       - run.py
       - --profile
       - usdt
@@ -119,15 +137,29 @@ services:
       - ../runtime/results:/app/runtime/results
       - ../runtime/state:/app/runtime/state
     restart: unless-stopped
+    stop_grace_period: 30s
     pids_limit: 128
     cpus: "0.50"
     mem_limit: 160m
     healthcheck:
       test:
-        - CMD-SHELL
-        - >-
-          test -s /app/runtime/state/.worker_usdtirt.lock && python demo_entrypoint.py
-          session.py load --path /app/runtime/state/stack_session.json >/dev/null
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_usdtirt.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
       interval: 30s
       timeout: 10s
       retries: 3
@@ -145,6 +177,7 @@ services:
     command:
       - python
       - demo_entrypoint.py
+      - python
       - dashboard.py
     depends_on:
       session-init:
@@ -154,12 +187,15 @@ services:
     volumes:
       - ../runtime/results:/app/runtime/results:ro
     restart: unless-stopped
+    stop_grace_period: 20s
     pids_limit: 128
     cpus: "0.50"
     mem_limit: 128m
     healthcheck:
       test:
         - CMD
+        - python
+        - demo_entrypoint.py
         - python
         - -c
         - >-
@@ -180,4 +216,4 @@ services:
 networks:
   limit-order-book-internal:
     name: limit-order-book-internal
-    internal: true
+    driver: bridge
