@@ -140,3 +140,80 @@ def test_status_route_reports_session_and_workers(client, app):
     body = response.get_json()
     assert body["session_id"] == "demo-123"
     assert body["workers"] == {"btc": False, "usdt": False}
+
+
+def test_reset_rejected_without_exact_confirm(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/reset", data={"confirm": "yes please", "csrf_token": token})
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+    assert "affected_files" in response.get_json()
+
+
+def test_reset_accepted_with_exact_confirm(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/reset", data={"confirm": "RESET", "csrf_token": token})
+    assert response.status_code == 200
+    written = _commands_written(app)
+    assert len(written) == 1
+    assert written[0]["action"] == "reset_demo"
+    assert written[0]["payload"]["confirm"] == "RESET"
+
+
+def test_restore_rejected_without_exact_confirm(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/backups/manual-1/restore", data={"confirm": "no", "csrf_token": token})
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+
+
+def test_restore_accepted_with_exact_confirm(client, app, fake_agent):
+    token = _login(client)
+    response = client.post(
+        "/admin/backups/manual-1/restore",
+        data={"confirm": "RESTORE", "csrf_token": token},
+    )
+    assert response.status_code == 200
+    written = _commands_written(app)
+    assert written[0]["action"] == "restore_backup"
+    assert written[0]["payload"]["backup_name"] == "manual-1"
+
+
+def test_recover_get_is_readonly_and_does_not_enqueue(client, app):
+    _login(client)
+    response = client.get("/admin/recover")
+    assert response.status_code == 200
+    assert _commands_written(app) == []
+
+
+def test_recover_apply_only_enqueues_recover_demo_never_reset(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/recover/apply", data={"csrf_token": token})
+    assert response.status_code == 200
+    written = _commands_written(app)
+    assert len(written) == 1
+    assert written[0]["action"] == "recover_demo"
+
+
+def test_export_streams_zip_built_only_from_backups_dir(client, app, monkeypatch):
+    """Prove export never reads runtime/results or runtime/state directly:
+    monkeypatch await_result to fabricate a backup pointing at a directory
+    we control, and assert the zip contents come only from there."""
+    backups_dir = Path(app.config["BACKUPS_DIR"])
+    snapshot_dir = backups_dir / "export-snap"
+    snapshot_dir.mkdir()
+    (snapshot_dir / "paper_x_btcirt.json").write_text('{"a":1}')
+    # A file placed directly in RESULTS_DIR (never copied into the snapshot)
+    # must not appear in the export -- proves the zip is backups-only.
+    (Path(app.config["RESULTS_DIR"]) / "btc_track_demo.csv").write_text("live,data\n")
+
+    def _fake_await_result(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {"command_id": command_id, "ok": True, "detail": {"backup": "export-snap"}, "finished_at": "now"}
+
+    monkeypatch.setattr(admin_app_module, "await_result", _fake_await_result)
+    _login(client)
+    response = client.get("/admin/export")
+    assert response.status_code == 200
+    import zipfile
+    archive = zipfile.ZipFile(__import__("io").BytesIO(response.get_data()))
+    assert archive.namelist() == ["paper_x_btcirt.json"]

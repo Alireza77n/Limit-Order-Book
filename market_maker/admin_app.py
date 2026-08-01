@@ -16,15 +16,17 @@ from __future__ import annotations
 
 import fcntl
 import hmac
+import io
 import json
 import os
 import secrets
+import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, jsonify, redirect, request, session as flask_session, url_for
+from flask import Flask, jsonify, redirect, request, send_file, session as flask_session, url_for
 from werkzeug.security import check_password_hash
 
 from control_queue import ControlLock, OperationInProgress, await_result, submit_command
@@ -257,6 +259,70 @@ def _recent_audit(app: Flask, limit: int = 20):
     return entries
 
 
+RESET_GLOBS = ("*_demo.csv", "*_demo.sqlite3", "paper_*.json", "paper_*_archive.jsonl", "paper_fee_scopes.json")
+
+
+def _reset_preview(app: Flask):
+    files = set()
+    for directory in (Path(app.config["STATE_DIR"]), Path(app.config["RESULTS_DIR"])):
+        if not directory.exists():
+            continue
+        for pattern in RESET_GLOBS:
+            files.update(p.name for p in directory.glob(pattern) if p.is_file())
+    return sorted(files)
+
+
+def _list_backups(app: Flask):
+    backups_dir = Path(app.config["BACKUPS_DIR"])
+    if not backups_dir.exists():
+        return []
+    listing = []
+    for entry in sorted(backups_dir.iterdir()):
+        if entry.is_dir():
+            listing.append({
+                "name": entry.name,
+                "files": sorted(p.name for p in entry.iterdir() if p.is_file()),
+            })
+    return listing
+
+
+def _backup_preview(app: Flask, name: str):
+    backup_dir = Path(app.config["BACKUPS_DIR"]) / name
+    if not backup_dir.is_dir():
+        return None
+    return sorted(p.name for p in backup_dir.iterdir() if p.is_file())
+
+
+def _recover_diagnostics(app: Flask):
+    """Read-only mirror of control_agent.handle_recover_demo's diagnostic
+    checks -- reports the same stale-lock/mismatch/corruption findings
+    without clearing anything (that happens only via the mutating
+    /admin/recover/apply route, which enqueues recover_demo)."""
+    state_dir = Path(app.config["STATE_DIR"])
+    stale_locks = [
+        pair for pair in PAIRS
+        if (state_dir / f".worker_{PAIR_LOCK_SUFFIX[pair]}.lock").exists() and not _worker_running(app, pair)
+    ]
+    session_id = _session_id(app)
+    session_mismatches = []
+    corrupt_files = []
+    for ledger_path in sorted(state_dir.glob("paper_*.json")):
+        try:
+            document = json.loads(ledger_path.read_text())
+        except (OSError, ValueError):
+            corrupt_files.append(ledger_path.name)
+            continue
+        ledger_session = document.get("session_id")
+        if session_id and ledger_session and ledger_session != session_id:
+            session_mismatches.append(ledger_path.name)
+    return {
+        "stale_locks": stale_locks,
+        "session_mismatches": session_mismatches,
+        "corrupt_files": corrupt_files,
+        "confirmation_required_for_reset": bool(session_mismatches or corrupt_files),
+    }
+
+
 def _register_routes(app: Flask) -> None:
     @app.route("/admin/")
     @login_required
@@ -322,6 +388,94 @@ def _register_routes(app: Flask) -> None:
         except OperationInProgress as exc:
             return (str(exc), 409)
         return jsonify({"results": results})
+
+    @app.route("/admin/backups", methods=["GET"])
+    @login_required
+    def admin_backups():
+        return jsonify({"backups": _list_backups(app)})
+
+    @app.route("/admin/backups/create", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_backups_create():
+        try:
+            result = enqueue_and_wait(app, "create_backup", None, payload={"prefix": "manual"})
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        return jsonify(result)
+
+    @app.route("/admin/backups/<name>/restore", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_backups_restore(name):
+        if request.form.get("confirm") != "RESTORE":
+            return jsonify({
+                "error": "confirmation required (send confirm=RESTORE)",
+                "backup_files": _backup_preview(app, name),
+            }), 400
+        try:
+            result = enqueue_and_wait(
+                app, "restore_backup", None,
+                payload={"backup_name": name, "confirm": "RESTORE"},
+            )
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        return jsonify(result)
+
+    @app.route("/admin/reset", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_reset():
+        if request.form.get("confirm") != "RESET":
+            return jsonify({
+                "error": "confirmation required (send confirm=RESET)",
+                "affected_files": _reset_preview(app),
+            }), 400
+        try:
+            result = enqueue_and_wait(app, "reset_demo", None, payload={"confirm": "RESET"})
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        return jsonify(result)
+
+    @app.route("/admin/recover", methods=["GET"])
+    @login_required
+    def admin_recover():
+        return jsonify(_recover_diagnostics(app))
+
+    @app.route("/admin/recover/apply", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_recover_apply():
+        # Only ever enqueues recover_demo (safe auto-fixes: stale locks
+        # only). It never enqueues reset_demo -- the destructive path is
+        # exclusively /admin/reset, gated by its own typed confirm field.
+        try:
+            result = enqueue_and_wait(app, "recover_demo", None)
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        return jsonify(result)
+
+    @app.route("/admin/export", methods=["GET"])
+    @login_required
+    def admin_export():
+        try:
+            result = enqueue_and_wait(app, "create_backup", None, payload={"prefix": "export"})
+        except OperationInProgress as exc:
+            return (str(exc), 409)
+        backup_name = (result.get("detail") or {}).get("backup")
+        if not result.get("ok") or not backup_name:
+            return ("export snapshot failed", 500)
+        backup_dir = Path(app.config["BACKUPS_DIR"]) / backup_name
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for file_path in sorted(backup_dir.iterdir()):
+                if file_path.is_file():
+                    archive.write(file_path, arcname=file_path.name)
+        buffer.seek(0)
+        return send_file(
+            buffer, mimetype="application/zip", as_attachment=True,
+            download_name=f"{backup_name}.zip",
+        )
 
 
 @csrf_protected
