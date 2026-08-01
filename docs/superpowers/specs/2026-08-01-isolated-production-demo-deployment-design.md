@@ -21,7 +21,7 @@ The Limit Order Book deployment owns only:
 - `/etc/nginx/sites-enabled/lob-dashboard`
 - `/etc/nginx/lob-dashboard.htpasswd`
 - `/var/www/lob-dashboard-acme`
-- the certificate lineage for `dashboard.185-206-95-141.sslip.io`
+- the certificate lineage for `dashboard.185-206-95-141.nip.io`
 
 No deployment or rollback command may use a broad Docker prune operation or reference `/home/ubuntu/sarkhatti`, container `sarkhatti`, network `sarkhatti_default`, Sarkhatti's ports, database, certificate, `.env`, Compose file, or Nginx site as a mutation target.
 
@@ -66,7 +66,7 @@ Each long-running service uses `restart: unless-stopped`, a meaningful health ch
 
 ## Nginx, TLS, and authentication
 
-The dashboard uses `dashboard.185-206-95-141.sslip.io`, an address-encoded DNS hostname documented by sslip.io to resolve to `185.206.95.141`. This avoids modifying Sarkhatti's existing hostname and root proxy. It is an operational dependency on third-party DNS and should later be replaced with an operator-controlled hostname.
+The dashboard uses `dashboard.185-206-95-141.nip.io`, an address-encoded DNS hostname that resolves to `185.206.95.141` from the deployment region. The initially proposed sslip.io hostname was rejected after the server's ISP resolver rewrote it to `10.10.34.36`. The selected hostname avoids modifying Sarkhatti's existing hostname and root proxy. It remains an operational dependency on third-party DNS and should later be replaced with an operator-controlled hostname.
 
 Nginx receives a new standalone site file. The initial HTTP-only configuration serves the ACME challenge from `/var/www/lob-dashboard-acme`; it does not alter the Sarkhatti file. After `nginx -t`, Nginx is reloaded, never restarted. Certbot obtains a separate certificate using HTTP-01 and the webroot plugin. The final site redirects HTTP to HTTPS, keeps the ACME exception, requires Basic Auth, sets conservative proxy/security headers, supports Dash connection behavior, and proxies only to `http://127.0.0.1:8652`.
 

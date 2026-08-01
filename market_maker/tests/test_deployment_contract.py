@@ -373,7 +373,7 @@ def test_nginx_bootstrap_only_serves_the_acme_challenge():
     bootstrap = (ROOT / "deploy/nginx/lob-dashboard-http.conf").read_text()
 
     assert "listen 80;" in bootstrap
-    assert "server_name dashboard.185-206-95-141.sslip.io;" in bootstrap
+    assert "server_name dashboard.185-206-95-141.nip.io;" in bootstrap
     assert "location /.well-known/acme-challenge/" in bootstrap
     assert "root /var/www/lob-dashboard-acme;" in bootstrap
     assert "try_files $uri =404;" in bootstrap
@@ -385,7 +385,7 @@ def test_nginx_bootstrap_only_serves_the_acme_challenge():
 def test_nginx_final_site_is_an_authenticated_loopback_proxy():
     https = (ROOT / "deploy/nginx/lob-dashboard-https.conf").read_text()
 
-    assert https.count("server_name dashboard.185-206-95-141.sslip.io;") == 2
+    assert https.count("server_name dashboard.185-206-95-141.nip.io;") == 2
     assert https.count("listen 80;") == 1
     assert https.count("listen 443 ssl http2;") == 1
     assert "return 301 https://$host$request_uri;" in https
@@ -393,11 +393,11 @@ def test_nginx_final_site_is_an_authenticated_loopback_proxy():
     assert "root /var/www/lob-dashboard-acme;" in https
     assert "try_files $uri =404;" in https
     assert (
-        "ssl_certificate /etc/letsencrypt/live/dashboard.185-206-95-141.sslip.io/"
+        "ssl_certificate /etc/letsencrypt/live/dashboard.185-206-95-141.nip.io/"
         "fullchain.pem;"
     ) in https
     assert (
-        "ssl_certificate_key /etc/letsencrypt/live/dashboard.185-206-95-141.sslip.io/"
+        "ssl_certificate_key /etc/letsencrypt/live/dashboard.185-206-95-141.nip.io/"
         "privkey.pem;"
     ) in https
     assert 'auth_basic "Limit Order Book Dashboard";' in https
@@ -454,7 +454,7 @@ def test_rollback_is_explicitly_project_scoped_and_fail_closed():
     assert "sudo nginx -t" in rollback
     assert "sudo systemctl reload nginx" in rollback
     assert (
-        "sudo certbot delete --cert-name dashboard.185-206-95-141.sslip.io"
+        "sudo certbot delete --cert-name dashboard.185-206-95-141.nip.io"
     ) in rollback
     for forbidden in (
         "docker system prune",

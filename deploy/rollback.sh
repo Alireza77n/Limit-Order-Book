@@ -48,4 +48,4 @@ fi
 sudo nginx -t
 sudo systemctl reload nginx
 
-printf '%s\n' "Optional certificate deletion (not executed): sudo certbot delete --cert-name dashboard.185-206-95-141.sslip.io"
+printf '%s\n' "Optional certificate deletion (not executed): sudo certbot delete --cert-name dashboard.185-206-95-141.nip.io"

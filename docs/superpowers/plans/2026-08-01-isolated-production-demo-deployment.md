@@ -351,17 +351,17 @@ git commit -m "feat: add isolated production demo compose stack"
 - Modify: `market_maker/tests/test_deployment_contract.py`
 
 **Interfaces:**
-- Hostname: `dashboard.185-206-95-141.sslip.io`.
+- Hostname: `dashboard.185-206-95-141.nip.io`.
 - Upstream: `http://127.0.0.1:8652` only.
 - Auth file: `/etc/nginx/lob-dashboard.htpasswd`.
-- Certificate: `/etc/letsencrypt/live/dashboard.185-206-95-141.sslip.io/{fullchain,privkey}.pem`.
+- Certificate: `/etc/letsencrypt/live/dashboard.185-206-95-141.nip.io/{fullchain,privkey}.pem`.
 
 - [ ] **Step 1: Add failing Nginx/rollback contract tests**
 
 ```python
 def test_nginx_is_a_separate_authenticated_loopback_proxy():
     https = (ROOT / "deploy/nginx/lob-dashboard-https.conf").read_text()
-    assert "server_name dashboard.185-206-95-141.sslip.io;" in https
+    assert "server_name dashboard.185-206-95-141.nip.io;" in https
     assert "proxy_pass http://127.0.0.1:8652;" in https
     assert 'auth_basic "Limit Order Book Dashboard";' in https
     assert "auth_basic_user_file /etc/nginx/lob-dashboard.htpasswd;" in https
@@ -543,7 +543,7 @@ Append exact commands, image IDs, container IDs, ports, networks, mounts, health
 - Server create: dedicated Nginx site, auth file, ACME root, certificate lineage, timestamped backups under the deployment backup directory.
 
 **Interfaces:**
-- Public URL: `https://dashboard.185-206-95-141.sslip.io/`.
+- Public URL: `https://dashboard.185-206-95-141.nip.io/`.
 - Basic Auth user: `lob-team`.
 
 - [ ] **Step 1: Verify DNS externally and from the server**

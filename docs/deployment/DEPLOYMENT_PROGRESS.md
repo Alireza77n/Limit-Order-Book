@@ -23,7 +23,7 @@ The operator explicitly selected `git@github.com:Alireza77n/Limit-Order-Book.git
 - Confirmed the repository already contains a Dash dashboard, paper ledger, Demo exchange adapter, Demo startup guard, credential-stripping tests, MySQL-blocking tests, and shared-session tests.
 - Confirmed `dashboard.<existing-arvan-hostname>` and `lob.<existing-arvan-hostname>` do not currently have A records.
 - Evaluated path-based proxying and rejected it as the default design because it would modify Sarkhatti's existing server block and require Dash pathname-prefix changes.
-- Selected `dashboard.185-206-95-141.sslip.io` as the recommended dedicated hostname. The sslip.io service documents that hostnames containing a dashed IPv4 address resolve to that address and can receive individual Let's Encrypt certificates via HTTP-01. This introduces a third-party DNS dependency and should later be replaced by an operator-controlled domain.
+- Initially selected `dashboard.185-206-95-141.sslip.io`, then rejected it after the Ubuntu server's ISP resolver returned private address `10.10.34.36`. Selected `dashboard.185-206-95-141.nip.io` instead after the same server resolved it correctly to `185.206.95.141`. The hostname remains a third-party DNS dependency and should later be replaced by an operator-controlled domain.
 - Received explicit authority to complete all remaining tasks autonomously and to use the configured GitHub repository for branch push and server fetch.
 - Confirmed the local origin is `git@github.com:Alireza77n/Limit-Order-Book.git` for fetch and push.
 - Confirmed authenticated read access to that repository from both the workstation and Ubuntu server. The server has Git `2.43.0`.
@@ -165,7 +165,7 @@ No backup was required because Phase 1 made no server changes. Before any future
 - Docker storage is material on a 28 GB disk. The new image and build context must be measured before startup; global prune commands remain forbidden.
 - A short audit proves only the present baseline, not long-term readiness.
 - The local worktree contains the pre-existing untracked directory `.docker-validation-results-pre-cancel-fix-20260801T1148Z/`; it must be preserved and excluded from deployment/build context.
-- `dashboard.185-206-95-141.sslip.io` depends on third-party DNS. Certificate issuance and external resolution must be proven before it is accepted; failure is a stop condition, not a reason to fall back to Sarkhatti's `/` block.
+- `dashboard.185-206-95-141.nip.io` depends on third-party DNS. Certificate issuance and external resolution must be proven before it is accepted; failure is a stop condition, not a reason to fall back to Sarkhatti's `/` block. The rejected sslip.io hostname must not be used because regional DNS rewrites it to `10.10.34.36`.
 
 ## Rollback status
 
