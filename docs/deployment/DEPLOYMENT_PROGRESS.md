@@ -1,6 +1,6 @@
 # Limit Order Book Deployment Progress
 
-Last updated: 2026-08-01 13:01 UTC
+Last updated: 2026-08-01 13:07 UTC
 
 ## Current checkpoint
 
@@ -25,6 +25,12 @@ The operator explicitly selected `git@github.com:Alireza77n/Limit-Order-Book.git
 - Evaluated path-based proxying and rejected it as the default design because it would modify Sarkhatti's existing server block and require Dash pathname-prefix changes.
 - Selected `dashboard.185-206-95-141.sslip.io` as the recommended dedicated hostname. The sslip.io service documents that hostnames containing a dashed IPv4 address resolve to that address and can receive individual Let's Encrypt certificates via HTTP-01. This introduces a third-party DNS dependency and should later be replaced by an operator-controlled domain.
 - Received explicit authority to complete all remaining tasks autonomously and to use the configured GitHub repository for branch push and server fetch.
+- Confirmed the local origin is `git@github.com:Alireza77n/Limit-Order-Book.git` for fetch and push.
+- Confirmed authenticated read access to that repository from both the workstation and Ubuntu server. The server has Git `2.43.0`.
+- Recorded GitHub's host key in `/home/ubuntu/.ssh/known_hosts` during the first server-side authenticated read using `StrictHostKeyChecking=accept-new`; this is the only server mutation since the Phase 1 audit.
+- Confirmed remote `main` remains `ba44366ba266b4e00d9da9467a888ef4f8492727` and that neither `parsaoryani/algo1-refactor-testability` nor `production` exists remotely yet.
+- Added the fail-closed Demo process entrypoint in commits `347652f` and `f4d7b90`. The initial task review found that absolute paths to `run.py` and lexical `..` runtime paths bypassed validation; both now have regression tests and the re-review is clean.
+- Task 1 verification evidence: 26 focused entrypoint/Demo-safety/end-to-end tests passed; the full suite passed 191 tests with one pre-existing Dash deprecation warning. The zero-real-call end-to-end assertion remained exact.
 
 ## Commands executed
 
@@ -79,6 +85,11 @@ git branch -r
 git log --graph --decorate --oneline --all -20
 dig +short A dashboard.server-31d9221a-ed1b-42e0-9289-41041f70fab6.ir-thr-si1.arvancompute.ir
 dig +short A lob.server-31d9221a-ed1b-42e0-9289-41041f70fab6.ir-thr-si1.arvancompute.ir
+git ls-remote --heads origin main parsaoryani/algo1-refactor-testability production
+ssh ubuntu@185.206.95.141 \
+  'GIT_SSH_COMMAND="ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new" \
+   git ls-remote --heads git@github.com:Alireza77n/Limit-Order-Book.git \
+   production parsaoryani/algo1-refactor-testability main'
 ```
 
 ## Audit results and immutable Sarkhatti baseline
@@ -163,4 +174,4 @@ The final rollback procedure may additionally remove only the dedicated Limit Or
 
 ## Exact next step
 
-Complete the fail-closed Demo entrypoint review, then implement runtime path and Compose isolation test-first. Push verified commits to `parsaoryani/algo1-refactor-testability`, fast-forward `production` to the same SHA, push it, and fetch the exact production SHA on the server without touching `main`.
+Implement separate result/state runtime roots test-first, then implement and validate the isolated production Compose model. Push verified commits to `parsaoryani/algo1-refactor-testability`, fast-forward `production` to the same SHA, push it, and fetch the exact production SHA on the server without touching `main`.
