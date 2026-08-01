@@ -35,6 +35,8 @@ The operator explicitly selected `git@github.com:Alireza77n/Limit-Order-Book.git
 - Task 2 verification evidence: 19 focused runtime/config/session tests and 194 full-suite tests passed with the same pre-existing Dash warning; task review was clean.
 - Added the isolated production Compose stack in commits `79d448d`, `d8cfb35`, and `de41192`. Review initially blocked deployment because forwarded scripts were not executable, the Docker-internal network blocked public market-data egress, stop grace was absent, stale lock files could pass health checks, and raw-YAML tests were too weak. All findings were fixed and re-reviewed.
 - Task 3 final evidence: exact Compose config and image build exited 0; a constrained read-only container printed both the Demo guard and forwarded-command smoke markers; 11 focused contract tests and 205 full-suite tests passed. The resolved Compose JSON enforces four services, one egress-capable dedicated bridge, dashboard-only `127.0.0.1:8652`, exact mounts/hardening, active lease health, and 128/128/192 MiB long-running limits (448 MiB total).
+- Added the dedicated ACME bootstrap site, authenticated HTTPS proxy, and exact-target rollback in commit `dcb0fb3`. Rollback tolerates absent dedicated targets but aborts on any unexpected existing type or symlink target; it retains runtime data, ACME root, and certificate by default.
+- Task 4 evidence: 14 focused deployment-contract tests, `bash -n deploy/rollback.sh`, and 208 full-suite tests passed; independent review found no auth bypass, upstream exposure, rollback-scope, deletion-ordering, quoting, symlink/type, partial-state, or Nginx failure-handling defect.
 
 ## Commands executed
 
@@ -178,4 +180,4 @@ The final rollback procedure may additionally remove only the dedicated Limit Or
 
 ## Exact next step
 
-Prepare and test the independent Nginx HTTP/HTTPS assets and exact-target rollback script. Then run fresh full local verification and promote the verified SHA to the allowed GitHub branches.
+Run the fresh full local release gate: tests, compilation, exact Compose rendering, image build/size, and unsafe-startup smoke matrix. Record the evidence, then promote the verified SHA to the allowed GitHub branches.
