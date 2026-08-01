@@ -25,13 +25,13 @@ ALLOWED_PATHS = {
 
 def _is_within(value: str, root: PurePosixPath) -> bool:
     path = PurePosixPath(value)
-    return path == root or root in path.parents
+    return ".." not in path.parts and (path == root or root in path.parents)
 
 
 def validate_demo_startup(command: Sequence[str], environ: Mapping[str, str]) -> None:
     if not command:
         raise DemoStartupError("an explicit command is required")
-    if "run.py" in command:
+    if any(PurePosixPath(argument).name == "run.py" for argument in command):
         pairs = list(zip(command, command[1:]))
         if ("--mode", "demo") not in pairs or ("--mode", "real") in pairs:
             raise DemoStartupError("worker command must explicitly contain --mode demo")
