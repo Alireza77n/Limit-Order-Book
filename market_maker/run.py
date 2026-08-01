@@ -23,6 +23,7 @@ import argparse
 import os
 import signal
 from datetime import datetime
+from pathlib import Path
 
 from config import MMConfig, RESULTS_DIR, TRADING_PROFILES, demo_csv_path
 from portfolio import Nobitex_portfolio
@@ -82,6 +83,9 @@ def make_cfg(
             RESULTS_DIR, f"paper_{safe_session}_{cfg.pair.lower()}.json"
         )
         cfg.demo_fee_state_path = os.path.join(RESULTS_DIR, "paper_fee_scopes.json")
+        cfg.demo_archive_path = os.path.join(
+            RESULTS_DIR, f"paper_{safe_session}_{cfg.pair.lower()}_archive.jsonl"
+        )
     return cfg
 
 
@@ -105,6 +109,11 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
             ledger = PaperLedger.load(cfg.demo_state_path)
             if ledger.session_id != str(cfg.session) or ledger.symbol != cfg.pair.upper():
                 raise RuntimeError("Demo Mode state file does not match configured session and symbol")
+            ledger.hot_terminal_order_limit = cfg.demo_hot_terminal_order_limit
+            ledger.archive_max_bytes = cfg.demo_archive_max_bytes
+            if cfg.demo_archive_path:
+                ledger.archive_path = Path(cfg.demo_archive_path)
+                ledger._archived_order_ids = ledger._load_archived_order_ids()
         else:
             ledger = PaperLedger(
                 session_id=str(cfg.session),
@@ -119,6 +128,9 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
                 queue_enabled=cfg.demo_queue_enabled,
                 state_path=cfg.demo_state_path,
                 fee_state_path=cfg.demo_fee_state_path,
+                archive_path=cfg.demo_archive_path,
+                hot_terminal_order_limit=cfg.demo_hot_terminal_order_limit,
+                archive_max_bytes=cfg.demo_archive_max_bytes,
             )
         exchange = DemoExchangeClient(
             market_data=real_exchange,

@@ -50,3 +50,33 @@ def test_shutdown_signal_handlers_turn_sigterm_into_clean_interrupt(monkeypatch)
     assert signal.SIGINT in installed
     with pytest.raises(KeyboardInterrupt):
         installed[signal.SIGTERM](signal.SIGTERM, None)
+
+
+def test_monotonic_deadline_subtracts_work_and_skips_missed_intervals():
+    bot = object.__new__(SimpleMarketMaker)
+    bot.cfg = run.make_cfg("usdt", mode="demo", session_id="shared")
+    bot.cfg.time_step = 10
+    sleeps = []
+    monotonic_values = iter([2.0, 13.0, 25.0])
+    bot.monotonic_provider = lambda: next(monotonic_values)
+    bot.sleep_fn = sleeps.append
+
+    target = bot._wait_for_next_round(0.0)
+    assert target == 10.0
+    target = bot._wait_for_next_round(target)
+    assert target == 20.0
+    target = bot._wait_for_next_round(target)
+    assert target == 30.0
+    assert sleeps == [8.0, 7.0, 5.0]
+
+
+def test_monotonic_deadline_does_not_skip_when_work_ends_exactly_on_target():
+    bot = object.__new__(SimpleMarketMaker)
+    bot.cfg = run.make_cfg("usdt", mode="demo", session_id="shared")
+    bot.cfg.time_step = 10
+    bot.monotonic_provider = lambda: 10.0
+    sleeps = []
+    bot.sleep_fn = sleeps.append
+
+    assert bot._wait_for_next_round(0.0) == 10.0
+    assert sleeps == []

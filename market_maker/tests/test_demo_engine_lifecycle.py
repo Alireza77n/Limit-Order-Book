@@ -55,12 +55,22 @@ class RecordingReporter:
     def __init__(self):
         self.submissions = []
         self.changes = []
+        self.no_quote_alerts = []
+        self.no_quote_recoveries = []
 
     def order_submitted(self, ledger, order):
         self.submissions.append((order.client_order_id, order.status))
 
     def order_changed(self, ledger, event):
         self.changes.append((event.order_id, event.status, event.reason))
+
+    def no_quote_alert(self, decision):
+        self.no_quote_alerts.append(decision)
+        return 501
+
+    def no_quote_recovered(self, decision):
+        self.no_quote_recoveries.append(decision)
+        return 502
 
 
 def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_path):
@@ -74,6 +84,8 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     cfg.output_csv = str(tmp_path / "usdt-demo.csv")
     cfg.demo_state_path = str(tmp_path / "usdt-state.json")
     cfg.demo_fee_state_path = str(tmp_path / "fee-state.json")
+    cfg.demo_result_db_path = str(tmp_path / "usdt-demo.sqlite3")
+    cfg.demo_csv_export_max_rows = 1
     cfg.cash_initial = 1_000.0
     cfg.order_size = 1.0
     cfg.max_rounds = 2
@@ -105,6 +117,8 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     }
     assert required_columns.issubset(result.columns)
     assert len(result) == 2
+    assert (tmp_path / "usdt-demo.sqlite3").exists()
+    assert len(pd.read_csv(cfg.output_csv)) == 1
     assert set(result["Session_id"]) == {"shared-session"}
     assert set(result["Mode"]) == {"demo"}
 
@@ -207,3 +221,60 @@ def test_demo_csv_failure_is_reported_without_terminating(monkeypatch, tmp_path)
     monkeypatch.setattr(frame, "to_csv", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")))
 
     assert run.SimpleMarketMaker._write_demo_csv(frame, str(tmp_path / "result.csv")) is False
+
+
+class AlwaysNoQuoteStrategy:
+    def decide_order(self, ob, inv_current):
+        return None
+
+    def no_quote_reason(self, ob, inv_current):
+        return "profitability_threshold"
+
+    def diagnostics(self, ob, inv_current, *, round_no, session_id):
+        return {
+            "symbol": "USDTIRT",
+            "session_id": str(session_id),
+            "round": round_no,
+            "commission_perc": 0.001,
+            "exp_ret_min": 0.001,
+            "required_threshold": 0.002,
+            "candidate_results": [{
+                "bid_level": 1,
+                "ask_level": 1,
+                "bid_price": 99.0,
+                "ask_price": 100.0,
+                "last_price": 100.0,
+                "spread_ratio": 0.01,
+                "passed": False,
+            }],
+        }
+
+
+def test_demo_engine_records_no_quote_episode_and_alert_state(tmp_path):
+    cfg = run.make_cfg("usdt", mode="demo", session_id="no-quote-session")
+    cfg.output_csv = str(tmp_path / "no-quote.csv")
+    cfg.demo_result_db_path = str(tmp_path / "no-quote.sqlite3")
+    cfg.demo_state_path = str(tmp_path / "no-quote-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "no-quote-fees.json")
+    cfg.no_quote_alert_rounds = 2
+    cfg.no_quote_alert_seconds = 999
+    cfg.no_quote_alert_cooldown_seconds = 999
+    cfg.max_rounds = 3
+    cfg.time_step = 0
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = AlwaysNoQuoteStrategy()
+    reporter = RecordingReporter()
+    bot.telegram_reporter = reporter
+    times = iter([T0 + timedelta(seconds=n) for n in range(4)])
+    bot.now_provider = lambda: next(times)
+    bot.sleep_fn = lambda seconds: None
+
+    result = bot.run()
+
+    assert list(result["No Quote Consecutive Count"]) == [1, 2, 3]
+    assert set(result["No Quote Reason"]) == {"profitability_threshold"}
+    assert len(reporter.no_quote_alerts) == 1
+    diagnostics = result.iloc[-1]["No Quote Candidate Diagnostics"]
+    assert '"commission":0.001' in diagnostics
+    assert '"spread":0.01' in diagnostics

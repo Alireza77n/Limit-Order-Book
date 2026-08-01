@@ -95,6 +95,7 @@ class NoQuoteMonitor:
             "last_alert_at": None,
             "last_alert_reason": None,
             "last_message_id": None,
+            "delivery_suppressed": False,
             "pending_kind": None,
             "pending_payload": {},
             "last_round": 0,
@@ -128,6 +129,8 @@ class NoQuoteMonitor:
     def _snapshot(self, state: dict) -> NoQuoteSnapshot:
         if state.get("pending_kind"):
             alert_state = f"pending_{state['pending_kind']}"
+        elif state.get("alerted") and state.get("delivery_suppressed"):
+            alert_state = "suppressed"
         elif state.get("alerted"):
             alert_state = "alerted"
         elif state.get("consecutive_count", 0):
@@ -253,6 +256,7 @@ class NoQuoteMonitor:
             state["alerted"] = True
             state["last_alert_at"] = state.get("latest_at")
             state["last_alert_reason"] = state.get("reason")
+        state["delivery_suppressed"] = False
         state["last_message_id"] = int(message_id)
         state["pending_kind"] = None
         state["pending_payload"] = {}
@@ -261,6 +265,14 @@ class NoQuoteMonitor:
     def suppress_pending(self) -> None:
         """Clear delivery work when Telegram is intentionally disabled."""
         state = self._load()
+        if state.get("pending_kind") == "recovered":
+            state["alerted"] = False
+            state["delivery_suppressed"] = False
+        elif state.get("pending_kind"):
+            state["alerted"] = True
+            state["last_alert_at"] = state.get("latest_at")
+            state["last_alert_reason"] = state.get("reason")
+            state["delivery_suppressed"] = True
         state["pending_kind"] = None
         state["pending_payload"] = {}
         self._save(state)

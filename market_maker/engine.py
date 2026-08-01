@@ -14,6 +14,8 @@ from strategy.algo1 import Algo1Strategy
 from exchange.base import ExchangeClient
 from safety import enforce_engine_safety
 from telegram_lifecycle import PaperTelegramReporter, TelegramClient
+from no_quote import NoQuoteDecision, NoQuoteMonitor
+from result_store import DemoResultStore
 import pytz
 from datetime import datetime, timedelta
 import os
@@ -64,8 +66,11 @@ class SimpleMarketMaker:
         self.mode_label = cfg.mode
         self.now_provider = lambda: datetime.now(timezone.utc)
         self.sleep_fn = time.sleep
+        self.monotonic_provider = time.monotonic
         self.telegram_client = TelegramClient(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
         self.telegram_reporter = PaperTelegramReporter(self.telegram_client)
+        self.result_store = None
+        self.no_quote_monitor = None
 
         # Connect to MySQL (use your existing DB) -- skipped entirely in
         # demo/paper-trading mode so a demo run never touches the real
@@ -102,6 +107,20 @@ class SimpleMarketMaker:
 
     def seconds_to_horizon(self) -> int:
         return max(0, int((self.horizon_dt - datetime.now()).total_seconds()))
+
+    def _wait_for_next_round(self, previous_target: float) -> float:
+        interval = float(self.cfg.time_step)
+        if interval <= 0:
+            return previous_target
+        target = previous_target + interval
+        now = float(self.monotonic_provider())
+        if now > target:
+            missed = int((now - target) // interval) + 1
+            target += missed * interval
+        delay = max(0.0, target - now)
+        if delay:
+            self.sleep_fn(delay)
+        return target
         
 
     # In SimpleMarketMaker
@@ -253,16 +272,18 @@ class SimpleMarketMaker:
         return self.strategy.decide_order(ob, inv_current)
 
     def _emit_algo1_diagnostic(
-        self, ob: Dict[str, Any], inv_current: float, *, round_no: int
+        self, ob: Dict[str, Any], inv_current: float, *, round_no: int,
+        document: Optional[Dict[str, Any]] = None,
     ) -> None:
         if not getattr(self.cfg, "algo1_diagnostics_enabled", False):
             return
         diagnostic_method = getattr(self.strategy, "diagnostics", None)
         if diagnostic_method is None:
             return
-        document = diagnostic_method(
-            ob, inv_current, round_no=round_no, session_id=self.session
-        )
+        if document is None:
+            document = diagnostic_method(
+                ob, inv_current, round_no=round_no, session_id=self.session
+            )
         path = self.cfg.algo1_diagnostics_path or os.path.join(
             RESULTS_DIR, f"{self.pair.lower()}_algo1_diagnostics.jsonl"
         )
@@ -271,6 +292,29 @@ class SimpleMarketMaker:
             os.makedirs(directory, exist_ok=True)
         with open(path, "a") as diagnostic_file:
             diagnostic_file.write(json.dumps(document, sort_keys=True) + "\n")
+
+    def _algo1_diagnostic_document(
+        self, ob: Dict[str, Any], inv_current: float, *, round_no: int
+    ) -> Dict[str, Any]:
+        diagnostic_method = getattr(self.strategy, "diagnostics", None)
+        if diagnostic_method is None:
+            exp_ret_min = (
+                self.cfg.commission_perc
+                if self.cfg.exp_ret_min is None
+                else self.cfg.exp_ret_min
+            )
+            return {
+                "symbol": self.pair,
+                "session_id": str(self.session),
+                "round": int(round_no),
+                "commission_perc": float(self.cfg.commission_perc),
+                "exp_ret_min": float(exp_ret_min),
+                "required_threshold": float(self.cfg.commission_perc + exp_ret_min),
+                "candidate_results": [],
+            }
+        return diagnostic_method(
+            ob, inv_current, round_no=round_no, session_id=self.session
+        )
 
     # ---------- Wallet / order endpoints ----------
     # NOTE: exchange-specific I/O now lives in exchange/nobitex.py (NobitexExchangeClient).
@@ -644,7 +688,9 @@ class SimpleMarketMaker:
 
     DEMO_COLUMNS = [
         "Session_id", "Algorithm", "Crypto", "Mode", "Round", "Timestamp",
-        "Quote Status", "No Quote Reason", "Bid Level", "Ask Level",
+        "Quote Status", "No Quote Reason", "No Quote Consecutive Count",
+        "No Quote Episode Seconds", "No Quote Alert State",
+        "No Quote Candidate Diagnostics", "Bid Level", "Ask Level",
         "inv_current", "cash_current", "Locked Cash", "Locked Inventory",
         "Available Cash", "Available Inventory", "Portfolio Wealth",
         "Best Bid", "Best Ask", "Last Price", "Bid Price", "Ask Price",
@@ -706,6 +752,100 @@ class SimpleMarketMaker:
         if reason_method is None:
             return "strategy_returned_no_quote"
         return str(reason_method(ob, inventory))
+
+    def _ensure_demo_operations(self, csv_path: str) -> None:
+        if self.result_store is not None:
+            return
+        db_path = self.cfg.demo_result_db_path or f"{os.path.splitext(csv_path)[0]}.sqlite3"
+        self.result_store = DemoResultStore(
+            db_path,
+            self.DEMO_COLUMNS,
+            csv_export_path=csv_path,
+            csv_export_max_rows=self.cfg.demo_csv_export_max_rows,
+        )
+        self.result_store.import_legacy_csv_once(csv_path)
+        self.no_quote_monitor = NoQuoteMonitor(
+            self.result_store,
+            str(self.session),
+            self.pair,
+            alert_rounds=self.cfg.no_quote_alert_rounds,
+            alert_seconds=self.cfg.no_quote_alert_seconds,
+            cooldown_seconds=self.cfg.no_quote_alert_cooldown_seconds,
+        )
+
+    @staticmethod
+    def _no_quote_diagnostics(document: Dict[str, Any]) -> Dict[str, Any]:
+        candidates = []
+        for candidate in document.get("candidate_results", []):
+            candidates.append({
+                "bid_level": candidate.get("bid_level"),
+                "ask_level": candidate.get("ask_level"),
+                "bid_price": candidate.get("bid_price"),
+                "ask_price": candidate.get("ask_price"),
+                "last_price": candidate.get("last_price"),
+                "spread": candidate.get("spread_ratio"),
+                "passed": candidate.get("passed"),
+            })
+        return {
+            "commission": document.get("commission_perc"),
+            "exp_ret_min": document.get("exp_ret_min"),
+            "required_threshold": document.get("required_threshold"),
+            "candidates": candidates,
+        }
+
+    def _deliver_no_quote_decision(self, decision: NoQuoteDecision) -> None:
+        if decision is None or not decision.kind:
+            return
+        if decision.kind == "recovered":
+            method = getattr(self.telegram_reporter, "no_quote_recovered", None)
+        else:
+            method = getattr(self.telegram_reporter, "no_quote_alert", None)
+        if method is None:
+            self.no_quote_monitor.suppress_pending()
+            return
+        message_id = method(decision)
+        if message_id is not None:
+            self.no_quote_monitor.mark_delivered(decision, message_id)
+            return
+        client = getattr(self.telegram_reporter, "client", None)
+        if client is not None and not client.configured:
+            self.no_quote_monitor.suppress_pending()
+
+    def _update_demo_result_orders(
+        self,
+        events,
+        *,
+        snapshot,
+        scopes,
+        round_fee: Optional[float] = None,
+    ) -> None:
+        if self.result_store is None or not events:
+            return
+        lifecycle = {}
+        financial = {}
+        for event in events:
+            try:
+                order = self.exchange.ledger.get_order(event.order_id)
+            except KeyError:
+                continue
+            lifecycle[event.order_id] = self._demo_side_fields(order.side, order, None)
+            fields = {
+                "inv_current": snapshot.inventory,
+                "cash_current": snapshot.cash,
+                "Locked Cash": snapshot.locked_cash,
+                "Locked Inventory": snapshot.locked_inventory,
+                "Available Cash": snapshot.available_cash,
+                "Available Inventory": snapshot.available_inventory,
+                "Portfolio Wealth": snapshot.wealth,
+                "Session Pair Fee": scopes.session_pair,
+                "Session All Symbols Fee": scopes.session_all_symbols,
+                "Pair All Time Fee": scopes.pair_all_time,
+                "All Symbols All Time Fee": scopes.all_symbols_all_time,
+            }
+            if round_fee is not None:
+                fields["Round Fee"] = round_fee
+            financial[event.order_id] = fields
+        self.result_store.update_order_rows(lifecycle, financial)
 
     @staticmethod
     def _write_demo_csv(order_df: pd.DataFrame, csv_path: str) -> bool:
@@ -773,21 +913,13 @@ class SimpleMarketMaker:
     def _run_demo(self) -> pd.DataFrame:
         csv_path = self.csv_path or os.path.join(RESULTS_DIR, "track_demo.csv")
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-        if os.path.exists(csv_path):
-            try:
-                order_df = pd.read_csv(csv_path).astype(object)
-                for column in self.DEMO_COLUMNS:
-                    if column not in order_df.columns:
-                        order_df[column] = None
-                order_df = order_df[self.DEMO_COLUMNS]
-            except Exception:
-                order_df = pd.DataFrame(columns=self.DEMO_COLUMNS, dtype=object)
-        else:
-            order_df = pd.DataFrame(columns=self.DEMO_COLUMNS, dtype=object)
-        self._write_demo_csv(order_df, csv_path)
+        self._ensure_demo_operations(csv_path)
+        order_df = self.result_store.load_view(limit=self.cfg.demo_csv_export_max_rows)
+        self.result_store.export_bounded_csv()
 
         self._notify_startup()
         round_no = 0
+        round_target = float(self.monotonic_provider())
         try:
             while self._within_horizon():
                 round_no += 1
@@ -797,21 +929,22 @@ class SimpleMarketMaker:
                 retry_pending = getattr(self.telegram_reporter, "retry_pending", None)
                 if retry_pending is not None:
                     retry_pending(self.exchange.ledger)
+                self._deliver_no_quote_decision(self.no_quote_monitor.pending_decision())
                 try:
                     ob = self._get_orderbook()
                 except Exception as exc:
                     print(f"Market data retrieval failed: {exc}")
-                    self.sleep_fn(self.cfg.time_step)
+                    round_target = self._wait_for_next_round(round_target)
                     continue
                 if not ob:
-                    self.sleep_fn(self.cfg.time_step)
+                    round_target = self._wait_for_next_round(round_target)
                     continue
                 try:
                     best_bid = float(ob["bids"][0][0])
                     best_ask = float(ob["asks"][0][0])
                     last_price = float(ob["lastTradePrice"])
                 except (KeyError, IndexError, TypeError, ValueError):
-                    self.sleep_fn(self.cfg.time_step)
+                    round_target = self._wait_for_next_round(round_target)
                     continue
 
                 trade_price = ob.get("tradePrice")
@@ -845,16 +978,39 @@ class SimpleMarketMaker:
                     scopes=scopes,
                     round_fee=round_fee,
                 )
+                self._update_demo_result_orders(
+                    lifecycle_events,
+                    snapshot=snapshot,
+                    scopes=scopes,
+                    round_fee=round_fee,
+                )
                 for event in lifecycle_events:
                     self.telegram_reporter.order_changed(self.exchange.ledger, event)
+                ledger.compact()
 
-                self._emit_algo1_diagnostic(ob, snapshot.inventory, round_no=round_no)
+                diagnostic = self._algo1_diagnostic_document(
+                    ob, snapshot.inventory, round_no=round_no
+                )
+                self._emit_algo1_diagnostic(
+                    ob, snapshot.inventory, round_no=round_no, document=diagnostic
+                )
                 quote = self._decide_order(ob, snapshot.inventory)
                 quote_status = "quote_generated" if quote is not None else "no_quote"
                 no_quote_reason = (
                     None if quote is not None
                     else self._demo_no_quote_reason(ob, snapshot.inventory)
                 )
+                if quote is None:
+                    no_quote_decision = self.no_quote_monitor.record_no_quote(
+                        round_no,
+                        now,
+                        no_quote_reason,
+                        self._no_quote_diagnostics(diagnostic),
+                    )
+                else:
+                    no_quote_decision = self.no_quote_monitor.record_quote(round_no, now)
+                self._deliver_no_quote_decision(no_quote_decision)
+                no_quote_snapshot = self.no_quote_monitor.snapshot()
                 bid_price = float(quote["bid"]) if quote else None
                 ask_price = float(quote["ask"]) if quote else None
                 bid_level = int(quote["bid level"]) if quote else None
@@ -927,6 +1083,14 @@ class SimpleMarketMaker:
                     "Timestamp": now.astimezone(TEHRAN_TZ).strftime("%Y-%m-%d %H:%M:%S"),
                     "Quote Status": quote_status,
                     "No Quote Reason": no_quote_reason,
+                    "No Quote Consecutive Count": no_quote_snapshot.consecutive_count,
+                    "No Quote Episode Seconds": no_quote_snapshot.episode_seconds,
+                    "No Quote Alert State": no_quote_snapshot.alert_state,
+                    "No Quote Candidate Diagnostics": json.dumps(
+                        no_quote_snapshot.diagnostics,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
                     "Bid Level": bid_level,
                     "Ask Level": ask_level,
                     "inv_current": snapshot.inventory,
@@ -949,9 +1113,13 @@ class SimpleMarketMaker:
                 }
                 row.update(self._demo_side_fields("buy", buy_order, buy_reason))
                 row.update(self._demo_side_fields("sell", sell_order, sell_reason))
-                order_df.loc[len(order_df)] = [row.get(column) for column in self.DEMO_COLUMNS]
-                self._write_demo_csv(order_df, csv_path)
-                self.sleep_fn(self.cfg.time_step)
+                self.result_store.append_round(row)
+                self.result_store.compact(self.cfg.demo_result_retain_rows)
+                self.result_store.export_bounded_csv()
+                order_df = self.result_store.load_view(
+                    limit=self.cfg.demo_csv_export_max_rows
+                )
+                round_target = self._wait_for_next_round(round_target)
         except KeyboardInterrupt:
             print("Interrupted by user.")
         finally:
@@ -968,13 +1136,16 @@ class SimpleMarketMaker:
                 snapshot=shutdown_snapshot,
                 scopes=shutdown_scopes,
             )
+            self._update_demo_result_orders(
+                shutdown_events or [],
+                snapshot=shutdown_snapshot,
+                scopes=shutdown_scopes,
+            )
             for event in shutdown_events or []:
                 self.telegram_reporter.order_changed(self.exchange.ledger, event)
-            self._write_demo_csv(order_df, csv_path)
-        try:
-            return pd.read_csv(csv_path)
-        except (OSError, ValueError, pd.errors.EmptyDataError):
-            return order_df
+            ledger.compact()
+            self.result_store.export_bounded_csv()
+        return self.result_store.load_view()
 
     def run(self) -> pd.DataFrame:
         """

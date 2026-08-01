@@ -40,6 +40,16 @@ class MMConfig:
     demo_queue_enabled: bool = False
     demo_state_path: Optional[str] = None
     demo_fee_state_path: Optional[str] = None
+    demo_archive_path: Optional[str] = None
+    demo_hot_terminal_order_limit: int = 1_000
+    demo_archive_max_bytes: int = 10_000_000
+    demo_result_db_path: Optional[str] = None
+    demo_csv_export_max_rows: int = 10_000
+    demo_result_retain_rows: int = 100_000
+    no_quote_alert_rounds: int = 30
+    no_quote_alert_seconds: float = 300.0
+    no_quote_alert_cooldown_seconds: float = 1_800.0
+    no_quote_recovery_alert: bool = True
     algo1_diagnostics_enabled: bool = False
     algo1_diagnostics_path: Optional[str] = None
 

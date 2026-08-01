@@ -121,3 +121,15 @@ def test_diagnostics_are_persisted_exactly(tmp_path):
     assert snapshot.diagnostics["exp_ret_min"] == 0.001
     assert snapshot.diagnostics["required_threshold"] == 0.002
     assert snapshot.diagnostics["candidates"][0]["spread"] == 0.001
+
+
+def test_disabled_delivery_is_suppressed_without_round_by_round_retrigger(tmp_path):
+    monitor = make_monitor(tmp_path, alert_rounds=1)
+    first = monitor.record_no_quote(1, T0, "profitability_threshold", DIAGNOSTICS)
+    assert first.kind == "alert"
+    monitor.suppress_pending()
+
+    assert monitor.snapshot().alert_state == "suppressed"
+    assert monitor.record_no_quote(
+        2, T0 + timedelta(seconds=10), "profitability_threshold", DIAGNOSTICS
+    ).kind is None
