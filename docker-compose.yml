@@ -1,0 +1,41 @@
+# Runs both currency pairs in demo (paper-trading) mode plus the history
+# dashboard, all sharing one results/ volume so the dashboard sees both
+# bots' live output. See usage.md §6 for the full walkthrough.
+#
+#   cp market_maker/.env.example market_maker/.env   # fill in real values first
+#   docker compose up --build
+#
+# Real (--mode real) trading isn't wired up here -- it needs a reachable
+# MySQL server, which is out of scope while the project's focus is demo
+# mode (see README.md's Known limitations). Point MYSQL_HOST at your own
+# server and swap a service's command below if/when that's needed.
+
+services:
+  btc-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "btc", "--mode", "demo"]
+    env_file:
+      - market_maker/.env
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+
+  usdt-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "usdt", "--mode", "demo"]
+    env_file:
+      - market_maker/.env
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    command: ["python", "dashboard.py"]
+    env_file:
+      - market_maker/.env
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    ports:
+      - "8050:8050"
+    restart: unless-stopped

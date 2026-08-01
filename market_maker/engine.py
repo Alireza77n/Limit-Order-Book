@@ -29,10 +29,15 @@ MYSQL_USER = os.environ.get("MYSQL_USER")
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD")
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "trading_bot")
 
-# Telegram round notifications (optional -- no-ops if unset). See
-# reports/telegram-notify.md for how TELEGRAM_CHAT_ID was obtained.
+# Telegram round notifications (optional -- no-ops if unset)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
+# Displayed/logged timestamps use Tehran local time explicitly, regardless
+# of the host or container's own system timezone (Docker containers
+# default to UTC) -- so CSV rows, console logs, and Telegram messages
+# always agree and always read in the operator's local time.
+TEHRAN_TZ = pytz.timezone("Asia/Tehran")
 
 
 
@@ -219,13 +224,22 @@ class SimpleMarketMaker:
         except Exception as e:
             print(f"Telegram notify failed: {e}")
 
+    def _mode_tag(self) -> str:
+        """Prominent, unmissable badge for the very first line of every
+        Telegram message -- so demo/paper messages can never be mistaken
+        for real ones (or vice versa) at a glance while scrolling a chat."""
+        if self.mode_label == "demo":
+            return "\U0001F9EA <b>DEMO MODE</b> — simulated, no real orders"
+        return "\U0001F534 <b>LIVE MODE</b> — real orders, real money"
+
     def _notify_startup(self) -> None:
         self._notify_telegram(
-            f"✅ <b>Market Maker connected</b>\n"
+            f"{self._mode_tag()}\n\n"
+            f"<b>Market Maker Connected</b>\n\n"
             f"Symbol: <b>{self.pair}</b>\n"
             f"Algorithm: <b>{self.strategy.__class__.__name__}</b> (profile: {self.algorithm_id})\n"
-            f"Mode: <b>{self.mode_label}</b>\n"
-            f"Session: {self.session}"
+            f"Commission: <b>{self.cfg.commission_perc:.2%}</b>\n"
+            f"Session: <code>{self.session}</code>"
         )
 
     def _format_round_message(
@@ -239,29 +253,37 @@ class SimpleMarketMaker:
         round_fee_irt: float, symbol_total_fee_irt: float, combined_total_fee_irt: float,
     ) -> str:
         quote_line = (
-            f"Bid: {bid_price:.2f} (lvl {bid_lvl})  Ask: {ask_price:.2f} (lvl {ask_lvl})"
+            f"Bid: {bid_price:,.2f} (lvl {bid_lvl})   Ask: {ask_price:,.2f} (lvl {ask_lvl})"
             if bid_price is not None and ask_price is not None else "No quote this round"
         )
         buy_line = (
-            f"\U0001F7E2 Buy sent: {buy_size_value:.8f} @ {bid_price_sent:.2f} (id {buy_id})"
+            f"\U0001F7E2 Buy sent: {buy_size_value:.8f} @ {bid_price_sent:,.2f} (id {buy_id})"
             if buy_sent else "\U0001F7E2 Buy: not sent"
         )
         sell_line = (
-            f"\U0001F534 Sell sent: {sell_size_value:.8f} @ {ask_price_sent:.2f} (id {sell_id})"
+            f"\U0001F534 Sell sent: {sell_size_value:.8f} @ {ask_price_sent:,.2f} (id {sell_id})"
             if sell_sent else "\U0001F534 Sell: not sent"
         )
         return (
-            f"<b>{self.pair}</b> · {self.strategy.__class__.__name__} · {self.mode_label} · Round {round_no}\n"
-            f"\U0001F550 {stamp}\n\n"
-            f"Quote — {quote_line}\n"
-            f"Market — Best Bid: {best_bid:.2f}  Best Ask: {best_ask:.2f}  Last: {last_price:.2f}\n\n"
+            f"{self._mode_tag()}\n"
+            f"<b>{self.pair}</b> · Round {round_no} · \U0001F550 {stamp}\n\n"
+            f"<b>Quote</b>\n"
+            f"{quote_line}\n\n"
+            f"<b>Market</b>\n"
+            f"Best Bid: {best_bid:,.2f}\n"
+            f"Best Ask: {best_ask:,.2f}\n"
+            f"Last: {last_price:,.2f}\n\n"
+            f"<b>Portfolio</b>\n"
             f"Inventory: {inv_current:.8f}\n"
             f"Cash: {cash_current:,.2f}\n"
             f"Wealth: {portfolio_wealth:,.2f}\n\n"
-            f"{buy_line}\n{sell_line}\n\n"
-            f"Transaction cost this round: {round_fee_irt:,.2f} IRT\n"
-            f"Total cost paid — {self.pair}: {symbol_total_fee_irt:,.2f} IRT\n"
-            f"Total cost paid — all symbols: {combined_total_fee_irt:,.2f} IRT"
+            f"<b>Orders</b>\n"
+            f"{buy_line}\n"
+            f"{sell_line}\n\n"
+            f"<b>Costs</b> (commission {self.cfg.commission_perc:.2%})\n"
+            f"This round: {round_fee_irt:,.2f} IRT\n"
+            f"{self.pair} total: {symbol_total_fee_irt:,.2f} IRT\n"
+            f"All symbols: {combined_total_fee_irt:,.2f} IRT"
         )
 
 
@@ -472,7 +494,8 @@ class SimpleMarketMaker:
 
         Returns (this pair's cumulative cost, combined cost across all pairs).
         """
-        path = os.path.join(os.path.dirname(__file__), f"demo_costs_{self.mode_label}.json")
+        path = os.path.join(RESULTS_DIR, f"costs_{self.mode_label}.json")
+        os.makedirs(RESULTS_DIR, exist_ok=True)
         try:
             costs = {}
             if os.path.exists(path):
@@ -613,7 +636,7 @@ class SimpleMarketMaker:
     
                 # ---- (B) Fetch market data ----
                 ob = self._get_orderbook()
-                stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                stamp = datetime.now(TEHRAN_TZ).strftime("%Y-%m-%d %H:%M:%S")
                 print(f"\n--- Round {round_no} ({stamp}) ---")
     
                 if not ob:

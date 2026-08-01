@@ -1,0 +1,20 @@
+.git
+.gitignore
+.dockerignore
+reports/
+usage.md
+README.md
+requirements-dev.txt
+
+# Never bake secrets or runtime state into the image -- .env is passed at
+# container start via docker-compose's env_file, and results/ is a
+# runtime volume, not build input.
+market_maker/.env
+market_maker/results/
+market_maker/research/
+
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+market_maker/tests/
+.DS_Store

@@ -663,15 +663,21 @@ Algo1Strategy          Algo2Strategy   NobitexExchangeClient   DemoExchangeClien
 * **`order_status.py`** (`OrderStatusChecker`, `OrderCanceller`): raw Nobitex order-status/cancellation HTTP calls, composed inside `NobitexExchangeClient` rather than called directly by the engine.
 * **`config.py`** (`MMConfig`): a single dataclass holding both strategy knobs (`inv_max`, `depth_max`, `commission_perc`, ...) and exchange config (`token`, `url_send_order`, ...). Not yet split — see [Known limitations](#known-limitations--next-steps). Also defines `TRADING_PROFILES` (every currency pair's full config, including its demo starting inventory) and `RESULTS_DIR`/`demo_csv_path` (where `run.py` and `dashboard.py` both write/read CSV output) — the single source of truth both modules import from, so they can never disagree about a pair's settings or file locations.
 * **`run.py`**: the single entry point. `STRATEGIES`/`EXCHANGES` registries (algorithm/exchange choices) plus `config.TRADING_PROFILES` (currency-pair configs) select what actually runs; `--mode real|demo` selects real vs. simulated order placement.
-* **Telegram notifications & cost tracking** (in `engine.py`, optional): `SimpleMarketMaker` can push a startup message and a per-round update (quote, market data, inventory/cash/wealth, buy/sell activity, transaction cost this round, and cumulative cost per-symbol and combined) to a Telegram chat if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are set. Cumulative totals persist across process restarts in a local `demo_costs_<mode>.json`. Entirely best-effort — never raises, never required. See usage.md §1.7.
+* **Telegram notifications & cost tracking** (in `engine.py`, optional): `SimpleMarketMaker` can push a startup message and a per-round update (quote, market data, inventory/cash/wealth, buy/sell activity, transaction cost this round, and cumulative cost per-symbol and combined) to a Telegram chat if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are set. Cumulative totals persist across process restarts in a local `results/costs_<mode>.json`. Entirely best-effort — never raises, never required. See usage.md §1.7.
 
 ---
 
 # Project structure
 
-Everything lives under one top-level package, `market_maker/`:
+Everything lives under one top-level package, `market_maker/`, with three
+small Docker files at the repo root for containerized runs:
 
 ```text
+Dockerfile               One image (Python + deps + market_maker/), used
+                          by every docker-compose service below
+docker-compose.yml         btc-demo / usdt-demo / dashboard services
+.dockerignore               Excludes .env, results/, .git, tests/, etc.
+
 market_maker/
   engine.py             SimpleMarketMaker: the run() loop and engine glue
   config.py              MMConfig dataclass; TRADING_PROFILES (per-pair
@@ -694,11 +700,11 @@ market_maker/
     sigma_estimation.ipynb     Estimates Algorithm 2's sigma parameter
     algo2.ipynb                 Empty -- was meant to hold Algorithm 2's implementation
   tests/                   pytest suite
-  results/                 run() CSV output (btc_track.csv, usdt_track.csv,
-                            and their _demo.csv siblings) -- gitignored, runtime state
+  results/                 run() CSV + costs_<mode>.json output (btc_track.csv,
+                            usdt_track.csv, and their _demo siblings) --
+                            gitignored runtime state; directory itself tracked via .gitkeep
   .env.example              Template for required environment variables
   .env                      Real secrets -- gitignored, never committed
-  demo_costs_*.json          Running transaction-cost totals -- gitignored, runtime state
 ```
 
 No other top-level code directory exists — there used to be a separate `algo2_/` folder holding only notebooks; it's gone, and its contents now live in `market_maker/research/` above, renamed to consistent `snake_case` (`Alg2.ipynb` → `algo2.ipynb`, `Kapa Estimation.ipynb` → `kappa_estimation.ipynb`, fixing a typo in the filename along the way; `sigma_estimation.ipynb` was already correctly named).
@@ -713,7 +719,7 @@ Everything under `market_maker/` and this README are committed and visible to th
 |---|---|---|
 | `market_maker/.env` | Real Nobitex token, MySQL credentials, optional Telegram bot token/chat id | Secrets — `market_maker/.env.example` is the committed template |
 | `market_maker/results/*.csv` | Every `run.py` session's logged output (real and demo, both pairs) | Runtime data, machine-specific, not a project deliverable — the `results/` directory itself is tracked (via `.gitkeep`) so it always exists |
-| `market_maker/demo_costs_*.json` | Running per-symbol/combined transaction-cost totals (usage.md §1.7) | Local runtime state, regenerated per machine, not meaningful to share |
+| `market_maker/results/costs_*.json` | Running per-symbol/combined transaction-cost totals (usage.md §1.7) | Local runtime state, regenerated per machine, not meaningful to share |
 | `reports/` | This author's own working notes on the refactor (structural review, decisions, deferred items) | Personal analysis notes, not a project deliverable |
 
 If you're missing `market_maker/.env`, copy `market_maker/.env.example` and fill in real values — see **[usage.md](usage.md)** for full setup, running, and testing instructions. `reports/` isn't needed to build, test, or run anything — it exists only as a paper trail for this refactor.
@@ -724,9 +730,11 @@ If you're missing `market_maker/.env`, copy `market_maker/.env.example` and fill
 
 Full details — environment setup, every way to run the bot (which modes touch a real account/real money and which don't), and how to run the test suite — are in **[usage.md](usage.md)**, kept as its own document so this README stays focused on what the project *is* rather than how to operate it.
 
-Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with simulated fills instead — no real orders, no MySQL required (see usage.md §1b). The test suite (`cd market_maker/tests && pytest -q`) needs neither a real account nor MySQL either way — 2 of its 62 tests do make real (read-only) network calls to end-to-end verify demo mode, and skip cleanly if offline.
+Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with simulated fills instead — no real orders, no MySQL required (see usage.md §1b). The test suite (`cd market_maker/tests && pytest -q`) needs neither a real account nor MySQL either way — 2 of its 67 tests do make real (read-only) network calls to end-to-end verify demo mode, and skip cleanly if offline.
 
 A comprehensive, live-updating history dashboard (`python dashboard.py`) covers wealth, inventory, cash, depth levels, and spreads for every real/demo × BTC/USDT combination — see usage.md §3.
+
+`docker compose up -d --build` (repo root) runs both pairs in demo mode plus the dashboard as three containers sharing one results volume — see usage.md §6.
 
 ---
 

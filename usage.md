@@ -12,6 +12,7 @@ project *is* and how it's architected, see [README.md](README.md).
 | [Automated tests](#2-automated-tests-no-account-no-money-no-database) | `pytest -q` | No | No | No |
 | [History dashboard](#3-history-dashboard) | `python dashboard.py` | No (reads local CSVs) | No | No |
 | [Research notebooks](#4-research-notebooks-read-only) | open in Jupyter | No | No | No |
+| [Docker](#6-docker) | `docker compose up -d --build` | Yes (demo mode) | No -- simulated | No |
 
 Note on terminology: `demo_btc.py`/`demo_usdt.py` (this branch's `run.py
 --profile btc/usdt --mode real`, the default) were **never** a simulated
@@ -119,16 +120,26 @@ skips this cleanup and can leave open orders on the exchange.
 Optional, off by default. Set both `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` in `.env` to get:
 
-- A **startup message** when `run()` begins: symbol, algorithm, mode
-  (real/demo), session id.
+- A **startup message** when `run()` begins: symbol, algorithm, commission
+  rate, session id.
 - A **message every round**: the quote decided (or "no quote this
   round"), best bid/ask/last, current inventory/cash/wealth, whether a
   buy/sell was actually sent (with size and price), the **transaction
   cost for that round**, the **cumulative cost paid for this symbol**,
   and the **cumulative cost paid across all symbols combined**.
 
+Every message -- startup and round alike -- opens with a prominent
+🧪 **DEMO MODE** / 🔴 **LIVE MODE** badge as its first line, so real and
+paper-trading messages can never be mistaken for each other while
+scrolling a chat that has both. Section headers (Quote / Market /
+Portfolio / Orders / Costs) keep each round's message scannable rather
+than one dense paragraph. All timestamps (Telegram messages, CSV rows,
+console logs) are in **Asia/Tehran local time** explicitly, regardless of
+the host or container's own system timezone -- Docker containers default
+to UTC, so this is computed with `pytz`, not left to the OS.
+
 Cumulative totals are tracked in a small local JSON file
-(`market_maker/demo_costs_<mode>.json`, gitignored, never committed) keyed
+(`market_maker/results/costs_<mode>.json`, gitignored, never committed) keyed
 by trading pair -- this is what lets a BTC process and a separately-running
 USDT process each report a combined total that includes the other's costs,
 since every `run.py` invocation is its own process (§1b's "run both at
@@ -196,6 +207,9 @@ python run.py --profile btc  --mode demo &
 python run.py --profile usdt --mode demo &
 ```
 
+Or use Docker Compose (§6), which runs both plus the dashboard as three
+containers with one command.
+
 **Simplification, stated plainly:** demo fills assume the full requested
 amount executes instantly at the quoted price -- no partial fills, no
 slippage, no queue position or latency modeling. This is a reasonable
@@ -215,10 +229,11 @@ cd market_maker/tests
 python3 -m pytest -q
 ```
 
-62 tests. **60 are pure Python** (no network, no database, nothing touches
+67 tests. **65 are pure Python** (no network, no database, nothing touches
 Nobitex) covering both algorithms' strategy logic, env-var config
 sourcing, `DemoExchangeClient`'s simulated fills, the `persist_to_db`
-flag, and the dashboard's CSV/session handling. **The other 2
+flag, `run.make_cfg`'s real-vs-demo config sourcing, and the dashboard's
+CSV/session handling. **The other 2
 (`test_demo_end_to_end.py`) make real network calls** to Nobitex's public
 orderbook endpoint (no auth, read-only, nothing placed) and actually run
 the full `run()` loop for 2 rounds, once per profile (BTC, USDT), with
@@ -314,4 +329,50 @@ existed, and as an honest limitations list:
   as a simulated portfolio separately from `inv_initial`/`cash_initial`.
 - Algorithm 2 is still just a stub in demo mode, same as real mode.
 - No built-in way to run more than one profile in a single process --
-  see §1b's "run both at once" for the two-process approach.
+  see §1b's "run both at once" for the two-process approach, or §6 for
+  the Docker Compose equivalent.
+
+---
+
+## 6. Docker
+
+Runs both pairs in demo mode plus the dashboard as three containers
+sharing one `results/` volume, so the dashboard sees both bots' live
+output. One image (`Dockerfile`, repo root), three services
+(`docker-compose.yml`).
+
+```sh
+cp market_maker/.env.example market_maker/.env
+# fill in real values -- NOBITEX_API_TOKEN not required for demo mode's
+# market-data reads, but TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID must be set
+# here if you want notifications from the containers
+
+docker compose up -d --build   # builds the image, starts all three services
+docker compose logs -f btc-demo usdt-demo   # follow both bots' output
+docker compose down            # stop everything
+```
+
+Services (all built from the same image, repo root `Dockerfile`):
+
+| Service | Command | Port |
+|---|---|---|
+| `btc-demo` | `run.py --profile btc --mode demo` | none |
+| `usdt-demo` | `run.py --profile usdt --mode demo` | none |
+| `dashboard` | `dashboard.py` | `8050` (http://localhost:8050) |
+
+`market_maker/.env` is passed in at container start via `env_file`, never
+baked into the image (see `.dockerignore`). `market_maker/results/` is a
+bind mount, so CSVs and `costs_demo.json` land in the same place whether
+you run natively or in Docker -- `config.RESULTS_DIR` resolves identically
+either way.
+
+**No real (`--mode real`) service is defined** -- real mode needs a
+reachable MySQL server, out of scope while the project's focus is demo
+mode. Point `MYSQL_HOST` at your own server and add a service with
+`command: ["python", "run.py", "--profile", "btc"]` (no `--mode demo`) if
+you need it later.
+
+The image sets `PYTHONUNBUFFERED=1` -- without it, Python fully buffers
+stdout when it isn't attached to a terminal (always true in a container),
+so `docker compose logs` would show nothing for a long time even though
+the bot is running correctly and writing results.
