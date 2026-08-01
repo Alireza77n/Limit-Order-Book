@@ -1087,3 +1087,37 @@ Full-project rollback remains
 `cd /home/ubuntu/limit-order-book && ./deploy/rollback.sh`; it never touches
 Sarkhatti. Exact next step: extended monitoring of USDT restart baseline `7`,
 session stability, memory, logs, and Sarkhatti invariants.
+
+## 2026-08-02 — Zero-valued config defaults rendering hotfix
+
+After the effective-default deployment, user browser verification found
+three legitimate `0.0` defaults still displayed as blank:
+`demo_inv_initial`, `demo_level1_fill_delay_seconds`, and `inv_min`. The
+backend effective-config merge was correct; the Jinja template used
+`current_value or ''`, which treats numeric zero as false. A regression test
+reproduced the blank values before the fix. The template now substitutes an
+empty string only for `None`, preserving zero.
+
+The focused regression test passed after the change and the full suite
+passed `330` tests with zero failures and the one pre-existing Dash warning.
+Committed application revision
+`aae9163824732e38be4d6312ea7b7e4093aeca41`, fast-forwarded only
+`parsaoryani/admin-demo-control` and `production`, built through the shared
+image definition, and force-recreated only `lob-admin`. `main` remained
+unchanged.
+
+Authenticated live verification proved both `/admin/config/btc` and
+`/admin/config/usdt` render all three fields as `0.0`. Admin changed from
+container `53608aed02b5b815e91b41d66d9a3e9e98a1552de4901ece50646a9d226073c4`
+to `3fd35dfc9858d1f06270b3d4b46f9bf84e28b9a46cf39826c09f4f05b00b78b4`,
+healthy, restart `0`, not OOM-killed, with the exact revision label. BTC,
+USDT, dashboard, and Sarkhatti retained their exact IDs and restart counts
+(USDT baseline `7`); all were healthy. Admin logs had no traceback,
+`stack_shutdown`, real-order, or production-credential patterns. Sarkhatti
+returned `200` in 0.006 seconds and remained untouched.
+
+Admin-only rollback is the prior application revision
+`fa606c2ffdd61cef7006ce4f9fa63ad69e03c26a`, rebuilt through the shared
+image definition and followed by force-recreating only admin. Full rollback
+remains `cd /home/ubuntu/limit-order-book && ./deploy/rollback.sh` and never
+touches Sarkhatti. Exact next step: extended monitoring only.
