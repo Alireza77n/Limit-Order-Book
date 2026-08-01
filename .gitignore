@@ -21,3 +21,4 @@ market_maker/results/*.lock
 !market_maker/results/.gitkeep
 docs/
 .docker-validation-results/
+.worktrees/
