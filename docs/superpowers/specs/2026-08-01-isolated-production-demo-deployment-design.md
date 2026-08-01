@@ -29,7 +29,7 @@ No deployment or rollback command may use a broad Docker prune operation or refe
 
 Implementation occurs on `parsaoryani/algo1-refactor-testability`, the currently checked-out branch. Existing unrelated runtime artifacts remain untracked and untouched. Deployment changes are committed in focused commits after tests pass. A `production` branch is created or fast-forwarded to the exact verified deployment commit and pushed when repository credentials permit. `main` is never checked out, modified, merged, rebased, reset, or pushed.
 
-The server receives an archive of the exact `production` commit, so deployment does not depend on mutable working-tree files or server-side Git credentials. The deployed commit SHA is recorded in the progress journal and a release metadata file.
+The verified commits are pushed to `git@github.com:Alireza77n/Limit-Order-Book.git` on `parsaoryani/algo1-refactor-testability`, then `production` is fast-forwarded to the same SHA and pushed. The server clones or fetches that repository, checks out only `production`, and verifies that `HEAD` equals the locally approved production SHA. The deployed commit SHA is recorded in the progress journal and a release metadata file. `origin/main` is checked before and after promotion and must remain unchanged.
 
 ## Application safety
 
@@ -79,7 +79,7 @@ A cryptographically random Basic Auth password is generated once, stored only as
 3. Build the image locally, run container safety smoke tests, and measure image size.
 4. Commit the verified implementation on the `parsaoryani` branch.
 5. Create or fast-forward `production` to that exact commit without touching `main`.
-6. Transfer an archive of the exact production commit into a new `/home/ubuntu/limit-order-book` directory.
+6. Push the verified `parsaoryani` and `production` refs to the configured GitHub repository, then clone/fetch `production` into a new `/home/ubuntu/limit-order-book` directory and verify the exact SHA.
 7. Create dedicated runtime directories and the credential-empty production environment.
 8. Validate `docker compose -p limit-order-book config` on the server.
 9. Build only the new image, revalidate Sarkhatti, then start only the new Compose project.

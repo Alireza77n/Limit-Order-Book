@@ -4,7 +4,7 @@
 
 **Goal:** Deploy the Limit Order Book Demo/Paper workers and Dash dashboard on the Sarkhatti Ubuntu host with strict application, Docker, filesystem, Git, Nginx, TLS, authentication, and rollback isolation.
 
-**Architecture:** Add a fail-closed process entrypoint and environment-controlled runtime roots, then run the existing application in a dedicated Compose project with one internal network and one loopback dashboard port. Promote the tested commit from the current `parsaoryani` branch to `production`, transfer that exact commit, and expose it through an independent authenticated HTTPS Nginx site while continuously comparing Sarkhatti to its immutable baseline.
+**Architecture:** Add a fail-closed process entrypoint and environment-controlled runtime roots, then run the existing application in a dedicated Compose project with one internal network and one loopback dashboard port. Push the tested current `parsaoryani` branch, promote the same SHA to `production`, fetch that exact production commit from GitHub on the server, and expose it through an independent authenticated HTTPS Nginx site while continuously comparing Sarkhatti to its immutable baseline.
 
 **Tech Stack:** Python 3.11, pytest, Docker Engine 29, Docker Compose 2.40, Dash, Nginx 1.24, Certbot/Let's Encrypt, Bash, Git.
 
@@ -18,7 +18,7 @@
 - Never provide exchange, wallet, Telegram, or MySQL credentials to the Demo stack.
 - Never use Chromium, VNC, Xvfb, Playwright, privileged containers, Docker socket mounts, host networking, or `seccomp:unconfined`.
 - Keep normal Limit Order Book container memory limits at or below 448 MiB and observed total usage below 512 MiB.
-- Preserve `.docker-validation-results-pre-cancel-fix-20260801T1148Z/` untouched and outside the image/archive.
+- Preserve `.docker-validation-results-pre-cancel-fix-20260801T1148Z/` untouched and outside the image and server checkout.
 - Run `nginx -t` before every Nginx reload and never restart Nginx unless reload is proven impossible.
 - Do not claim long-term readiness from the bounded observation run.
 
@@ -483,7 +483,7 @@ git push -u origin parsaoryani/algo1-refactor-testability
 git push -u origin production
 ```
 
-Expected: both refs point to the verified commit; `origin/main` is unchanged. If authentication fails, record it and continue deployment from the exact local production archive.
+Expected: both refs point to the verified commit; `origin/main` is unchanged. A push authentication failure is a deployment blocker because the operator explicitly requires the server to fetch from this repository.
 
 ### Task 7: Revalidate and deploy the isolated Compose stack
 
@@ -494,15 +494,15 @@ Expected: both refs point to the verified commit; `origin/main` is unchanged. If
 
 **Interfaces:**
 - SSH target: `ubuntu@185.206.95.141`.
-- Deployment source: `git archive production`, not the dirty local worktree.
+- Deployment source: the exact pushed `production` SHA from `git@github.com:Alireza77n/Limit-Order-Book.git`, never the dirty local worktree.
 
 - [ ] **Step 1: Revalidate Sarkhatti baseline and capacity**
 
 Run read-only inspect/hash/latency/resource commands from Phase 1. Require exact ID, start time, restart count 0, ports, mount, hashes, health, and OOM state. Require port 8652 and proposed names to remain free and at least 700 MiB host memory available before build.
 
-- [ ] **Step 2: Transfer the exact production archive**
+- [ ] **Step 2: Fetch the exact production commit from GitHub**
 
-Create `/home/ubuntu/limit-order-book` only after proving it is absent. Stream `git archive --format=tar production` over SSH into that exact directory. Write the production SHA to `DEPLOYED_COMMIT` and verify it matches locally.
+Create `/home/ubuntu/limit-order-book` only after proving it is absent. Verify server-side read access to `git@github.com:Alireza77n/Limit-Order-Book.git`; clone only `production` into the exact directory, or use the public HTTPS URL for the same repository only if SSH read authentication is unavailable. Run `git fetch --prune origin production`, check out `production`, require `git rev-parse HEAD` to equal the locally approved production SHA, and write that SHA to `DEPLOYED_COMMIT`. Do not fetch, check out, merge, or update `main`.
 
 - [ ] **Step 3: Create runtime directories and validate Compose**
 
@@ -535,7 +535,7 @@ Expected: initializer exits 0; two workers and dashboard become healthy. Immedia
 
 - [ ] **Step 7: Record deployment evidence locally and on the server**
 
-Append exact commands, image IDs, container IDs, ports, networks, mounts, health, restart/OOM state, resource use, problems, rollback, and next step to the progress journal; copy the updated journal in the next exact-archive refresh only if no runtime-owned files are overwritten.
+Append exact commands, image IDs, container IDs, ports, networks, mounts, health, restart/OOM state, resource use, problems, rollback, and next step to the progress journal. Push journal updates on the allowed branches and fetch the exact production commit on the server only when doing so cannot overwrite runtime-owned directories.
 
 ### Task 8: Install authenticated HTTPS without touching Sarkhatti
 

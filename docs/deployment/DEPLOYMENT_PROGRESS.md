@@ -1,12 +1,14 @@
 # Limit Order Book Deployment Progress
 
-Last updated: 2026-08-01 12:42 UTC
+Last updated: 2026-08-01 13:01 UTC
 
 ## Current checkpoint
 
 Phase 1 (read-only audit) is complete enough to continue design and preparation, but no deployment files have been prepared and no server state has been changed. The Limit Order Book stack is not deployed. The operator authorized a complete deployment and asked for the safest alternative to hosting Dash at a path on Sarkhatti's hostname.
 
 Git scope is restricted to `parsaoryani/algo1-refactor-testability` and a future `production` branch. `main` must not be checked out, merged into, committed to, or pushed as part of this deployment. At this checkpoint, `production` does not exist in the local or fetched remote branch list.
+
+The operator explicitly selected `git@github.com:Alireza77n/Limit-Order-Book.git` as the deployment repository. Verified commits must be pushed on the current `parsaoryani` branch, promoted by fast-forward to `production`, and fetched from that repository on the server. Archive transfer is no longer the deployment method.
 
 ## Completed work
 
@@ -22,6 +24,7 @@ Git scope is restricted to `parsaoryani/algo1-refactor-testability` and a future
 - Confirmed `dashboard.<existing-arvan-hostname>` and `lob.<existing-arvan-hostname>` do not currently have A records.
 - Evaluated path-based proxying and rejected it as the default design because it would modify Sarkhatti's existing server block and require Dash pathname-prefix changes.
 - Selected `dashboard.185-206-95-141.sslip.io` as the recommended dedicated hostname. The sslip.io service documents that hostnames containing a dashed IPv4 address resolve to that address and can receive individual Let's Encrypt certificates via HTTP-01. This introduces a third-party DNS dependency and should later be replaced by an operator-controlled domain.
+- Received explicit authority to complete all remaining tasks autonomously and to use the configured GitHub repository for branch push and server fetch.
 
 ## Commands executed
 
@@ -160,4 +163,4 @@ The final rollback procedure may additionally remove only the dedicated Limit Or
 
 ## Exact next step
 
-Obtain explicit approval for the recommended dedicated hostname and isolated deployment design. Then write and review the deployment specification. After approval, prepare isolated deployment files on the `parsaoryani/algo1-refactor-testability` branch and promote reviewed deployable commits to a separate `production` branch without touching `main`.
+Complete the fail-closed Demo entrypoint review, then implement runtime path and Compose isolation test-first. Push verified commits to `parsaoryani/algo1-refactor-testability`, fast-forward `production` to the same SHA, push it, and fetch the exact production SHA on the server without touching `main`.
