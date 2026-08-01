@@ -86,7 +86,7 @@ services:
     stop_grace_period: 30s
     pids_limit: 128
     cpus: "0.50"
-    mem_limit: 160m
+    mem_limit: 128m
     healthcheck:
       test:
         - CMD
@@ -114,7 +114,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 160M
+          memory: 128M
           pids: 128
 
   usdt-demo:
@@ -140,7 +140,7 @@ services:
     stop_grace_period: 30s
     pids_limit: 128
     cpus: "0.50"
-    mem_limit: 160m
+    mem_limit: 128m
     healthcheck:
       test:
         - CMD
@@ -168,7 +168,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 160M
+          memory: 128M
           pids: 128
 
   dashboard:
@@ -190,7 +190,7 @@ services:
     stop_grace_period: 20s
     pids_limit: 128
     cpus: "0.50"
-    mem_limit: 128m
+    mem_limit: 192m
     healthcheck:
       test:
         - CMD
@@ -210,7 +210,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 128M
+          memory: 192M
           pids: 128
 
 networks:

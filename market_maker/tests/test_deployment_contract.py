@@ -1,8 +1,12 @@
+import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
+
+import pytest
 
 from demo_entrypoint import SENSITIVE_ENV
 
@@ -57,6 +61,38 @@ def _list(block: str, marker: str) -> list[str]:
         if line.startswith(" " * (marker_indent + 2) + "- "):
             values.append(line.strip()[2:].strip('"'))
     return values
+
+
+def _rendered_compose() -> dict:
+    docker = shutil.which("docker")
+    if docker is None:
+        pytest.skip("Docker Compose CLI is unavailable")
+    compose_version = subprocess.run(
+        [docker, "compose", "version"], text=True, capture_output=True, check=False
+    )
+    if compose_version.returncode != 0:
+        pytest.skip("Docker Compose CLI is unavailable")
+    completed = subprocess.run(
+        [
+            docker,
+            "compose",
+            "-p",
+            "limit-order-book",
+            "-f",
+            "deploy/docker-compose.production.yml",
+            "--env-file",
+            "deploy/demo.env",
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return json.loads(completed.stdout)
 
 
 def test_all_service_commands_use_the_guard_and_inner_python():
@@ -142,9 +178,9 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
 
     expected = {
         "session-init": ("no", None, 64, 64),
-        "btc-demo": ("unless-stopped", "30s", 128, 160),
-        "usdt-demo": ("unless-stopped", "30s", 128, 160),
-        "dashboard": ("unless-stopped", "20s", 128, 128),
+        "btc-demo": ("unless-stopped", "30s", 128, 128),
+        "usdt-demo": ("unless-stopped", "30s", 128, 128),
+        "dashboard": ("unless-stopped", "20s", 128, 192),
     }
     for name, (restart, grace, pids, memory) in expected.items():
         block = blocks[name]
@@ -205,6 +241,126 @@ def test_demo_environment_contains_no_sensitive_names_or_values():
     deployment_text = ENV_PATH.read_text() + COMPOSE_PATH.read_text()
     for name in SENSITIVE_ENV:
         assert name not in deployment_text
+
+
+def test_demo_environment_is_the_exact_credential_empty_runtime_map():
+    lines = [line for line in ENV_PATH.read_text().splitlines() if line]
+    values = dict(line.split("=", 1) for line in lines)
+
+    assert len(lines) == 4
+    assert values == {
+        "LOB_RESULTS_DIR": "/app/runtime/results",
+        "LOB_STATE_DIR": "/app/runtime/state",
+        "DEMO_SESSION_FILE": "/app/runtime/state/stack_session.json",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+
+
+def test_rendered_compose_model_enforces_the_complete_deployment_contract():
+    model = _rendered_compose()
+    services = model["services"]
+
+    assert model["name"] == "limit-order-book"
+    assert set(services) == set(SERVICES)
+    dashboard_ports = services["dashboard"]["ports"]
+    assert len(dashboard_ports) == 1
+    assert dashboard_ports[0]["mode"] == "ingress"
+    assert dashboard_ports[0]["host_ip"] == "127.0.0.1"
+    assert str(dashboard_ports[0]["published"]) == "8652"
+    assert dashboard_ports[0]["target"] == 8050
+    assert dashboard_ports[0]["protocol"] == "tcp"
+    for name in ("session-init", "btc-demo", "usdt-demo"):
+        assert "ports" not in services[name]
+
+    assert set(model["networks"]) == {"limit-order-book-internal"}
+    network = model["networks"]["limit-order-book-internal"]
+    assert network["name"] == "limit-order-book-internal"
+    assert network["driver"] == "bridge"
+    assert network.get("internal", False) is False
+    for service in services.values():
+        assert set(service["networks"]) == {"limit-order-book-internal"}
+
+    expected_volumes = {
+        "session-init": [
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "btc-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "usdt-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "dashboard": [
+            (ROOT / "runtime/results", "/app/runtime/results", True),
+        ],
+    }
+    for name, expected in expected_volumes.items():
+        actual = [
+            (Path(volume["source"]), volume["target"], volume.get("read_only", False))
+            for volume in services[name]["volumes"]
+        ]
+        assert actual == expected
+
+    limits = {
+        "session-init": (0.25, 64, 64, "no", None, "10s", "5s", "2s"),
+        "btc-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "usdt-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "dashboard": (0.5, 192, 128, "unless-stopped", "20s", "30s", "10s", "20s"),
+    }
+    for name, values in limits.items():
+        cpus, memory_mib, pids, restart, grace, interval, timeout, start_period = values
+        service = services[name]
+        memory_bytes = memory_mib * 1024 * 1024
+        assert service["read_only"] is True
+        assert service["init"] is True
+        assert service["tmpfs"] == ["/tmp:rw,noexec,nosuid,size=64m"]
+        assert service["security_opt"] == ["no-new-privileges:true"]
+        assert service["logging"] == {
+            "driver": "json-file",
+            "options": {"max-size": "10m", "max-file": "3"},
+        }
+        assert service["cpus"] == cpus
+        assert int(service["mem_limit"]) == memory_bytes
+        assert service["pids_limit"] == pids
+        deploy_limits = service["deploy"]["resources"]["limits"]
+        assert deploy_limits["cpus"] == cpus
+        assert int(deploy_limits["memory"]) == memory_bytes
+        assert deploy_limits["pids"] == pids
+        assert service["restart"] == restart
+        if grace is None:
+            assert "stop_grace_period" not in service
+        else:
+            assert service["stop_grace_period"] == grace
+        health = service["healthcheck"]
+        assert health["test"][:4] == ["CMD", "python", "demo_entrypoint.py", "python"]
+        assert health["retries"] == 3
+        assert health["interval"] == interval
+        assert health["timeout"] == timeout
+        assert health["start_period"] == start_period
+
+    assert services["session-init"]["healthcheck"]["test"] == [
+        "CMD", "python", "demo_entrypoint.py", "python", "session.py", "load",
+        "--path", "/app/runtime/state/stack_session.json",
+    ]
+    assert services["dashboard"]["healthcheck"]["test"] == [
+        "CMD", "python", "demo_entrypoint.py", "python", "-c",
+        "from urllib.request import urlopen; response = "
+        "urlopen('http://127.0.0.1:8050/', timeout=3); assert response.status == 200",
+    ]
+    for name, lock_name in (
+        ("btc-demo", ".worker_btcirt.lock"),
+        ("usdt-demo", ".worker_usdtirt.lock"),
+    ):
+        health_test = services[name]["healthcheck"]["test"]
+        assert health_test[:5] == ["CMD", "python", "demo_entrypoint.py", "python", "-c"]
+        assert lock_name in health_test[5]
+        assert "fcntl.LOCK_EX | fcntl.LOCK_NB" in health_test[5]
+        assert 'load_stack_session("/app/runtime/state/stack_session.json")' in health_test[5]
+        assert 'SystemExit("worker lease is not held")' in health_test[5]
+
+    assert sum(limits[name][1] for name in SERVICES[1:]) == 448
 
 
 def test_sarkhatti_is_never_referenced_by_deployment_artifacts():
