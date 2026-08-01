@@ -42,9 +42,9 @@
                 <input type="hidden" name="{{ field_name }}" value="false">
               </div>
             {% elif field_type.__name__ == 'int' %}
-              <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value or '' }}" step="1" {% if min_val is not none %}min="{{ min_val }}"{% endif %} {% if max_val is not none %}max="{{ max_val }}"{% endif %}>
+              <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value if current_value is not none else '' }}" step="1" {% if min_val is not none %}min="{{ min_val }}"{% endif %} {% if max_val is not none %}max="{{ max_val }}"{% endif %}>
             {% else %}
-              <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value or '' }}" step="any" {% if min_val is not none %}min="{{ min_val }}"{% endif %} {% if max_val is not none %}max="{{ max_val }}"{% endif %}>
+              <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value if current_value is not none else '' }}" step="any" {% if min_val is not none %}min="{{ min_val }}"{% endif %} {% if max_val is not none %}max="{{ max_val }}"{% endif %}>
             {% endif %}
             <div class="form-help">{{ field_help.get(field_name, '') }}</div>
           </div>

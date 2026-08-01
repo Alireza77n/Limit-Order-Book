@@ -191,6 +191,18 @@ def test_config_page_shows_effective_profile_defaults_when_no_overrides_set(clie
     assert float(match.group(1)) == pytest.approx(TRADING_PROFILES["btc"]["commission_perc"])
 
 
+def test_config_page_renders_zero_defaults_instead_of_blank(client):
+    _login(client)
+
+    response = client.get("/admin/config/btc", headers=HTML)
+    body = _html(response)
+
+    for field in ("demo_inv_initial", "demo_level1_fill_delay_seconds", "inv_min"):
+        match = re.search(rf'name="{field}"[^>]*value="([^"]*)"', body)
+        assert match and match.group(1) != ""
+        assert float(match.group(1)) == pytest.approx(0.0)
+
+
 def test_config_page_layers_override_on_top_of_profile_default(client, app):
     """One field overridden -- that field shows the override, every other
     field still shows its profile default, not blank."""
