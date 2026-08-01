@@ -31,6 +31,8 @@ The operator explicitly selected `git@github.com:Alireza77n/Limit-Order-Book.git
 - Confirmed remote `main` remains `ba44366ba266b4e00d9da9467a888ef4f8492727` and that neither `parsaoryani/algo1-refactor-testability` nor `production` exists remotely yet.
 - Added the fail-closed Demo process entrypoint in commits `347652f` and `f4d7b90`. The initial task review found that absolute paths to `run.py` and lexical `..` runtime paths bypassed validation; both now have regression tests and the re-review is clean.
 - Task 1 verification evidence: 26 focused entrypoint/Demo-safety/end-to-end tests passed; the full suite passed 191 tests with one pre-existing Dash deprecation warning. The zero-real-call end-to-end assertion remained exact.
+- Added environment-controlled result and state roots in commit `998b1cd`. Demo CSV/SQLite outputs remain in the result root; paper ledgers, fee state, archives, and worker lease files use the state root. Native defaults remain compatible.
+- Task 2 verification evidence: 19 focused runtime/config/session tests and 194 full-suite tests passed with the same pre-existing Dash warning; task review was clean.
 
 ## Commands executed
 
@@ -174,4 +176,4 @@ The final rollback procedure may additionally remove only the dedicated Limit Or
 
 ## Exact next step
 
-Implement separate result/state runtime roots test-first, then implement and validate the isolated production Compose model. Push verified commits to `parsaoryani/algo1-refactor-testability`, fast-forward `production` to the same SHA, push it, and fetch the exact production SHA on the server without touching `main`.
+Implement and validate the isolated production Compose model test-first, including loopback-only publishing, resource/log limits, health checks, dedicated mounts/network, and credential-empty environment. Then prepare the independent Nginx/rollback assets.
