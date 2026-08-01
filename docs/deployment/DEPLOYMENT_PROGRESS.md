@@ -660,3 +660,35 @@ Ran after all 10 preceding tasks were committed:
 **The commit to deploy: `90203698eac654f802de5cbd65f502ac6d6bfef4`** (this
 commit, on `parsaoryani/admin-demo-control`) — this is the exact tested SHA
 the deploying session should check out.
+
+### Post-verification housekeeping (2026-08-01, same session)
+
+Independently re-verified the above (fresh `pytest -q` run: 298 passed;
+`compileall`; `bash -n deploy/rollback.sh`; `docker compose ... config`) and
+spot-checked the security-critical claims directly rather than trusting the
+implementing agent's report alone: no `subprocess`/`shell=True`/`eval`/`exec`
+in `market_maker/admin_app.py`; no `docker.sock` reference anywhere new;
+`admin.env.example` contains only placeholder/generation-command text, no
+real secret; the `admin` Compose service publishes only
+`127.0.0.1:8653` and mounts `runtime/state`/`runtime/results` read-only
+(the host-level `control_agent.py` process is the only writer);
+`recover_demo` and `reset_demo` are distinct handlers in
+`deploy/control_agent.py`, confirming recovery never silently falls back to
+a destructive reset.
+
+Also fixed one pre-existing `.gitignore` gap noticed during this check: it
+only matched the literal `.docker-validation-results/` directory name, not
+the timestamped `.docker-validation-results-pre-cancel-fix-*` directory that
+must be preserved untouched per this project's global deployment
+constraints — `.dockerignore` already used a wildcard for the same path;
+`.gitignore` now matches it too (commit `044a902`), so `git status` is clean
+without touching the preserved directory's contents. **Updated commit to
+deploy: `044a9021...` (current tip of `parsaoryani/admin-demo-control` at
+the time of this entry)** — purely a housekeeping commit on top of
+`9020369`, no code/behavior change, so either SHA is safe to deploy; `044a902`
+is preferred since it's the branch tip and leaves a clean `git status` on
+the server checkout too.
+
+Exact next step is unchanged: a separate session/tool ("Codex") performs the
+actual server deployment by following `docs/deployment/ADMIN_PAGE.md` end to
+end against the production host. This session still deploys nothing.
