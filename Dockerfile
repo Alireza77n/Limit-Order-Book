@@ -4,11 +4,6 @@
 # at container start via docker-compose's env_file.
 FROM python:3.11-slim
 
-ARG LOB_REVISION=uncommitted
-ARG LOB_BUILD_DATE=unknown
-LABEL org.opencontainers.image.revision="${LOB_REVISION}" \
-      org.opencontainers.image.created="${LOB_BUILD_DATE}"
-
 # Unbuffered stdout/stderr -- without this, Python fully buffers output
 # when it isn't attached to a TTY (always true in a container), so
 # `docker compose logs` shows nothing for a long time even though the
@@ -21,6 +16,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY market_maker/ ./market_maker/
+
+ARG LOB_REVISION=uncommitted
+ARG LOB_BUILD_DATE=unknown
+LABEL org.opencontainers.image.revision="${LOB_REVISION}" \
+      org.opencontainers.image.created="${LOB_BUILD_DATE}"
 
 WORKDIR /app/market_maker
 

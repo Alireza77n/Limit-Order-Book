@@ -120,6 +120,11 @@ def test_image_build_provenance_is_resolved_and_stamped_as_oci_labels():
     assert "ARG LOB_BUILD_DATE=unknown" in dockerfile
     assert 'org.opencontainers.image.revision="${LOB_REVISION}"' in dockerfile
     assert 'org.opencontainers.image.created="${LOB_BUILD_DATE}"' in dockerfile
+    provenance_start = dockerfile.index("ARG LOB_REVISION=uncommitted")
+    assert provenance_start > dockerfile.index(
+        "RUN pip install --no-cache-dir -r requirements.txt"
+    )
+    assert provenance_start > dockerfile.index("COPY market_maker/ ./market_maker/")
 
 
 def test_all_service_commands_use_the_guard_and_inner_python():
