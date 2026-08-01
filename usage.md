@@ -290,6 +290,15 @@ yet), the dashboard says so plainly instead of erroring.
 Replaces the old `live_plot.py` (a single live PnL line for one
 hardcoded CSV) -- superseded by this dashboard, no functional loss.
 
+**Admin control page:** a separate, authenticated management surface for
+the Demo stack (worker start/stop/restart, per-pair config, sessions,
+order cancellation, backup/restore, reset, recovery) lives at
+`market_maker/admin_app.py` (`python3 admin_app.py`, served at `/admin/`
+in production, behind its own Basic Auth + login). It is Demo-only --
+no Real Mode option exists anywhere in it -- and never mutates state
+directly; see `docs/deployment/ADMIN_PAGE.md` for routes, security
+model, and deployment steps.
+
 ---
 
 ## 4. Research notebooks (read-only)

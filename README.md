@@ -749,7 +749,7 @@ Full details — environment setup, every way to run the bot (which modes touch 
 
 Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with a deterministic simulated paper-order lifecycle instead (open-first, partial fills, queue/stale/shutdown cancellation) — no real orders, no MySQL required (see usage.md §1b). The test suite (`python3 -m pytest -q` from the repo root) needs neither a real account, MySQL, nor network/Telegram access — all 171 tests are deterministic (mocks and replay fixtures).
 
-A comprehensive, live-updating history dashboard (`python dashboard.py`) covers wealth, inventory, cash, depth levels, spreads, and no-quote episode state for every real/demo × BTC/USDT combination — see usage.md §3.
+A comprehensive, live-updating history dashboard (`python dashboard.py`) covers wealth, inventory, cash, depth levels, spreads, and no-quote episode state for every real/demo × BTC/USDT combination — see usage.md §3. A separate, authenticated admin control page (`python admin_app.py`, Demo-only, no Real Mode surface) adds worker/session/config/backup control on top of that read-only view — see usage.md §3 and `docs/deployment/ADMIN_PAGE.md`.
 
 `docker compose up -d --build --wait` (repo root) runs a shared session initializer, both pairs in continuous demo mode, and the dashboard, sharing one results volume — see usage.md §6.
 

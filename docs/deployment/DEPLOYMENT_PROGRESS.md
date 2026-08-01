@@ -529,3 +529,121 @@ sudo certbot delete --cert-name dashboard.185-206-95-141.nip.io
 ```
 
 Current status: deployment is complete and passed a short-run validation window. This is not evidence of long-term readiness; ongoing operational monitoring remains required. Exact next step for a future session: compare the session ID, restart counts, memory, logs, and Sarkhatti baseline again after an extended observation period without recreating either stack.
+
+## 2026-08-01 — Admin demo control page (implementation, not deployed)
+
+Branch: `parsaoryani/admin-demo-control` (off `parsaoryani/algo1-refactor-testability`).
+Spec: `docs/superpowers/specs/2026-08-01-admin-demo-control-design.md`.
+Plan: `docs/superpowers/plans/2026-08-01-admin-demo-control.md`.
+Full deployment instructions for the next session: `docs/deployment/ADMIN_PAGE.md`.
+
+Completed all 11 plan tasks, TDD, one commit per task:
+
+1. `market_maker/demo_config.py` — Demo-only per-pair config overlay (closed
+   field whitelist, atomic write, single `.previous` rollback slot);
+   `run.py:make_cfg` merges it only when `mode == "demo"`.
+2. `market_maker/control_queue.py` — file-based command/result queue shared
+   by the admin app and control agent (closed action/pair enums, flock-based
+   `ControlLock` raising `OperationInProgress` on contention, JSONL audit log).
+3. `deploy/control_agent.py` — host-level poller, one handler per allow-listed
+   action; worker actions resolve through a fixed argv dict; Docker-invoking
+   handlers take an injectable `run_argv` (tests never invoke Docker).
+4. `market_maker/admin_app.py` — Flask app factory, login/CSRF/session-timeout.
+5. Admin routes: status, config edit/apply/revert, worker start/stop/restart
+   (btc/usdt/both), new session, cancel orders.
+6. Admin routes: backup list/create, restore (typed `confirm=RESTORE`), reset
+   (typed `confirm=RESET`), recovery (GET diagnostic / POST safe-fix-only),
+   export (zip built only from `runtime/backups/`).
+7. Read-only views (orders/balances/logs/audit); orders reuses
+   `dashboard.py`'s `load_track`/`activity_records` rather than reimplementing.
+8. `market_maker/tests/test_admin_demo_safety.py` — zero-real-call proof for
+   the admin/agent code paths (mirrors `test_demo_safety.py`).
+9. Deployment artifacts: new `admin` Compose service (loopback-only
+   127.0.0.1:8653, no Docker socket, ro state/results/backups + rw control
+   mount only), nginx `location /admin/` with a separate Basic Auth realm,
+   `deploy/admin.env.example` (+ `.gitignore` entry for the real file),
+   `deploy/systemd/lob-control-agent.service`, `rollback.sh` extended to
+   remove the admin htpasswd and stop the systemd unit. Also extended
+   `demo_entrypoint.py`'s `ALLOWED_PATHS` to cover the two new runtime dirs
+   (`LOB_CONTROL_DIR`, `LOB_BACKUPS_DIR`) so its fail-closed guard covers the
+   admin container's launch command exactly like every other service.
+10. This documentation checkpoint plus `docs/deployment/ADMIN_PAGE.md`.
+11. Final verification (see below).
+
+Test results: full suite `pytest -q` passed throughout, ending at
+**298 passed, 1 warning** after task 9's changes (task 10/11 add no new
+tests, only docs and a final re-run). `python -m compileall -q market_maker`
+clean. `docker compose -p limit-order-book -f deploy/docker-compose.production.yml
+--env-file deploy/demo.env config` renders successfully with the new `admin`
+service (Docker Compose CLI v5.1.4 was available in this session, so this
+was actually run, not just written). `bash -n` clean on `deploy/rollback.sh`
+(the only shell script touched or added).
+
+Files changed (22, all under version control; `docs/` entries were force-added
+since `docs/` is repo-wide gitignored):
+
+```
+.gitignore
+deploy/admin.env.example
+deploy/control_agent.py
+deploy/demo.env
+deploy/docker-compose.production.yml
+deploy/nginx/lob-dashboard-https.conf
+deploy/rollback.sh
+deploy/systemd/lob-control-agent.service
+market_maker/admin_app.py
+market_maker/control_queue.py
+market_maker/demo_config.py
+market_maker/demo_entrypoint.py
+market_maker/run.py
+market_maker/tests/test_admin_actions.py
+market_maker/tests/test_admin_auth.py
+market_maker/tests/test_admin_demo_safety.py
+market_maker/tests/test_admin_readonly_views.py
+market_maker/tests/test_control_agent.py
+market_maker/tests/test_control_queue.py
+market_maker/tests/test_demo_config.py
+market_maker/tests/test_demo_entrypoint.py
+market_maker/tests/test_deployment_contract.py
+docs/deployment/ADMIN_PAGE.md
+docs/deployment/DEPLOYMENT_PROGRESS.md  (this file)
+README.md / usage.md                    (short admin-page pointers)
+```
+
+Unfinished / deferred (all deliberate, cross-referenced from the spec's
+"Explicitly deferred" section — not overlooked):
+
+- Multi-admin accounts / RBAC (single shared credential by design).
+- Tamper-evident (hash-chained) audit log.
+- Config change history beyond one `.previous` slot.
+- Async job-progress UI (management actions block synchronously, bounded
+  by `admin_app.COMMAND_TIMEOUT`, currently 30s).
+- Automated backup retention/rotation (backups accumulate under
+  `runtime/backups/`; an operational task, not code).
+- Production WSGI server for `lob-admin`: it currently runs via Flask's own
+  `app.run()`, the same pattern `dashboard.py` already uses in this repo.
+  Fine for a single-shared-admin internal tool; swap for gunicorn if
+  concurrent admin load ever becomes real.
+
+Known risks for the deploying session to be aware of:
+
+- **Not yet deployed.** No container was built or run, no SSH session was
+  opened, nothing was installed on the production host by this session.
+  Everything above is code, tests, and documentation only.
+- `deploy/admin.env` does not exist in the repo (gitignored, by design) --
+  the deploying session must create it (see `ADMIN_PAGE.md` step 2) before
+  `docker compose up` will succeed for the `admin` service in a real
+  environment; `config` validation tolerates its absence via
+  `required: false` on that one `env_file` entry, but the running container
+  needs real credentials.
+- `runtime/control/` and `runtime/backups/` do not exist yet on the host and
+  must be created before first `up` (step 3 in `ADMIN_PAGE.md`) -- Compose
+  will otherwise create them as root-owned directories on first mount,
+  which is not harmful but is untidy; creating them first avoids that.
+- The host-level control agent is a new systemd unit outside Compose's
+  reach -- `docker compose down` alone will **not** stop it; the deploying
+  session must install and manage it via `systemctl` as documented.
+
+Exact next step: a separate session/tool ("Codex") performs the actual
+server deployment by following `docs/deployment/ADMIN_PAGE.md` end to end
+against the production host. This session does not deploy anything.
