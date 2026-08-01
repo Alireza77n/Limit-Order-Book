@@ -40,6 +40,7 @@ from strategy.algo1 import Algo1Strategy
 from strategy.algo2 import Algo2Strategy
 from session import WorkerLease, load_stack_session
 from paper import PaperLedger
+from demo_config import apply_overrides, load_overrides, overlay_path
 
 STRATEGIES = {
     "algo1": Algo1Strategy,
@@ -92,6 +93,11 @@ def make_cfg(
         cfg.demo_archive_path = demo_state_path(
             f"paper_{safe_session}_{cfg.pair.lower()}_archive.jsonl"
         )
+        # Admin-editable per-pair overlay (market_maker/demo_config.py) --
+        # Demo mode only, applied last so it can tune the profile above.
+        overrides = load_overrides(overlay_path(DEMO_STATE_DIR, profile))
+        if overrides:
+            apply_overrides(cfg, overrides)
     return cfg
 
 
