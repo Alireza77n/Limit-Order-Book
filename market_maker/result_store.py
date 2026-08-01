@@ -38,6 +38,19 @@ class DemoResultStore:
         connection.execute("PRAGMA busy_timeout=5000")
         return connection
 
+    @classmethod
+    def open_existing(cls, db_path):
+        path = Path(db_path)
+        if not path.exists():
+            raise FileNotFoundError(path)
+        with sqlite3.connect(path, timeout=5.0) as connection:
+            record = connection.execute(
+                "SELECT value FROM metadata WHERE key='columns'"
+            ).fetchone()
+        if not record:
+            raise ValueError(f"Demo result store has no column metadata: {path}")
+        return cls(path, json.loads(record[0]))
+
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.executescript(

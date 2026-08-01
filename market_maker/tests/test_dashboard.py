@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from dashboard import activity_records, filter_session, load_track, session_ids, with_derived_spreads
+from result_store import DemoResultStore
 
 COLUMNS = [
     "Session_id", "Algorithm", "Crypto", "Timestamp",
@@ -158,3 +159,41 @@ def test_demo_activity_matches_explicit_csv_lifecycle_fields():
     assert records[0]["Buy Remaining Amount"] == pytest.approx(0.6)
     assert records[0]["Buy Telegram Message ID"] == 101
     assert records[0]["Sell Status"] == "not_sent_insufficient_inventory"
+
+
+def test_load_track_prefers_sibling_sqlite_store_over_stale_csv(tmp_path):
+    path = tmp_path / "track.csv"
+    stale = {**DEMO_ROW, "Round": 1, "Timestamp": "2026-08-01 12:00:00"}
+    fresh = {**DEMO_ROW, "Round": 2, "Timestamp": "2026-08-01 12:00:10"}
+    pd.DataFrame([stale]).to_csv(path, index=False)
+    store = DemoResultStore(path.with_suffix(".sqlite3"), list(DEMO_ROW))
+    store.append_round(fresh)
+
+    result = load_track(str(path))
+
+    assert list(result["Round"]) == [2]
+    assert pd.api.types.is_datetime64_any_dtype(result["Timestamp"])
+
+
+def test_load_track_falls_back_to_csv_without_sqlite(tmp_path):
+    path = tmp_path / "track.csv"
+    pd.DataFrame([{**DEMO_ROW, "Round": 7}]).to_csv(path, index=False)
+
+    assert list(load_track(str(path))["Round"]) == [7]
+
+
+def test_activity_exposes_no_quote_operational_fields():
+    frame = pd.DataFrame([{
+        **DEMO_ROW,
+        "No Quote Consecutive Count": 30,
+        "No Quote Episode Seconds": 300,
+        "No Quote Alert State": "alerted",
+        "No Quote Candidate Diagnostics": '{"required_threshold":0.002}',
+    }])
+
+    record = activity_records(frame)[0]
+
+    assert record["No Quote Consecutive Count"] == 30
+    assert record["No Quote Episode Seconds"] == 300
+    assert record["No Quote Alert State"] == "alerted"
+    assert record["No Quote Candidate Diagnostics"] == '{"required_threshold":0.002}'

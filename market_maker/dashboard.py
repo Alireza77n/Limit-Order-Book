@@ -29,6 +29,7 @@ from dash import Dash, dash_table, dcc, html
 from dash.dependencies import Input, Output
 
 from config import TRADING_PROFILES, demo_csv_path
+from result_store import DemoResultStore
 
 # Every track this project can produce, explicitly labeled real vs demo so
 # they're never confused with each other in the UI. Sourced directly from
@@ -45,6 +46,8 @@ TRACKS = {
 
 ACTIVITY_COLUMNS = [
     "Timestamp", "Session_id", "Round", "Quote Status", "No Quote Reason",
+    "No Quote Consecutive Count", "No Quote Episode Seconds",
+    "No Quote Alert State", "No Quote Candidate Diagnostics",
     "Bid Level", "Ask Level", "Bid Price", "Ask Price",
     "Buy Order ID", "Buy Status", "Buy Not Sent Reason",
     "Buy Original Amount", "Buy Matched Amount", "Buy Remaining Amount",
@@ -77,12 +80,20 @@ def load_track(path: str) -> Optional[pd.DataFrame]:
     """Read a track's CSV. Returns None if it doesn't exist yet, is
     unreadable, or has no rows -- callers show a "no data yet" state."""
     p = Path(path)
-    if not p.exists():
-        return None
-    try:
-        df = pd.read_csv(path)
-    except Exception:
-        return None
+    store_path = p.with_suffix(".sqlite3")
+    df = None
+    if store_path.exists():
+        try:
+            df = DemoResultStore.open_existing(store_path).load_view()
+        except Exception:
+            df = None
+    if df is None or df.empty:
+        if not p.exists():
+            return None
+        try:
+            df = pd.read_csv(path)
+        except Exception:
+            return None
     if df.empty:
         return None
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
