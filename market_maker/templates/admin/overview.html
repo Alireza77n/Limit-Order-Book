@@ -1,0 +1,109 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Overview{% endblock %}
+
+{% block content %}
+<div class="grid grid-4 mb-lg">
+  <div class="card">
+    <div class="card-body">
+      <div class="kv-label">Session ID</div>
+      <div class="kv-value mono">{{ session_id or "—" }}</div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body">
+      <div class="kv-label">Control Lock</div>
+      <div class="kv-value">
+        {% if control_lock_held %}
+          <span class="status-badge status-locked">Held</span>
+        {% else %}
+          <span class="status-badge">Free</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body">
+      <div class="kv-label">BTC Worker</div>
+      <div class="kv-value">
+        {% if workers.btc %}
+          <span class="status-badge status-running">Running</span>
+        {% else %}
+          <span class="status-badge status-stopped">Stopped</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-body">
+      <div class="kv-label">USDT Worker</div>
+      <div class="kv-value">
+        {% if workers.usdt %}
+          <span class="status-badge status-running">Running</span>
+        {% else %}
+          <span class="status-badge status-stopped">Stopped</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid grid-2">
+  <div class="card">
+    <div class="card-header">
+      <h2>Recent Audit Activity</h2>
+    </div>
+    <div class="card-body">
+      {% if recent_audit %}
+        <div class="table-wrapper">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Action</th>
+                <th>Pair</th>
+                <th>User</th>
+                <th>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for entry in recent_audit|reverse %}
+              <tr>
+                <td class="mono">{{ entry.logged_at[:19].replace('T', ' ') if entry.logged_at else "—" }}</td>
+                <td>{{ entry.action }}</td>
+                <td>{{ entry.pair or "—" }}</td>
+                <td>{{ entry.requested_by }}</td>
+                <td>
+                  {% if entry.ok %}
+                    <span class="status-badge status-running">OK</span>
+                  {% else %}
+                    <span class="status-badge status-warning">Failed</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="empty-state">No audit entries yet</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Quick Actions</h2>
+    </div>
+    <div class="card-body">
+      <div class="btn-group" style="flex-direction: column; gap: var(--spacing-sm);">
+        <a href="{{ url_for('admin_workers_page') }}" class="btn btn-primary">Worker Controls</a>
+        <a href="{{ url_for('admin_config', pair='btc') }}" class="btn btn-secondary">Configure BTC</a>
+        <a href="{{ url_for('admin_config', pair='usdt') }}" class="btn btn-secondary">Configure USDT</a>
+        <a href="{{ url_for('admin_backups') }}" class="btn btn-secondary">Backups</a>
+        <a href="{{ url_for('admin_recover') }}" class="btn btn-secondary">Recovery</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

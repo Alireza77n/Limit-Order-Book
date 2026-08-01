@@ -1,0 +1,57 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Audit Log{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header d-flex justify-between align-center flex-wrap gap-sm">
+    <h2>Audit Log</h2>
+    <form method="get" class="inline-form" style="display: flex; gap: var(--spacing-sm); align-items: center;">
+      <label for="limit" class="form-label" style="margin-bottom: 0;">Limit</label>
+      <input type="number" id="limit" name="limit" value="{{ limit }}" class="form-input" style="width: 80px;" min="1" max="1000">
+      <button type="submit" class="btn btn-secondary btn-sm">Apply</button>
+    </form>
+  </div>
+  <div class="card-body">
+    {% if audit %}
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Command ID</th>
+              <th>Action</th>
+              <th>Pair</th>
+              <th>User</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in audit|reverse %}
+            <tr>
+              <td class="mono">{{ entry.logged_at[:19].replace('T', ' ') if entry.logged_at else '—' }}</td>
+              <td class="mono">{{ entry.command_id[:12] }}…</td>
+              <td>{{ entry.action }}</td>
+              <td>{{ entry.pair or '—' }}</td>
+              <td>{{ entry.requested_by }}</td>
+              <td>
+                {% if entry.ok %}
+                  <span class="status-badge status-running">OK</span>
+                {% else %}
+                  <span class="status-badge status-warning">Failed</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="icon">📋</div>
+        <p>No audit entries found</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

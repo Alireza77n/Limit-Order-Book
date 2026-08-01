@@ -1,0 +1,69 @@
+{% extends "admin/base.html" %}
+{% import "admin/confirmation.html" as confirm %}
+
+{% block title %}Backups{% endblock %}
+
+{% block content %}
+<div class="card mb-lg">
+  <div class="card-header d-flex justify-between align-center">
+    <h2>Backup Snapshots</h2>
+    <form method="post" action="{{ url_for('admin_backups_create') }}" class="inline-form" data-confirm="Create a new manual backup snapshot?">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-primary">Create Backup</button>
+    </form>
+  </div>
+  <div class="card-body">
+    {% if backups %}
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Files</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for backup in backups %}
+            <tr>
+              <td class="mono">{{ backup.name }}</td>
+              <td>
+                <ul style="margin: 0; padding-left: var(--spacing-lg);">
+                  {% for file in backup.files %}
+                  <li class="mono">{{ file }}</li>
+                  {% endfor %}
+                </ul>
+              </td>
+              <td>
+                <div class="btn-group" style="flex-wrap: wrap; gap: var(--spacing-xs);">
+                  <a href="{{ url_for('admin_backups_download', name=backup.name) }}" class="btn btn-secondary btn-sm">Download</a>
+                  {{ confirm.typed_confirm_form(
+                       url_for('admin_backups_restore', name=backup.name), "RESTORE", "Restore",
+                       "RESTORE backup '" ~ backup.name ~ "'? This will overwrite current state. Type RESTORE to confirm.",
+                       csrf_token, button_size="btn-sm") }}
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="icon">💾</div>
+        <p>No backup snapshots found. Create your first backup.</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Export All</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">Create a fresh backup and download it as a ZIP archive.</p>
+    <a href="{{ url_for('admin_export') }}" class="btn btn-primary">Export Snapshot (ZIP)</a>
+  </div>
+</div>
+{% endblock %}

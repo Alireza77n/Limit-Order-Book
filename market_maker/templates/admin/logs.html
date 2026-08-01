@@ -1,0 +1,51 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Logs{% endblock %}
+
+{% block content %}
+<div class="card mb-lg">
+  <div class="card-header d-flex justify-between align-center flex-wrap gap-sm">
+    <h2>Application Logs</h2>
+    <div class="btn-group">
+      <a href="{{ url_for('admin_logs', pair='btc') }}" class="btn {% if selected_pair == 'btc' %}btn-primary{% else %}btn-secondary{% endif %}">BTC</a>
+      <a href="{{ url_for('admin_logs', pair='usdt') }}" class="btn {% if selected_pair == 'usdt' %}btn-primary{% else %}btn-secondary{% endif %}">USDT</a>
+    </div>
+  </div>
+  <div class="card-body">
+    {% if entries %}
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Level</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for entry in entries %}
+            <tr>
+              <td class="mono">{{ entry.timestamp[:19].replace('T', ' ') if entry.timestamp else '—' }}</td>
+              <td>
+                <span class="status-badge
+                  {% if entry.level == 'ERROR' %}status-warning
+                  {% elif entry.level == 'WARNING' %}status-warning
+                  {% else %}{% endif %}">
+                  {{ entry.level }}
+                </span>
+              </td>
+              <td>{{ entry.message | e }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="icon">📝</div>
+        <p>No log entries found for {{ selected_pair.upper() }}</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

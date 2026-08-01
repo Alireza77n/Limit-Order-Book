@@ -1,0 +1,134 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Worker Controls{% endblock %}
+
+{% block content %}
+<div class="card mb-lg">
+  <div class="card-header">
+    <h2>Worker Status</h2>
+  </div>
+  <div class="card-body">
+    <div class="grid grid-2">
+      {% for pair in ['btc', 'usdt'] %}
+      <div class="card" style="margin-bottom: 0;">
+        <div class="card-header">
+          <h3 style="margin: 0; text-transform: uppercase;">{{ pair }}</h3>
+        </div>
+        <div class="card-body">
+          <div class="kv-list">
+            <div class="kv-item">
+              <span class="kv-label">Status</span>
+              <span class="kv-value">
+                {% if workers[pair] %}
+                  <span class="status-badge status-running">Running</span>
+                {% else %}
+                  <span class="status-badge status-stopped">Stopped</span>
+                {% endif %}
+              </span>
+            </div>
+            <div class="kv-item">
+              <span class="kv-label">Actions</span>
+              <span class="kv-value">
+                <div class="btn-group" style="flex-wrap: wrap;">
+                  <form method="post" action="{{ url_for('admin_workers', action='start') }}" class="inline-form" data-confirm="Start {{ pair.upper() }} worker?">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="pair" value="{{ pair }}">
+                    <button type="submit" class="btn btn-primary btn-sm" {% if workers[pair] %}disabled{% endif %}>Start</button>
+                  </form>
+                  <form method="post" action="{{ url_for('admin_workers', action='stop') }}" class="inline-form" data-confirm="Stop {{ pair.upper() }} worker?">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="pair" value="{{ pair }}">
+                    <button type="submit" class="btn btn-danger btn-sm" {% if not workers[pair] %}disabled{% endif %}>Stop</button>
+                  </form>
+                  <form method="post" action="{{ url_for('admin_workers', action='restart') }}" class="inline-form" data-confirm="Restart {{ pair.upper() }} worker?">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="pair" value="{{ pair }}">
+                    <button type="submit" class="btn btn-warning btn-sm" {% if not workers[pair] %}disabled{% endif %}>Restart</button>
+                  </form>
+                </div>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card mb-lg">
+  <div class="card-header">
+    <h2>Both Workers</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">Control both BTC and USDT workers simultaneously.</p>
+    <div class="btn-group">
+      <form method="post" action="{{ url_for('admin_workers', action='start') }}" class="inline-form" data-confirm="Start both workers?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="pair" value="both">
+        <button type="submit" class="btn btn-primary">Start Both</button>
+      </form>
+      <form method="post" action="{{ url_for('admin_workers', action='stop') }}" class="inline-form" data-confirm="Stop both workers?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="pair" value="both">
+        <button type="submit" class="btn btn-danger">Stop Both</button>
+      </form>
+      <form method="post" action="{{ url_for('admin_workers', action='restart') }}" class="inline-form" data-confirm="Restart both workers?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="pair" value="both">
+        <button type="submit" class="btn btn-warning">Restart Both</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="card mb-lg">
+  <div class="card-header">
+    <h2>Cancel Paper Orders</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">Cancel active paper orders for selected pair(s). Only works if worker is running.</p>
+    <div class="btn-group">
+      <form method="post" action="{{ url_for('admin_cancel_orders') }}" class="inline-form" data-confirm="Cancel BTC paper orders?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="pair" value="btc">
+        <button type="submit" class="btn btn-secondary" {% if not workers.btc %}disabled{% endif %}>Cancel BTC Orders</button>
+      </form>
+      <form method="post" action="{{ url_for('admin_cancel_orders') }}" class="inline-form" data-confirm="Cancel USDT paper orders?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="pair" value="usdt">
+        <button type="submit" class="btn btn-secondary" {% if not workers.usdt %}disabled{% endif %}>Cancel USDT Orders</button>
+      </form>
+      <form method="post" action="{{ url_for('admin_cancel_orders') }}" class="inline-form" data-confirm="Cancel all paper orders for both pairs?">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="pair" value="both">
+        <button type="submit" class="btn btn-secondary" {% if not (workers.btc or workers.usdt) %}disabled{% endif %}>Cancel Both</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>New Demo Session</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">Create a new shared demo session. This stops running workers, rotates the session ID, and restarts workers that were running.</p>
+    <form method="post" action="{{ url_for('admin_new_session') }}" class="inline-form" data-confirm="Create new demo session? This will stop and restart running workers.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-primary">New Session</button>
+    </form>
+  </div>
+</div>
+
+{% if result %}
+<div class="card mt-lg">
+  <div class="card-header">
+    <h2>Action Result</h2>
+  </div>
+  <div class="card-body">
+    <pre class="mono" style="white-space: pre-wrap; background: var(--color-bg); padding: var(--spacing-md); border-radius: var(--radius-md);">{{ result }}</pre>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

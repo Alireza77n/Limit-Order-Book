@@ -26,7 +26,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, jsonify, redirect, request, send_file, session as flask_session, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session as flask_session, url_for
 from werkzeug.security import check_password_hash
 
 from control_queue import ControlLock, OperationInProgress, await_result, submit_command
@@ -45,6 +45,30 @@ from dashboard import activity_records, load_track
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
 PAIRS = ("btc", "usdt")
 PAIR_LOCK_SUFFIX = {"btc": "btcirt", "usdt": "usdtirt"}
+
+# One-line help text shown next to each editable Demo config field --
+# keys must exactly match demo_config.FIELD_SPECS.
+FIELD_HELP = {
+    "order_size": "Base-asset amount per order round.",
+    "inv_max": "Maximum inventory (base asset) the worker will hold.",
+    "inv_min": "Minimum inventory (base asset) the worker will hold.",
+    "demo_inv_initial": "Starting inventory when a new demo session begins.",
+    "cash_initial": "Starting cash (quote currency) when a new demo session begins.",
+    "commission_perc": "Simulated trading fee, as a fraction of notional (0-1).",
+    "cancel_after_minutes": "Cancel resting paper orders older than this many minutes.",
+    "depth_max": "Maximum order-book depth level the strategy will quote into.",
+    "time_step": "Seconds between quoting rounds.",
+    "max_rounds": "Stop the worker after this many rounds.",
+    "demo_level1_fast_fill_enabled": "Simulate near-instant fills at the top of book.",
+    "demo_level1_fill_delay_seconds": "Delay (seconds) before a level-1 fast fill is applied.",
+    "demo_level1_fill_fraction": "Fraction of the order filled per level-1 fast-fill tick.",
+    "demo_queue_enabled": "Simulate queue position instead of instant fills.",
+    "no_quote_alert_rounds": "Consecutive no-quote rounds before an alert fires.",
+    "no_quote_alert_seconds": "Elapsed no-quote seconds before an alert fires.",
+    "no_quote_alert_cooldown_seconds": "Minimum seconds between repeated no-quote alerts.",
+    "no_quote_recovery_alert": "Send an alert when quoting recovers after a no-quote episode.",
+    "algo1_diagnostics_enabled": "Log extra Algorithm 1 decision diagnostics.",
+}
 
 
 def create_app(config: Optional[dict] = None) -> Flask:
@@ -67,6 +91,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
 
     _register_auth(app)
     _register_routes(app)
+    _register_error_handlers(app)
     return app
 
 
@@ -117,6 +142,8 @@ def csrf_protected(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         if not _valid_csrf(request.form.get("csrf_token")):
+            if _wants_html():
+                return _error_page(400, "CSRF token missing or invalid. Go back and try again.")
             return ("CSRF token missing or invalid", 400)
         return view(*args, **kwargs)
     return wrapped
@@ -142,7 +169,7 @@ def _register_auth(app: Flask) -> None:
                 return redirect(url_for("admin_index"))
             error = "invalid credentials"
         token = get_csrf_token()
-        return _render_login(error, token)
+        return render_template("admin/login.html", error=error, csrf_token=token)
 
     @app.route("/admin/logout", methods=["POST"])
     @login_required
@@ -152,18 +179,24 @@ def _register_auth(app: Flask) -> None:
         return redirect(url_for("admin_login"))
 
 
-def _render_login(error, token) -> str:
-    error_html = f'<p class="error">{error}</p>' if error else ""
-    return f"""
-<!doctype html><title>Demo Admin Login</title>
-{error_html}
-<form method="post">
-  <input type="hidden" name="csrf_token" value="{token}">
-  <label>Username <input name="username"></label>
-  <label>Password <input name="password" type="password"></label>
-  <button type="submit">Log in</button>
-</form>
-"""
+def _wants_html() -> bool:
+    """Check if the request prefers HTML over JSON (browser requests).
+    Flask's test client sends no Accept header at all by default, which
+    makes best_match return None here -- so every pre-existing JSON-only
+    caller (this project's own tests, and any external automation) is
+    completely unaffected. Real browsers list text/html explicitly and get
+    HTML; `Accept: application/json` (or `?format=json`) always forces JSON.
+    """
+    if request.args.get("format") == "json":
+        return False
+    if request.args.get("format") == "html":
+        return True
+    best = request.accept_mimetypes.best_match(["text/html", "application/json"])
+    return best == "text/html"
+
+
+def _error_page(code: int, message: str):
+    return render_template("admin/error.html", code=code, message=message, csrf_token=get_csrf_token()), code
 
 
 # --- control-queue helper used by every mutating route ----------------
@@ -277,6 +310,67 @@ def _ledger_account(app: Flask, pair: str):
         return None
 
 
+def _has_value(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, float) and value != value:  # NaN
+        return False
+    return True
+
+
+def _serialize_orders(records):
+    """activity_records() rows carry raw pd.Timestamp/NaN values -- fine for
+    jsonify (it special-cases datetime subclasses) but orders.html expects
+    plain strings to slice/format. Converting once here keeps both the JSON
+    and HTML branches consistent (and jsonify-safe either way)."""
+    serialized = []
+    for record in records:
+        row = dict(record)
+        timestamp = row.get("Timestamp")
+        if hasattr(timestamp, "isoformat"):
+            row["Timestamp"] = timestamp.isoformat()
+        elif isinstance(timestamp, float) and timestamp != timestamp:  # NaN
+            row["Timestamp"] = None
+        serialized.append(row)
+    return serialized
+
+
+def _filter_orders(records, side=None, status=None):
+    """Narrow activity_records() rows by side (buy/sell) and/or status
+    (open/filled/cancelled/not_sent) -- both admin_orders' JSON and HTML
+    responses share this so filtering behaves identically either way."""
+    def keep(record):
+        buy_status, sell_status = record.get("Buy Status"), record.get("Sell Status")
+        if side == "buy" and not _has_value(buy_status):
+            return False
+        if side == "sell" and not _has_value(sell_status):
+            return False
+        if status:
+            present = {s for s in (buy_status, sell_status) if _has_value(s)}
+            if status not in present:
+                return False
+        return True
+    return [record for record in records if keep(record)]
+
+
+def _fee_scopes_summary(app: Flask):
+    """Read paper_fee_scopes.json (shared by both pairs' PaperLedger
+    instances, see paper.py's FeeScopes) directly -- read-only, no
+    PaperLedger instantiated here, matching _ledger_account's pattern."""
+    path = Path(app.config["STATE_DIR"]) / "paper_fee_scopes.json"
+    if not path.exists():
+        return []
+    try:
+        document = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    scopes = []
+    for session_id, per_pair in (document.get("sessions") or {}).items():
+        for pair, fees_quote in (per_pair or {}).items():
+            scopes.append({"session_id": session_id, "pair": pair, "fees_quote": float(fees_quote)})
+    return scopes
+
+
 RESET_GLOBS = ("*_demo.csv", "*_demo.sqlite3", "paper_*.json", "paper_*_archive.jsonl", "paper_fee_scopes.json")
 
 
@@ -341,6 +435,38 @@ def _recover_diagnostics(app: Flask):
     }
 
 
+def _config_page_context(pair: str, path, *, error=None, success=None, overrides=None) -> dict:
+    return {
+        "pair": pair,
+        "overrides": overrides if overrides is not None else load_overrides(path),
+        "has_previous": has_previous(path),
+        "field_order": sorted(FIELD_SPECS),
+        "FIELD_SPECS": FIELD_SPECS,
+        "field_help": FIELD_HELP,
+        "csrf_token": get_csrf_token(),
+        "error": error,
+        "success": success,
+    }
+
+
+def _workers_html_response(app: Flask, result):
+    workers = {pair: _worker_running(app, pair) for pair in PAIRS}
+    return render_template("admin/workers.html", workers=workers,
+                            csrf_token=get_csrf_token(), result=result)
+
+
+def _backups_html_response(app: Flask):
+    return render_template("admin/backups.html", backups=_list_backups(app),
+                            csrf_token=get_csrf_token())
+
+
+def _recovery_html_response(app: Flask):
+    return render_template(
+        "admin/recovery.html", diagnostics=_recover_diagnostics(app),
+        reset_files=_reset_preview(app), csrf_token=get_csrf_token(),
+    )
+
+
 def _register_routes(app: Flask) -> None:
     @app.route("/admin/health")
     def admin_health():
@@ -357,15 +483,23 @@ def _register_routes(app: Flask) -> None:
             "workers": {pair: _worker_running(app, pair) for pair in PAIRS},
             "recent_audit": _recent_audit(app),
         }
+        if _wants_html():
+            return render_template("admin/overview.html", csrf_token=get_csrf_token(), **status)
         return jsonify(status)
 
     @app.route("/admin/config/<pair>", methods=["GET", "POST"])
     @login_required
     def admin_config(pair):
         if pair not in PAIRS:
+            if _wants_html():
+                return _error_page(404, "Unknown pair.")
             return ("unknown pair", 404)
         path = overlay_path(app.config["STATE_DIR"], pair)
         if request.method == "GET":
+            if _wants_html():
+                return render_template(
+                    "admin/config.html", **_config_page_context(pair, path),
+                )
             return jsonify({
                 "pair": pair,
                 "overrides": load_overrides(path),
@@ -375,19 +509,38 @@ def _register_routes(app: Flask) -> None:
             })
         return _admin_config_post(app, pair, path)
 
+    @app.route("/admin/workers")
+    @login_required
+    def admin_workers_page():
+        workers = {pair: _worker_running(app, pair) for pair in PAIRS}
+        if _wants_html():
+            return render_template("admin/workers.html", workers=workers,
+                                    csrf_token=get_csrf_token(), result=None)
+        return jsonify({"workers": workers})
+
     @app.route("/admin/workers/<action>", methods=["POST"])
     @login_required
     @csrf_protected
     def admin_workers(action):
         if action not in ("start", "stop", "restart"):
+            if _wants_html():
+                return _error_page(400, "Unknown worker action.")
             return ("unknown worker action", 400)
         pairs = _resolve_pairs(request.form.get("pair"))
         if pairs is None:
+            if _wants_html():
+                return _error_page(400, "Invalid pair (expected btc, usdt, or both).")
             return ("invalid pair (expected btc, usdt, or both)", 400)
         try:
             results = enqueue_batch(app, f"{action}_worker", pairs)
         except OperationInProgress as exc:
+            if _wants_html():
+                flash(str(exc), "warning")
+                return _workers_html_response(app, None), 409
             return (str(exc), 409)
+        if _wants_html():
+            flash(f"{action.capitalize()} requested for {', '.join(pairs)}.", "success")
+            return _workers_html_response(app, results)
         return jsonify({"results": results})
 
     @app.route("/admin/session/new", methods=["POST"])
@@ -397,7 +550,13 @@ def _register_routes(app: Flask) -> None:
         try:
             result = enqueue_and_wait(app, "new_session")
         except OperationInProgress as exc:
+            if _wants_html():
+                flash(str(exc), "warning")
+                return _workers_html_response(app, None), 409
             return (str(exc), 409)
+        if _wants_html():
+            flash("New demo session created.", "success")
+            return _workers_html_response(app, result)
         return jsonify(result)
 
     @app.route("/admin/orders/cancel", methods=["POST"])
@@ -406,16 +565,27 @@ def _register_routes(app: Flask) -> None:
     def admin_cancel_orders():
         pairs = _resolve_pairs(request.form.get("pair"))
         if pairs is None:
+            if _wants_html():
+                return _error_page(400, "Invalid pair (expected btc, usdt, or both).")
             return ("invalid pair (expected btc, usdt, or both)", 400)
         try:
             results = enqueue_batch(app, "cancel_orders", pairs)
         except OperationInProgress as exc:
+            if _wants_html():
+                flash(str(exc), "warning")
+                return _workers_html_response(app, None), 409
             return (str(exc), 409)
+        if _wants_html():
+            flash(f"Cancel requested for {', '.join(pairs)}.", "success")
+            return _workers_html_response(app, results)
         return jsonify({"results": results})
 
     @app.route("/admin/backups", methods=["GET"])
     @login_required
     def admin_backups():
+        if _wants_html():
+            return render_template("admin/backups.html", backups=_list_backups(app),
+                                    csrf_token=get_csrf_token())
         return jsonify({"backups": _list_backups(app)})
 
     @app.route("/admin/backups/create", methods=["POST"])
@@ -425,7 +595,13 @@ def _register_routes(app: Flask) -> None:
         try:
             result = enqueue_and_wait(app, "create_backup", None, payload={"prefix": "manual"})
         except OperationInProgress as exc:
+            if _wants_html():
+                flash(str(exc), "warning")
+                return _backups_html_response(app), 409
             return (str(exc), 409)
+        if _wants_html():
+            flash("Backup created.", "success")
+            return _backups_html_response(app)
         return jsonify(result)
 
     @app.route("/admin/backups/<name>/restore", methods=["POST"])
@@ -433,6 +609,9 @@ def _register_routes(app: Flask) -> None:
     @csrf_protected
     def admin_backups_restore(name):
         if request.form.get("confirm") != "RESTORE":
+            if _wants_html():
+                flash("Confirmation required: type RESTORE exactly to confirm.", "error")
+                return _backups_html_response(app), 400
             return jsonify({
                 "error": "confirmation required (send confirm=RESTORE)",
                 "backup_files": _backup_preview(app, name),
@@ -443,14 +622,43 @@ def _register_routes(app: Flask) -> None:
                 payload={"backup_name": name, "confirm": "RESTORE"},
             )
         except OperationInProgress as exc:
+            if _wants_html():
+                flash(str(exc), "warning")
+                return _backups_html_response(app), 409
             return (str(exc), 409)
+        if _wants_html():
+            flash(f"Backup '{name}' restored.", "success")
+            return _backups_html_response(app)
         return jsonify(result)
+
+    @app.route("/admin/backups/<name>/download", methods=["GET"])
+    @login_required
+    def admin_backups_download(name):
+        """Download the exact backup listed in a row -- unlike /admin/export
+        (which always creates a brand-new snapshot), this never enqueues
+        anything, it only zips files already on disk for `name`."""
+        backup_dir = Path(app.config["BACKUPS_DIR"]) / name
+        if not backup_dir.is_dir():
+            return ("backup not found", 404)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            for file_path in sorted(backup_dir.iterdir()):
+                if file_path.is_file():
+                    archive.write(file_path, arcname=file_path.name)
+        buffer.seek(0)
+        return send_file(
+            buffer, mimetype="application/zip", as_attachment=True,
+            download_name=f"{name}.zip",
+        )
 
     @app.route("/admin/reset", methods=["POST"])
     @login_required
     @csrf_protected
     def admin_reset():
         if request.form.get("confirm") != "RESET":
+            if _wants_html():
+                flash("Confirmation required: type RESET exactly to confirm.", "error")
+                return _recovery_html_response(app), 400
             return jsonify({
                 "error": "confirmation required (send confirm=RESET)",
                 "affected_files": _reset_preview(app),
@@ -458,13 +666,25 @@ def _register_routes(app: Flask) -> None:
         try:
             result = enqueue_and_wait(app, "reset_demo", None, payload={"confirm": "RESET"})
         except OperationInProgress as exc:
+            if _wants_html():
+                flash(str(exc), "warning")
+                return _recovery_html_response(app), 409
             return (str(exc), 409)
+        if _wants_html():
+            flash("Demo reset complete. A new session was created.", "success")
+            return _recovery_html_response(app)
         return jsonify(result)
 
     @app.route("/admin/recover", methods=["GET"])
     @login_required
     def admin_recover():
-        return jsonify(_recover_diagnostics(app))
+        diagnostics = _recover_diagnostics(app)
+        if _wants_html():
+            return render_template(
+                "admin/recovery.html", diagnostics=diagnostics,
+                reset_files=_reset_preview(app), csrf_token=get_csrf_token(),
+            )
+        return jsonify(dict(diagnostics, reset_files=_reset_preview(app)))
 
     @app.route("/admin/recover/apply", methods=["POST"])
     @login_required
@@ -476,7 +696,13 @@ def _register_routes(app: Flask) -> None:
         try:
             result = enqueue_and_wait(app, "recover_demo", None)
         except OperationInProgress as exc:
+            if _wants_html():
+                flash(str(exc), "warning")
+                return _recovery_html_response(app), 409
             return (str(exc), 409)
+        if _wants_html():
+            flash("Safe recovery applied.", "success")
+            return _recovery_html_response(app)
         return jsonify(result)
 
     @app.route("/admin/export", methods=["GET"])
@@ -485,9 +711,13 @@ def _register_routes(app: Flask) -> None:
         try:
             result = enqueue_and_wait(app, "create_backup", None, payload={"prefix": "export"})
         except OperationInProgress as exc:
+            if _wants_html():
+                return _error_page(409, str(exc))
             return (str(exc), 409)
         backup_name = (result.get("detail") or {}).get("backup")
         if not result.get("ok") or not backup_name:
+            if _wants_html():
+                return _error_page(500, "Export snapshot failed.")
             return ("export snapshot failed", 500)
         backup_dir = Path(app.config["BACKUPS_DIR"]) / backup_name
         buffer = io.BytesIO()
@@ -506,41 +736,63 @@ def _register_routes(app: Flask) -> None:
     def admin_orders():
         pair = request.args.get("pair", "btc")
         if pair not in PAIRS:
+            if _wants_html():
+                return _error_page(400, "Unknown pair.")
             return ("unknown pair", 400)
+        side = request.args.get("side") or None
+        status = request.args.get("status") or None
         # Join against this app's own RESULTS_DIR (not the global profile
         # path) so a ro-mounted runtime/results in production, or a tmp
         # dir in tests, is what actually gets read.
         csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
         csv_path = os.path.join(app.config["RESULTS_DIR"], csv_name)
         df = load_track(csv_path)  # dashboard.py's own pure loader -- not re-implemented here
-        if df is None:
-            return jsonify({"orders": []})
-        return jsonify({"orders": activity_records(df)})
+        records = activity_records(df) if df is not None else []
+        orders = _serialize_orders(_filter_orders(records, side=side, status=status))
+        if _wants_html():
+            return render_template(
+                "admin/orders.html", orders=orders, selected_pair=pair,
+                side_filter=side, status_filter=status, csrf_token=get_csrf_token(),
+            )
+        return jsonify({"orders": orders})
 
     @app.route("/admin/balances")
     @login_required
     def admin_balances():
-        return jsonify({pair: _ledger_account(app, pair) for pair in PAIRS})
+        balances = {pair: _ledger_account(app, pair) for pair in PAIRS}
+        if _wants_html():
+            return render_template(
+                "admin/balances.html", balances=balances,
+                fee_scopes=_fee_scopes_summary(app),
+                starting_cash_btc=TRADING_PROFILES["btc"]["cash_initial"],
+                starting_cash_usdt=TRADING_PROFILES["usdt"]["cash_initial"],
+                csrf_token=get_csrf_token(),
+            )
+        return jsonify(balances)
 
     @app.route("/admin/logs")
     @login_required
     def admin_logs():
         pair = request.args.get("pair", "btc")
         if pair not in PAIRS:
+            if _wants_html():
+                return _error_page(400, "Unknown pair.")
             return ("unknown pair", 400)
         state_dir = Path(app.config["STATE_DIR"])
         matches = sorted(
             state_dir.glob(f"paper_*_{PAIR_LOCK_SUFFIX[pair]}_archive.jsonl"),
             key=lambda p: p.stat().st_mtime, reverse=True,
         )
-        if not matches:
-            return jsonify({"entries": []})
         entries = []
-        for line in matches[0].read_text().splitlines()[-200:]:
-            try:
-                entries.append(json.loads(line))
-            except ValueError:
-                continue
+        if matches:
+            for line in matches[0].read_text().splitlines()[-200:]:
+                try:
+                    entries.append(json.loads(line))
+                except ValueError:
+                    continue
+        if _wants_html():
+            return render_template("admin/logs.html", entries=entries, selected_pair=pair,
+                                    csrf_token=get_csrf_token())
         return jsonify({"entries": entries})
 
     @app.route("/admin/audit")
@@ -548,16 +800,31 @@ def _register_routes(app: Flask) -> None:
     def admin_audit():
         limit = request.args.get("limit", "200")
         limit = int(limit) if limit.isdigit() else 200
-        return jsonify({"audit": _recent_audit(app, limit=limit)})
+        audit = _recent_audit(app, limit=limit)
+        if _wants_html():
+            return render_template("admin/audit.html", audit=audit, limit=limit,
+                                    csrf_token=get_csrf_token())
+        return jsonify({"audit": audit})
 
 
 @csrf_protected
 def _admin_config_post(app: Flask, pair: str, path):
+    wants_html = _wants_html()
+
     if request.form.get("action") == "revert":
         try:
             result = enqueue_and_wait(app, "rollback_config", pair)
         except OperationInProgress as exc:
+            if wants_html:
+                return render_template(
+                    "admin/config.html", **_config_page_context(pair, path, error=str(exc)),
+                ), 409
             return (str(exc), 409)
+        if wants_html:
+            return render_template(
+                "admin/config.html",
+                **_config_page_context(pair, path, success="Reverted to previous configuration."),
+            )
         return jsonify(result)
 
     raw = {k: v for k, v in request.form.items() if k in FIELD_SPECS}
@@ -570,17 +837,53 @@ def _admin_config_post(app: Flask, pair: str, path):
         try:
             overrides[key] = float(value)
         except ValueError:
-            return (f"invalid value for {key}", 400)
+            message = f"invalid value for {key}"
+            if wants_html:
+                return render_template(
+                    "admin/config.html", **_config_page_context(pair, path, error=message),
+                ), 400
+            return (message, 400)
     try:
         validated = validate_overrides(overrides)
     except OverlayValidationError as exc:
-        return (str(exc), 400)  # rejected before enqueueing -- nothing submitted
+        # Rejected before enqueueing -- nothing submitted. Re-render with the
+        # attempted (unsaved) values so the admin doesn't lose their edits.
+        if wants_html:
+            merged = dict(load_overrides(path), **overrides)
+            return render_template(
+                "admin/config.html",
+                **_config_page_context(pair, path, error=str(exc), overrides=merged),
+            ), 400
+        return (str(exc), 400)
 
     try:
         result = enqueue_and_wait(app, "apply_config", pair, payload={"overrides": validated})
     except OperationInProgress as exc:
+        if wants_html:
+            return render_template(
+                "admin/config.html", **_config_page_context(pair, path, error=str(exc)),
+            ), 409
         return (str(exc), 409)
+    if wants_html:
+        return render_template(
+            "admin/config.html",
+            **_config_page_context(pair, path, success="Configuration applied.", overrides=validated),
+        )
     return jsonify(result)
+
+
+def _register_error_handlers(app: Flask) -> None:
+    @app.errorhandler(404)
+    def _not_found(_exc):
+        if _wants_html():
+            return _error_page(404, "That admin page doesn't exist.")
+        return ("not found", 404)
+
+    @app.errorhandler(500)
+    def _server_error(_exc):
+        if _wants_html():
+            return _error_page(500, "Something went wrong on the server.")
+        return ("internal error", 500)
 
 
 if __name__ == "__main__":

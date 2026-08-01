@@ -1,0 +1,111 @@
+{% extends "admin/base.html" %}
+{% import "admin/confirmation.html" as confirm %}
+
+{% block title %}Recovery{% endblock %}
+
+{% block content %}
+<div class="card mb-lg">
+  <div class="card-header">
+    <h2>Recovery Diagnostics</h2>
+  </div>
+  <div class="card-body">
+    <div class="grid grid-3">
+      <div class="card" style="margin-bottom: 0;">
+        <div class="card-header">
+          <h3>Stale Locks</h3>
+        </div>
+        <div class="card-body">
+          {% if diagnostics.stale_locks %}
+            <ul>
+              {% for lock in diagnostics.stale_locks %}
+              <li class="mono">{{ lock.upper() }}</li>
+              {% endfor %}
+            </ul>
+            <p class="text-muted mt-sm">These worker lock files exist but no worker is holding them.</p>
+          {% else %}
+            <div class="empty-state">No stale locks detected</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom: 0;">
+        <div class="card-header">
+          <h3>Session Mismatches</h3>
+        </div>
+        <div class="card-body">
+          {% if diagnostics.session_mismatches %}
+            <ul>
+              {% for file in diagnostics.session_mismatches %}
+              <li class="mono">{{ file }}</li>
+              {% endfor %}
+            </ul>
+            <p class="text-muted mt-sm">These ledger files have a session_id different from the current stack session.</p>
+          {% else %}
+            <div class="empty-state">No session mismatches</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom: 0;">
+        <div class="card-header">
+          <h3>Corrupt Files</h3>
+        </div>
+        <div class="card-body">
+          {% if diagnostics.corrupt_files %}
+            <ul>
+              {% for file in diagnostics.corrupt_files %}
+              <li class="mono">{{ file }}</li>
+              {% endfor %}
+            </ul>
+            <p class="text-muted mt-sm">These state files contain invalid JSON.</p>
+          {% else %}
+            <div class="empty-state">No corrupt files</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {% if diagnostics.confirmation_required_for_reset %}
+      <div class="flash flash-warning mt-md">
+        <strong>⚠️ Destructive issues detected.</strong> Session mismatches or corrupt files require a full reset to resolve. Safe recovery only clears stale locks.
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card mb-lg">
+  <div class="card-header">
+    <h2>Safe Recovery (Auto-fix Stale Locks Only)</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">This will only remove stale lock files. It will NOT modify ledger files, session files, or any data.</p>
+    <form method="post" action="{{ url_for('admin_recover_apply') }}" class="inline-form" data-confirm="Apply safe recovery? This will remove stale lock files only.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit" class="btn btn-primary" {% if not diagnostics.stale_locks %}disabled{% endif %}>
+        {% if diagnostics.stale_locks %}Clear Stale Locks{% else %}No Stale Locks to Clear{% endif %}
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Destructive Reset (Requires Confirmation)</h2>
+  </div>
+  <div class="card-body">
+    <div class="flash flash-error">
+      <strong>⚠️ WARNING:</strong> This will delete ALL demo state files (ledgers, CSVs, SQLite, fee scopes, session) and create a fresh session. A backup is created first, but this action is irreversible without manual restore.
+    </div>
+    <p class="text-muted mb-md">Files that would be affected:</p>
+    <ul>
+      {% for file in reset_files %}
+      <li class="mono">{{ file }}</li>
+      {% endfor %}
+    </ul>
+    {{ confirm.typed_confirm_form(
+         url_for('admin_reset'), "RESET", "Reset Demo",
+         "RESET demo? This deletes all demo state. Type RESET to confirm.",
+         csrf_token) }}
+  </div>
+</div>
+{% endblock %}

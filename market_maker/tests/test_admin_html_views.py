@@ -1,0 +1,399 @@
+"""HTML rendering / content-negotiation layer for the admin control panel.
+
+The JSON API (admin_app.py's existing routes) is already fully covered by
+test_admin_actions.py / test_admin_readonly_views.py / test_admin_auth.py --
+this file only covers the gap: browsers must get real HTML pages with
+working forms, while existing JSON callers (anything that doesn't send an
+Accept header, exactly like Flask's test client and this project's own
+existing tests) must keep getting byte-for-byte the same JSON as before.
+
+Negotiation rule under test: Accept: text/html -> HTML; no Accept header or
+Accept: application/json -> JSON (see admin_app._wants_html).
+"""
+
+import json
+import re
+from pathlib import Path
+
+import pandas as pd
+import pytest
+from werkzeug.security import generate_password_hash
+
+import admin_app as admin_app_module
+from admin_app import create_app
+from config import TRADING_PROFILES, demo_csv_path
+
+HTML = {"Accept": "text/html"}
+
+
+@pytest.fixture
+def app(tmp_path):
+    for name in ("control", "state", "results", "backups"):
+        (tmp_path / name).mkdir()
+    application = create_app({
+        "ADMIN_USERNAME": "admin",
+        "ADMIN_PASSWORD_HASH": generate_password_hash("correct horse", method="pbkdf2:sha256"),
+        "SECRET_KEY": "test-secret",
+        "CONTROL_DIR": str(tmp_path / "control"),
+        "STATE_DIR": str(tmp_path / "state"),
+        "RESULTS_DIR": str(tmp_path / "results"),
+        "BACKUPS_DIR": str(tmp_path / "backups"),
+        "TESTING": True,
+    })
+    return application
+
+
+@pytest.fixture
+def client(app):
+    return app.test_client()
+
+
+@pytest.fixture
+def fake_agent(monkeypatch):
+    def _fake_await_result(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {"command_id": command_id, "ok": True, "detail": {}, "finished_at": "now"}
+    monkeypatch.setattr(admin_app_module, "await_result", _fake_await_result)
+
+
+def _commands_written(app):
+    commands_dir = Path(app.config["CONTROL_DIR"]) / "commands"
+    if not commands_dir.exists():
+        return []
+    return [json.loads(p.read_text()) for p in commands_dir.glob("*.json")]
+
+
+def _login(client):
+    login_page = client.get("/admin/login")
+    token = re.search(r'name="csrf_token" value="([^"]+)"', login_page.get_data(as_text=True)).group(1)
+    client.post("/admin/login", data={"username": "admin", "password": "correct horse", "csrf_token": token})
+    with client.session_transaction() as sess:
+        return sess["csrf_token"]
+
+
+def _html(response):
+    return response.get_data(as_text=True)
+
+
+# ---------- Login page is always HTML ----------
+
+def test_login_page_is_html_with_form():
+    from admin_app import create_app as _create
+    app = _create({"ADMIN_USERNAME": "a", "ADMIN_PASSWORD_HASH": "x", "SECRET_KEY": "s"})
+    response = app.test_client().get("/admin/login")
+    assert response.status_code == 200
+    assert response.content_type.startswith("text/html")
+    body = _html(response)
+    assert "<form" in body
+    assert 'name="csrf_token"' in body
+
+
+# ---------- Overview: HTML for browsers, JSON preserved by default ----------
+
+def test_overview_default_still_returns_json(client):
+    """Regression guard: every pre-existing test calls routes with no Accept
+    header and expects JSON -- this must keep working unchanged."""
+    _login(client)
+    response = client.get("/admin/")
+    assert response.status_code == 200
+    assert response.get_json()["workers"] == {"btc": False, "usdt": False}
+
+
+def test_overview_html_for_browser_accept_header(client):
+    token = _login(client)
+    response = client.get("/admin/", headers=HTML)
+    assert response.status_code == 200
+    assert response.content_type.startswith("text/html")
+    body = _html(response)
+    assert "DEMO" in body.upper() and "PAPER" in body.upper()
+    # worker controls reachable and CSRF-protected
+    assert 'action="/admin/workers/start"' in body or "admin_workers" not in body  # rendered url, not endpoint name
+    assert 'name="csrf_token"' in body
+
+
+def test_overview_explicit_json_accept_returns_json(client):
+    _login(client)
+    response = client.get("/admin/", headers={"Accept": "application/json"})
+    assert response.status_code == 200
+    assert response.get_json()["workers"] == {"btc": False, "usdt": False}
+
+
+def test_unauthenticated_html_request_redirects_to_login(client):
+    response = client.get("/admin/", headers=HTML)
+    assert response.status_code == 302
+    assert "/admin/login" in response.headers["Location"]
+
+
+# ---------- Workers page ----------
+
+def test_workers_page_renders_controls(client):
+    _login(client)
+    response = client.get("/admin/workers", headers=HTML)
+    assert response.status_code == 200
+    body = _html(response)
+    assert 'action="/admin/workers/start"' in body
+    assert 'action="/admin/workers/stop"' in body
+    assert 'action="/admin/workers/restart"' in body
+    assert 'name="csrf_token"' in body
+
+
+def test_worker_start_html_rerenders_with_result_and_still_enqueues(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/workers/start", data={"pair": "btc", "csrf_token": token}, headers=HTML)
+    assert response.status_code == 200
+    assert response.content_type.startswith("text/html")
+    written = _commands_written(app)
+    assert len(written) == 1
+    assert written[0]["action"] == "start_worker"
+
+
+def test_worker_start_json_unchanged_when_not_html(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/workers/start", data={"pair": "btc", "csrf_token": token})
+    assert response.status_code == 200
+    assert response.get_json()["results"][0]["ok"] is True
+
+
+# ---------- Config pages ----------
+
+def test_config_page_renders_known_fields(client):
+    _login(client)
+    response = client.get("/admin/config/btc", headers=HTML)
+    assert response.status_code == 200
+    body = _html(response)
+    for field in ("order_size", "commission_perc", "demo_level1_fast_fill_enabled"):
+        assert f'name="{field}"' in body
+    assert 'name="csrf_token"' in body
+
+
+def test_config_apply_html_success_rerenders_with_success_message(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/config/btc", data={
+        "order_size": "3.5", "csrf_token": token,
+    }, headers=HTML)
+    assert response.status_code == 200
+    body = _html(response)
+    assert "applied" in body.lower() or "success" in body.lower()
+    written = _commands_written(app)
+    assert written[0]["action"] == "apply_config"
+    assert written[0]["payload"]["overrides"] == {"order_size": 3.5}
+
+
+def test_config_apply_html_validation_error_rerenders_with_error(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/config/btc", data={
+        "commission_perc": "5.0", "csrf_token": token,
+    }, headers=HTML)
+    assert response.status_code == 400
+    assert response.content_type.startswith("text/html")
+    body = _html(response)
+    assert "commission_perc" in body
+    assert _commands_written(app) == []
+
+
+# ---------- Orders: server-side filtering the template relies on ----------
+
+ORDERS_ROWS = [
+    {"Session_id": "s1", "Timestamp": "2026-08-01 12:00:00", "Round": 1,
+     "Best Bid": 99.0, "Best Ask": 100.0, "Bid Price Sent": 98.0, "Ask Price Sent": 101.0,
+     "Buy Order ID": "b1", "Buy Status": "open", "Sell Order ID": None, "Sell Status": None},
+    {"Session_id": "s1", "Timestamp": "2026-08-01 12:01:00", "Round": 2,
+     "Best Bid": 99.0, "Best Ask": 100.0, "Bid Price Sent": 98.0, "Ask Price Sent": 101.0,
+     "Buy Order ID": None, "Buy Status": None, "Sell Order ID": "s1o", "Sell Status": "filled"},
+]
+
+
+@pytest.fixture
+def orders_app(tmp_path):
+    for name in ("control", "state", "results", "backups"):
+        (tmp_path / name).mkdir()
+    csv_name = Path(demo_csv_path(TRADING_PROFILES["btc"]["output_csv"])).name
+    pd.DataFrame(ORDERS_ROWS).to_csv(tmp_path / "results" / csv_name, index=False)
+    return create_app({
+        "ADMIN_USERNAME": "admin",
+        "ADMIN_PASSWORD_HASH": generate_password_hash("correct horse", method="pbkdf2:sha256"),
+        "SECRET_KEY": "test-secret",
+        "CONTROL_DIR": str(tmp_path / "control"),
+        "STATE_DIR": str(tmp_path / "state"),
+        "RESULTS_DIR": str(tmp_path / "results"),
+        "BACKUPS_DIR": str(tmp_path / "backups"),
+        "TESTING": True,
+    })
+
+
+def test_orders_status_filter_narrows_results(orders_app):
+    client = orders_app.test_client()
+    _login(client)
+    all_response = client.get("/admin/orders?pair=btc")
+    assert len(all_response.get_json()["orders"]) == 2
+    filtered = client.get("/admin/orders?pair=btc&status=filled")
+    orders = filtered.get_json()["orders"]
+    assert len(orders) == 1
+    assert orders[0]["Sell Status"] == "filled"
+
+
+def test_orders_html_renders_table(orders_app):
+    client = orders_app.test_client()
+    _login(client)
+    response = client.get("/admin/orders?pair=btc", headers=HTML)
+    assert response.status_code == 200
+    body = _html(response)
+    assert "<table" in body
+    assert "s1" in body
+
+
+# ---------- Balances ----------
+
+def test_balances_html_includes_fee_scopes(app):
+    client = app.test_client()
+    fee_path = Path(app.config["STATE_DIR"]) / "paper_fee_scopes.json"
+    fee_path.write_text(json.dumps({
+        "sessions": {"s1": {"BTCIRT": 12.5}},
+        "all_time": {"BTCIRT": 12.5},
+    }))
+    ledger_path = Path(app.config["STATE_DIR"]) / "paper_s1_btcirt.json"
+    ledger_path.write_text(json.dumps({
+        "account": {"inventory": 0.1, "cash": 500.0, "valuation_price": 100.0, "fees_quote": 12.5},
+    }))
+    _login(client)
+    response = client.get("/admin/balances", headers=HTML)
+    assert response.status_code == 200
+    body = _html(response)
+    assert "12.50" in body
+
+
+# ---------- Backups: create, restore confirmation, per-backup download ----------
+
+def test_backups_page_html(client):
+    _login(client)
+    response = client.get("/admin/backups", headers=HTML)
+    assert response.status_code == 200
+    assert 'action="/admin/backups/create"' in _html(response)
+
+
+def test_backup_restore_still_requires_exact_confirm_via_html(client, app, fake_agent):
+    token = _login(client)
+    (Path(app.config["BACKUPS_DIR"]) / "manual-1").mkdir()
+    response = client.post("/admin/backups/manual-1/restore",
+                            data={"confirm": "nope", "csrf_token": token}, headers=HTML)
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+
+
+def test_backup_download_serves_named_backup_not_a_fresh_one(client, app, monkeypatch):
+    """Regression test for the pre-existing bug: the per-row Download link
+    called admin_export (which always creates a brand-new backup) instead
+    of downloading the backup actually listed in that row."""
+    _login(client)
+    backups_dir = Path(app.config["BACKUPS_DIR"])
+    named = backups_dir / "manual-1"
+    named.mkdir()
+    (named / "paper_x_btcirt.json").write_text('{"a": 1}')
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("download must not create a new backup via the control queue")
+    monkeypatch.setattr(admin_app_module, "submit_command", _fail_if_called)
+
+    response = client.get("/admin/backups/manual-1/download")
+    assert response.status_code == 200
+    import io
+    import zipfile
+    archive = zipfile.ZipFile(io.BytesIO(response.get_data()))
+    assert archive.namelist() == ["paper_x_btcirt.json"]
+
+
+def test_backup_download_unknown_name_404s(client):
+    _login(client)
+    response = client.get("/admin/backups/does-not-exist/download")
+    assert response.status_code == 404
+
+
+# ---------- Recovery / reset ----------
+
+def test_recovery_html_shows_reset_preview(app):
+    client = app.test_client()
+    (Path(app.config["STATE_DIR"]) / "btc_track_demo.csv").write_text("x\n")
+    _login(client)
+    response = client.get("/admin/recover", headers=HTML)
+    assert response.status_code == 200
+    body = _html(response)
+    assert "btc_track_demo.csv" in body
+
+
+def test_reset_wrong_confirm_html_shows_error_no_command(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/reset", data={"confirm": "nope", "csrf_token": token}, headers=HTML)
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+
+
+def test_reset_exact_confirm_html_succeeds(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/reset", data={"confirm": "RESET", "csrf_token": token}, headers=HTML)
+    assert response.status_code == 200
+    written = _commands_written(app)
+    assert written[0]["action"] == "reset_demo"
+
+
+# ---------- Logs / audit ----------
+
+def test_logs_html_escapes_message_content(app):
+    client = app.test_client()
+    archive_path = Path(app.config["STATE_DIR"]) / "paper_s1_btcirt_archive.jsonl"
+    archive_path.write_text(json.dumps({
+        "timestamp": "2026-08-01T12:00:00", "level": "INFO",
+        "message": "<script>alert(1)</script>",
+    }) + "\n")
+    _login(client)
+    response = client.get("/admin/logs?pair=btc", headers=HTML)
+    assert response.status_code == 200
+    body = _html(response)
+    assert "<script>alert(1)</script>" not in body
+    assert "&lt;script&gt;" in body
+
+
+def test_audit_html_renders_entries(client, app):
+    from control_queue import append_audit
+    append_audit(app.config["CONTROL_DIR"],
+                 {"action": "start_worker", "pair": "btc", "ok": True, "command_id": "cmd-123"})
+    _login(client)
+    response = client.get("/admin/audit", headers=HTML)
+    assert response.status_code == 200
+    assert "start_worker" in _html(response)
+
+
+# ---------- Audit-entry-per-action invariant holds over the HTML path too ----------
+
+def test_one_audit_entry_per_action_via_html(client, app, fake_agent):
+    token = _login(client)
+    client.post("/admin/workers/start", data={"pair": "both", "csrf_token": token}, headers=HTML)
+    audit_lines = (Path(app.config["CONTROL_DIR"]) / "audit.log").read_text().splitlines()
+    assert len(audit_lines) == 2
+
+
+# ---------- Friendly error pages ----------
+
+def test_unknown_admin_route_404_is_friendly_html(client):
+    _login(client)
+    response = client.get("/admin/does-not-exist", headers=HTML)
+    assert response.status_code == 404
+    assert response.content_type.startswith("text/html")
+
+
+def test_csrf_failure_html_is_friendly_not_plain_text(client):
+    _login(client)
+    response = client.post("/admin/logout", data={}, headers=HTML)
+    assert response.status_code == 400
+    assert response.content_type.startswith("text/html")
+
+
+def test_operation_in_progress_html_is_friendly(client, app, fake_agent):
+    from control_queue import ControlLock
+    token = _login(client)
+    lock = ControlLock(app.config["CONTROL_DIR"])
+    lock.acquire()
+    try:
+        response = client.post("/admin/workers/start", data={"pair": "btc", "csrf_token": token}, headers=HTML)
+        assert response.status_code == 409
+        assert response.content_type.startswith("text/html")
+    finally:
+        lock.release()

@@ -1,0 +1,104 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Orders{% endblock %}
+
+{% block content %}
+<div class="card mb-lg">
+  <div class="card-header d-flex justify-between align-center flex-wrap gap-sm">
+    <h2>Paper Orders</h2>
+    <div class="btn-group">
+      <a href="{{ url_for('admin_orders', pair='btc') }}" class="btn {% if selected_pair == 'btc' %}btn-primary{% else %}btn-secondary{% endif %}">BTC</a>
+      <a href="{{ url_for('admin_orders', pair='usdt') }}" class="btn {% if selected_pair == 'usdt' %}btn-primary{% else %}btn-secondary{% endif %}">USDT</a>
+    </div>
+  </div>
+  <div class="card-body">
+    <form method="get" class="filters-form" style="display: flex; gap: var(--spacing-md); flex-wrap: wrap; margin-bottom: var(--spacing-lg); align-items: end;">
+      <div class="form-group" style="margin-bottom: 0;">
+        <label for="side" class="form-label">Side</label>
+        <select id="side" name="side" class="form-select" style="width: auto;">
+          <option value="">All</option>
+          <option value="buy" {% if side_filter == 'buy' %}selected{% endif %}>Buy</option>
+          <option value="sell" {% if side_filter == 'sell' %}selected{% endif %}>Sell</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-bottom: 0;">
+        <label for="status" class="form-label">Status</label>
+        <select id="status" name="status" class="form-select" style="width: auto;">
+          <option value="">All</option>
+          <option value="open" {% if status_filter == 'open' %}selected{% endif %}>Open</option>
+          <option value="filled" {% if status_filter == 'filled' %}selected{% endif %}>Filled</option>
+          <option value="cancelled" {% if status_filter == 'cancelled' %}selected{% endif %}>Cancelled</option>
+          <option value="not_sent" {% if status_filter == 'not_sent' %}selected{% endif %}>Not Sent</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-secondary">Filter</button>
+      <a href="{{ url_for('admin_orders', pair=selected_pair) }}" class="btn btn-ghost">Clear</a>
+    </form>
+
+    {% if orders %}
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Session</th>
+              <th>Round</th>
+              <th>Side</th>
+              <th>Status</th>
+              <th>Order ID</th>
+              <th>Original Amt</th>
+              <th>Matched Amt</th>
+              <th>Remaining Amt</th>
+              <th>Price</th>
+              <th>Fill Reason</th>
+              <th>Locked</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for order in orders %}
+              {% set row_class = '' %}
+              {% if order['Buy Status'] == 'open' or order['Sell Status'] == 'open' %}{% set row_class = 'row-open' %}
+              {% elif order['Buy Status'] == 'filled' or order['Sell Status'] == 'filled' %}{% set row_class = 'row-filled' %}
+              {% elif order['Buy Status'] == 'cancelled' or order['Sell Status'] == 'cancelled' %}{% set row_class = 'row-cancelled' %}
+              {% elif order['Buy Status'] == 'not_sent' or order['Sell Status'] == 'not_sent' %}{% set row_class = 'row-not-sent' %}
+              {% endif %}
+              <tr class="{{ row_class }}">
+                <td class="mono">{{ order['Timestamp'][:19].replace('T', ' ') if order['Timestamp'] else '—' }}</td>
+                <td class="mono">{{ order['Session_id'] or '—' }}</td>
+                <td>{{ order['Round'] or '—' }}</td>
+                <td>
+                  {% if order['Buy Status'] and order['Buy Status'] != 'not_sent' %}
+                    <span class="status-badge status-running">Buy</span>
+                  {% else %}
+                    <span class="status-badge status-stopped">Sell</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% set status = order['Buy Status'] or order['Sell Status'] %}
+                  {% if status == 'open' %}<span class="status-badge status-running">Open</span>
+                  {% elif status == 'filled' %}<span class="status-badge">Filled</span>
+                  {% elif status == 'cancelled' %}<span class="status-badge status-stopped">Cancelled</span>
+                  {% elif status == 'not_sent' %}<span class="status-badge status-warning">Not Sent</span>
+                  {% else %}{{ status or '—' }}{% endif %}
+                </td>
+                <td class="mono">{{ order['Buy Order ID'] or order['Sell Order ID'] or '—' }}</td>
+                <td class="mono text-right">{{ '%.8f'|format(order['Buy Original Amount'] or order['Sell Original Amount'] or 0) }}</td>
+                <td class="mono text-right">{{ '%.8f'|format(order['Buy Matched Amount'] or order['Sell Matched Amount'] or 0) }}</td>
+                <td class="mono text-right">{{ '%.8f'|format(order['Buy Remaining Amount'] or order['Sell Remaining Amount'] or 0) }}</td>
+                <td class="mono text-right">{{ '%.2f'|format(order['Bid Price'] or order['Ask Price'] or 0) }}</td>
+                <td>{{ order['Buy Fill Reason'] or order['Sell Fill Reason'] or '—' }}</td>
+                <td class="mono text-right">{{ '%.2f'|format(order['Buy Locked Cash'] or order['Sell Locked Inventory'] or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <div class="icon">📋</div>
+        <p>No orders found for {{ selected_pair.upper() }}{% if side_filter or status_filter %} with current filters{% endif %}.</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

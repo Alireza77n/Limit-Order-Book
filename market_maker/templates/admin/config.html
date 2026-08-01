@@ -1,0 +1,72 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Config {{ pair.upper() }}{% endblock %}
+
+{% block content %}
+<div class="card mb-lg">
+  <div class="card-header d-flex justify-between align-center">
+    <h2>Configuration: {{ pair.upper() }}</h2>
+    <a href="{{ url_for('admin_config', pair=pair) }}" class="btn btn-ghost btn-sm">Refresh</a>
+  </div>
+  <div class="card-body">
+    {% if error %}
+      <div class="flash flash-error">{{ error }}</div>
+    {% endif %}
+    {% if success %}
+      <div class="flash flash-success">{{ success }}</div>
+    {% endif %}
+
+    <form method="post" class="config-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+      <div class="grid grid-2">
+        {% for field_name in field_order %}
+          {% set spec = FIELD_SPECS[field_name] %}
+          {% set current_value = overrides.get(field_name) %}
+          {% set field_type = spec[0] %}
+          {% set min_val = spec[1] if spec|length > 1 else None %}
+          {% set max_val = spec[2] if spec|length > 2 else None %}
+          <div class="form-group">
+            <label for="{{ field_name }}" class="form-label">
+              {{ field_name.replace('_', ' ').title() }}
+              {% if field_type.__name__ != 'bool' %}
+                <span class="text-muted" style="font-weight: normal; font-size: 0.8rem;">
+                  ({{ field_type.__name__ }}{% if min_val is not none %} ≥ {{ min_val }}{% endif %}{% if max_val is not none %} ≤ {{ max_val }}{% endif %})
+                </span>
+              {% endif %}
+            </label>
+            {% if field_type.__name__ == 'bool' %}
+              <div class="form-check">
+                <input type="checkbox" id="{{ field_name }}" name="{{ field_name }}" class="form-check-input" value="true" {% if current_value %}checked{% endif %}>
+                <label for="{{ field_name }}" class="form-check-label">Enabled</label>
+                <input type="hidden" name="{{ field_name }}" value="false">
+              </div>
+            {% elif field_type.__name__ == 'int' %}
+              <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value or '' }}" step="1" {% if min_val is not none %}min="{{ min_val }}"{% endif %} {% if max_val is not none %}max="{{ max_val }}"{% endif %}>
+            {% else %}
+              <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value or '' }}" step="any" {% if min_val is not none %}min="{{ min_val }}"{% endif %} {% if max_val is not none %}max="{{ max_val }}"{% endif %}>
+            {% endif %}
+            <div class="form-help">{{ field_help.get(field_name, '') }}</div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <div class="btn-group mt-md">
+        <button type="submit" class="btn btn-primary">Apply Configuration</button>
+        {% if has_previous %}
+          <button type="submit" name="action" value="revert" class="btn btn-warning" data-confirm="Revert to previous configuration?">Revert Last Change</button>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Current Overrides (JSON)</h2>
+  </div>
+  <div class="card-body">
+    <pre class="mono" style="white-space: pre-wrap; background: var(--color-bg); padding: var(--spacing-md); border-radius: var(--radius-md);">{{ overrides|tojson(indent=2) }}</pre>
+  </div>
+</div>
+{% endblock %}

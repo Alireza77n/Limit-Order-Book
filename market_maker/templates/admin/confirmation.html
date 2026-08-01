@@ -1,0 +1,10 @@
+{# Reusable typed-confirmation form (e.g. RESET / RESTORE). Server-side
+   enforcement of the exact word lives in admin_app.py regardless of what
+   this renders -- this macro is UI only, never the source of truth. #}
+{% macro typed_confirm_form(action, word, button_label, confirm_message, csrf_token, button_class="btn-danger", button_size="") %}
+<form method="post" action="{{ action }}" class="inline-form" data-confirm="{{ confirm_message }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <input type="text" name="confirm" placeholder="Type {{ word }}" class="form-input" style="width: 120px;" required>
+  <button type="submit" class="btn {{ button_class }}{% if button_size %} {{ button_size }}{% endif %}">{{ button_label }}</button>
+</form>
+{% endmacro %}

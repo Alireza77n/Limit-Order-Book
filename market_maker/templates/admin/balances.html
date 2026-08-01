@@ -1,0 +1,112 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Balances & Performance{% endblock %}
+
+{% block content %}
+<div class="grid grid-2 mb-lg">
+  {% for pair in ['btc', 'usdt'] %}
+  <div class="card">
+    <div class="card-header">
+      <h2 style="margin: 0; text-transform: uppercase;">{{ pair }} Balances</h2>
+    </div>
+    <div class="card-body">
+      {% set account = balances[pair] %}
+      {% if account %}
+        <div class="kv-list">
+          <div class="kv-item">
+            <span class="kv-label">Inventory ({{ 'BTC' if pair == 'btc' else 'USDT' }})</span>
+            <span class="kv-value mono">{{ '%.8f'|format(account.inventory or 0) }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Available Cash (IRT)</span>
+            <span class="kv-value mono">{{ '%.2f'|format(account.cash or 0) }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Valuation Price (IRT)</span>
+            <span class="kv-value mono">{{ '%.2f'|format(account.valuation_price or 0) }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Fees (IRT)</span>
+            <span class="kv-value mono">{{ '%.2f'|format(account.fees_quote or 0) }}</span>
+          </div>
+          <div class="kv-item">
+            <span class="kv-label">Portfolio Wealth (IRT)</span>
+            <span class="kv-value mono">{{ '%.2f'|format((account.inventory or 0) * (account.valuation_price or 0) + (account.cash or 0)) }}</span>
+          </div>
+        </div>
+      {% else %}
+        <div class="empty-state">
+          <div class="icon">💰</div>
+          <p>No ledger data available for {{ pair.upper() }}</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="card mb-lg">
+  <div class="card-header">
+    <h2>Session Fees Summary</h2>
+  </div>
+  <div class="card-body">
+    {% if fee_scopes %}
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Session</th>
+              <th>Pair</th>
+              <th>Fees (IRT)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for scope in fee_scopes %}
+            <tr>
+              <td class="mono">{{ scope.session_id }}</td>
+              <td>{{ scope.pair.upper() }}</td>
+              <td class="mono text-right">{{ '%.2f'|format(scope.fees_quote) }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">No fee data available</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Basic PnL (from stored data)</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">Calculated from paper ledger data only. Does not include unrealized PnL or mark-to-market.</p>
+    {% if balances.btc and balances.usdt %}
+      <div class="grid grid-2">
+        <div>
+          <h4>BTC</h4>
+          <div class="kv-list">
+            <div class="kv-item"><span class="kv-label">Starting Cash</span><span class="kv-value mono">{{ '%.2f'|format(starting_cash_btc or 0) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Current Cash</span><span class="kv-value mono">{{ '%.2f'|format(balances.btc.cash or 0) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Current Inventory Value</span><span class="kv-value mono">{{ '%.2f'|format((balances.btc.inventory or 0) * (balances.btc.valuation_price or 0)) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Total Fees Paid</span><span class="kv-value mono">{{ '%.2f'|format(balances.btc.fees_quote or 0) }}</span></div>
+          </div>
+        </div>
+        <div>
+          <h4>USDT</h4>
+          <div class="kv-list">
+            <div class="kv-item"><span class="kv-label">Starting Cash</span><span class="kv-value mono">{{ '%.2f'|format(starting_cash_usdt or 0) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Current Cash</span><span class="kv-value mono">{{ '%.2f'|format(balances.usdt.cash or 0) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Current Inventory Value</span><span class="kv-value mono">{{ '%.2f'|format((balances.usdt.inventory or 0) * (balances.usdt.valuation_price or 0)) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Total Fees Paid</span><span class="kv-value mono">{{ '%.2f'|format(balances.usdt.fees_quote or 0) }}</span></div>
+          </div>
+        </div>
+      </div>
+    {% else %}
+      <div class="empty-state">Insufficient data for PnL calculation</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
