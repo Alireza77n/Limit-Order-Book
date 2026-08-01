@@ -647,3 +647,16 @@ Known risks for the deploying session to be aware of:
 Exact next step: a separate session/tool ("Codex") performs the actual
 server deployment by following `docs/deployment/ADMIN_PAGE.md` end to end
 against the production host. This session does not deploy anything.
+
+### Task 11 — final verification (this session)
+
+Ran after all 10 preceding tasks were committed:
+
+- `python3 -m pytest -q` — **298 passed, 1 warning** (0 failures).
+- `python3 -m compileall -q market_maker` and `deploy/control_agent.py` — clean.
+- `docker compose -p limit-order-book -f deploy/docker-compose.production.yml --env-file deploy/demo.env config` — renders successfully with the new `admin` service (Docker Compose CLI v5.1.4 was available; this was actually executed, not skipped).
+- `bash -n deploy/rollback.sh` — clean (the only shell script touched or added). `deploy/systemd/lob-control-agent.service`'s `ExecStart` is a direct binary invocation (`/usr/bin/python3 .../control_agent.py`), no embedded shell to check.
+
+**The commit to deploy: `90203698eac654f802de5cbd65f502ac6d6bfef4`** (this
+commit, on `parsaoryani/admin-demo-control`) — this is the exact tested SHA
+the deploying session should check out.
