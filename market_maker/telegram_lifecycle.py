@@ -1,4 +1,5 @@
 from html import escape
+import os
 from typing import Callable, Optional
 
 import requests
@@ -24,10 +25,14 @@ class TelegramClient:
 
     @property
     def configured(self) -> bool:
-        return bool(self.token and self.chat_id)
+        return not self.disabled and bool(self.token and self.chat_id)
+
+    @property
+    def disabled(self) -> bool:
+        return os.environ.get("LOB_TELEGRAM_DISABLED", "").strip().lower() in {"1", "true", "yes", "on"}
 
     def send(self, text: str, *, reply_to_message_id: Optional[int] = None) -> Optional[int]:
-        if not self.token or not self.chat_id:
+        if self.disabled or not self.token or not self.chat_id:
             return None
         payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "HTML"}
         if reply_to_message_id is not None:

@@ -294,7 +294,7 @@ def test_demo_environment_is_the_exact_credential_empty_runtime_map():
     lines = [line for line in ENV_PATH.read_text().splitlines() if line]
     values = dict(line.split("=", 1) for line in lines)
 
-    assert len(lines) == 6
+    assert len(lines) == 7
     assert values == {
         "LOB_RESULTS_DIR": "/app/runtime/results",
         "LOB_STATE_DIR": "/app/runtime/state",
@@ -302,6 +302,7 @@ def test_demo_environment_is_the_exact_credential_empty_runtime_map():
         "LOB_CONTROL_DIR": "/app/runtime/control",
         "LOB_BACKUPS_DIR": "/app/runtime/backups",
         "PYTHONDONTWRITEBYTECODE": "1",
+        "LOB_TELEGRAM_DISABLED": "1",
     }
 
 

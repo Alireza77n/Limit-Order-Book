@@ -84,6 +84,15 @@ def test_telegram_success_returns_message_id_and_sets_reply_parameter():
     assert post.calls[0][1]["reply_to_message_id"] == 7
 
 
+def test_telegram_disabled_kill_switch_suppresses_transport(monkeypatch):
+    monkeypatch.setenv("LOB_TELEGRAM_DISABLED", "1")
+    post = _Post([_Response(200, {"ok": True, "result": {"message_id": 42}})])
+    client = TelegramClient("token", "chat", post=post)
+
+    assert client.send("hello") is None
+    assert post.calls == []
+
+
 def test_submission_message_is_sent_once_and_id_is_persisted(tmp_path):
     ledger = _ledger(tmp_path)
     order = _order(ledger)
