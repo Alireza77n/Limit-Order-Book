@@ -637,30 +637,33 @@ p_b = r(s,q,t) - \delta_b, \qquad p_a = r(s,q,t) + \delta_a
                   ┌─────────────────────┐
    run.py  ─────► │  SimpleMarketMaker   │  (the engine: run() loop,
   --algorithm     │      (engine.py)      │   inventory/cash/PnL bookkeeping,
-  --exchange      └──────────┬───────────┘   CSV + MySQL persistence)
-  --profile                  │
-                 ┌───────────┼───────────┐
+  --exchange      └──────────┬───────────┘   CSV + MySQL persistence,
+  --profile                  │               optional Telegram notify)
+  --mode         ┌───────────┼───────────┐
                  ▼                       ▼
         ┌─────────────────┐      ┌──────────────────┐
         │     Strategy      │      │   ExchangeClient   │
         │ (strategy/base.py) │      │ (exchange/base.py)  │
         └────────┬─────────┘      └─────────┬────────┘
                  │                           │
-     ┌───────────┴───────────┐    ┌──────────┴──────────┐
-     ▼                       ▼    ▼
-Algo1Strategy          Algo2Strategy   NobitexExchangeClient
-(implemented,           (stub, raises  (get_orderbook, send_order,
- fully tested)           NotImplementedError) wallet_balance, order status/
+     ┌───────────┴───────────┐    ┌──────────┼──────────────┐
+     ▼                       ▼    ▼                          ▼
+Algo1Strategy          Algo2Strategy   NobitexExchangeClient   DemoExchangeClient
+(implemented,           (stub, raises  (get_orderbook,          (wraps a real
+ fully tested)           NotImplementedError) send_order,        NobitexExchangeClient for
+                                              wallet_balance,     market data; send_order is
+                                              order status/       simulated -- --mode demo)
                                               cancellation via
                                               order_status.py)
 ```
 
 * **`Strategy`** (`market_maker/strategy/base.py`): the only method the engine relies on is `decide_order(orderbook, inventory) -> quote_dict | None`. Anything implementing this can be plugged into `SimpleMarketMaker` via its optional `strategy=` constructor argument (defaults to `Algo1Strategy` if omitted).
-* **`ExchangeClient`** (`market_maker/exchange/base.py`): `get_orderbook`, `send_order`, `wallet_balance`, `get_order_list_status`, `cancel_order`, `cancel_all_open_orders`, `cancel_old_orders`. `SimpleMarketMaker` takes an `exchange=` constructor argument (required) implementing this.
+* **`ExchangeClient`** (`market_maker/exchange/base.py`): `get_orderbook`, `send_order`, `wallet_balance`, `get_order_list_status`, `cancel_order`, `cancel_all_open_orders`, `cancel_old_orders`. `SimpleMarketMaker` takes an `exchange=` constructor argument (required) implementing this. Two implementations exist: `NobitexExchangeClient` (real) and `DemoExchangeClient` (real market data, simulated fills — see usage.md §1b).
 * **`portfolio.py`** (`Nobitex_portfolio`): read-only wallet/portfolio valuation helper, independent of the trading engine. **Still Nobitex-specific** — not behind `ExchangeClient` (see [Known limitations](#known-limitations--next-steps)).
 * **`order_status.py`** (`OrderStatusChecker`, `OrderCanceller`): raw Nobitex order-status/cancellation HTTP calls, composed inside `NobitexExchangeClient` rather than called directly by the engine.
-* **`config.py`** (`MMConfig`): a single dataclass holding both strategy knobs (`inv_max`, `depth_max`, `commission_perc`, ...) and exchange config (`token`, `url_send_order`, ...). Not yet split — see [Known limitations](#known-limitations--next-steps).
-* **`run.py`**: the single entry point. `STRATEGIES`/`EXCHANGES` registries plus named `PROFILES` (currency-pair configs) select what actually runs.
+* **`config.py`** (`MMConfig`): a single dataclass holding both strategy knobs (`inv_max`, `depth_max`, `commission_perc`, ...) and exchange config (`token`, `url_send_order`, ...). Not yet split — see [Known limitations](#known-limitations--next-steps). Also defines `TRADING_PROFILES` (every currency pair's full config, including its demo starting inventory) and `RESULTS_DIR`/`demo_csv_path` (where `run.py` and `dashboard.py` both write/read CSV output) — the single source of truth both modules import from, so they can never disagree about a pair's settings or file locations.
+* **`run.py`**: the single entry point. `STRATEGIES`/`EXCHANGES` registries (algorithm/exchange choices) plus `config.TRADING_PROFILES` (currency-pair configs) select what actually runs; `--mode real|demo` selects real vs. simulated order placement.
+* **Telegram notifications & cost tracking** (in `engine.py`, optional): `SimpleMarketMaker` can push a startup message and a per-round update (quote, market data, inventory/cash/wealth, buy/sell activity, transaction cost this round, and cumulative cost per-symbol and combined) to a Telegram chat if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are set. Cumulative totals persist across process restarts in a local `demo_costs_<mode>.json`. Entirely best-effort — never raises, never required. See usage.md §1.7.
 
 ---
 
@@ -671,7 +674,9 @@ Everything lives under one top-level package, `market_maker/`:
 ```text
 market_maker/
   engine.py             SimpleMarketMaker: the run() loop and engine glue
-  config.py              MMConfig dataclass; loads secrets from .env
+  config.py              MMConfig dataclass; TRADING_PROFILES (per-pair
+                          config incl. demo_inv_initial); RESULTS_DIR /
+                          demo_csv_path; loads secrets from .env
   portfolio.py            Nobitex_portfolio: wallet/portfolio valuation
   order_status.py         OrderStatusChecker, OrderCanceller (raw Nobitex calls)
   run.py                  Entry point: --algorithm / --exchange / --profile
@@ -683,13 +688,17 @@ market_maker/
   exchange/
     base.py                 ExchangeClient interface
     nobitex.py                NobitexExchangeClient (Nobitex HTTP calls)
+    demo.py                    DemoExchangeClient (real data, simulated fills)
   research/
     kappa_estimation.ipynb    Estimates Algorithm 2's kappa parameter
     sigma_estimation.ipynb     Estimates Algorithm 2's sigma parameter
     algo2.ipynb                 Empty -- was meant to hold Algorithm 2's implementation
   tests/                   pytest suite
+  results/                 run() CSV output (btc_track.csv, usdt_track.csv,
+                            and their _demo.csv siblings) -- gitignored, runtime state
   .env.example              Template for required environment variables
   .env                      Real secrets -- gitignored, never committed
+  demo_costs_*.json          Running transaction-cost totals -- gitignored, runtime state
 ```
 
 No other top-level code directory exists — there used to be a separate `algo2_/` folder holding only notebooks; it's gone, and its contents now live in `market_maker/research/` above, renamed to consistent `snake_case` (`Alg2.ipynb` → `algo2.ipynb`, `Kapa Estimation.ipynb` → `kappa_estimation.ipynb`, fixing a typo in the filename along the way; `sigma_estimation.ipynb` was already correctly named).
@@ -698,11 +707,13 @@ No other top-level code directory exists — there used to be a separate `algo2_
 
 # Tracked vs. local-only files
 
-Everything under `market_maker/` and this README are committed and visible to the whole team (and anyone with repo access). Two things are deliberately gitignored and never pushed:
+Everything under `market_maker/` and this README are committed and visible to the whole team (and anyone with repo access). These are deliberately gitignored and never pushed:
 
 | Path | What it is | Why it's local-only |
 |---|---|---|
-| `market_maker/.env` | Real Nobitex token + MySQL credentials | Secrets — `market_maker/.env.example` is the committed template |
+| `market_maker/.env` | Real Nobitex token, MySQL credentials, optional Telegram bot token/chat id | Secrets — `market_maker/.env.example` is the committed template |
+| `market_maker/results/*.csv` | Every `run.py` session's logged output (real and demo, both pairs) | Runtime data, machine-specific, not a project deliverable — the `results/` directory itself is tracked (via `.gitkeep`) so it always exists |
+| `market_maker/demo_costs_*.json` | Running per-symbol/combined transaction-cost totals (usage.md §1.7) | Local runtime state, regenerated per machine, not meaningful to share |
 | `reports/` | This author's own working notes on the refactor (structural review, decisions, deferred items) | Personal analysis notes, not a project deliverable |
 
 If you're missing `market_maker/.env`, copy `market_maker/.env.example` and fill in real values — see **[usage.md](usage.md)** for full setup, running, and testing instructions. `reports/` isn't needed to build, test, or run anything — it exists only as a paper trail for this refactor.
@@ -725,7 +736,7 @@ A comprehensive, live-updating history dashboard (`python dashboard.py`) covers 
 * **Persistence (`save_to_db`, the MySQL connection in `__init__`) is not behind an interface** — `SimpleMarketMaker` still requires a live MySQL server to be constructed at all. Extracting a `TradeLogStore` interface (mirroring `ExchangeClient`) is the natural next seam.
 * **`portfolio.py`'s `Nobitex_portfolio` is not behind `ExchangeClient`** — `run.py`'s `--exchange` flag today only changes order execution/quotes, not portfolio valuation.
 * **Git history contains the original hardcoded secrets** (the Nobitex token and MySQL password, from commits predating the `.env` migration). Moving them to `.env` stops new exposure but doesn't erase history — rotating both credentials is recommended and is a team/repo-owner decision.
-* **Demo mode's fills are a simplification** — `--mode demo` assumes the full requested amount fills instantly at the quoted price (no partial fills, slippage, or queue modeling). Fine for exercising the strategy against real prices; not a fill-probability model. See usage.md §1b.
+* **Demo mode's fills are a simplification** — `--mode demo` assumes the full requested amount fills instantly at the quoted price (no partial fills, slippage, or queue modeling); transaction cost itself *is* simulated realistically from `commission_perc`, tracked per-symbol and combined across symbols, and reported via optional Telegram notifications. Fine for exercising the strategy against real prices; not a fill-probability model. See usage.md §1b/§1.7.
 * **Algorithm 2 has no real implementation**, only a stub and this README's math — see [Algorithm 2](#algorithm-2-avellaneda-stoikov-model).
 
 ---
@@ -736,7 +747,7 @@ A comprehensive, live-updating history dashboard (`python dashboard.py`) covers 
 
 **Add a new exchange:** implement `ExchangeClient` (`market_maker/exchange/base.py`) in `market_maker/exchange/`, add it to `run.py`'s `EXCHANGES` dict. No engine or strategy changes needed.
 
-**Add a new currency pair:** add an entry to `run.py`'s `PROFILES` dict with the pair's `MMConfig` values. No new files.
+**Add a new currency pair:** add an entry to `config.py`'s `TRADING_PROFILES` dict with the pair's `MMConfig` values (including its own `demo_inv_initial`). No new files, and `run.py`/`dashboard.py` pick it up automatically.
 
 ---
 

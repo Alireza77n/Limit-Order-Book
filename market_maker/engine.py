@@ -1,12 +1,14 @@
+import json
 import math
 import time
 import numpy as np
+import requests
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple, List, Set  # add Set
 import pandas as pd
 
-from config import MMConfig
+from config import MMConfig, RESULTS_DIR
 from portfolio import Nobitex_portfolio
 from strategy.base import Strategy
 from strategy.algo1 import Algo1Strategy
@@ -27,6 +29,11 @@ MYSQL_USER = os.environ.get("MYSQL_USER")
 MYSQL_PASSWORD = os.environ.get("MYSQL_PASSWORD")
 MYSQL_DATABASE = os.environ.get("MYSQL_DATABASE", "trading_bot")
 
+# Telegram round notifications (optional -- no-ops if unset). See
+# reports/telegram-notify.md for how TELEGRAM_CHAT_ID was obtained.
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+
 
 
 
@@ -44,6 +51,7 @@ class SimpleMarketMaker:
         self.cash_initial = cfg.cash_initial
         self.session=cfg.session
         self.persist_to_db = persist_to_db
+        self.mode_label = "real" if persist_to_db else "demo"
 
         # Connect to MySQL (use your existing DB) -- skipped entirely in
         # demo/paper-trading mode so a demo run never touches the real
@@ -195,6 +203,66 @@ class SimpleMarketMaker:
     # NOTE: exchange-specific I/O now lives in exchange/nobitex.py (NobitexExchangeClient).
     def wallet_balance(self, currency: str) -> Optional[float]:
         return self.exchange.wallet_balance(currency)
+
+    # ---------- Telegram notifications ----------
+    def _notify_telegram(self, text: str) -> None:
+        """Best-effort push to Telegram. No-ops if unconfigured; never
+        raises, so a network hiccup can't take down the trading loop."""
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            return
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"Telegram notify failed: {e}")
+
+    def _notify_startup(self) -> None:
+        self._notify_telegram(
+            f"✅ <b>Market Maker connected</b>\n"
+            f"Symbol: <b>{self.pair}</b>\n"
+            f"Algorithm: <b>{self.strategy.__class__.__name__}</b> (profile: {self.algorithm_id})\n"
+            f"Mode: <b>{self.mode_label}</b>\n"
+            f"Session: {self.session}"
+        )
+
+    def _format_round_message(
+        self, round_no: int, stamp: str,
+        best_bid: float, best_ask: float, last_price: float,
+        bid_price: Optional[float], ask_price: Optional[float],
+        bid_lvl: Optional[int], ask_lvl: Optional[int],
+        inv_current: float, cash_current: float, portfolio_wealth: float,
+        buy_sent: int, buy_size_value: float, bid_price_sent: Optional[float], buy_id: Optional[str],
+        sell_sent: int, sell_size_value: float, ask_price_sent: Optional[float], sell_id: Optional[str],
+        round_fee_irt: float, symbol_total_fee_irt: float, combined_total_fee_irt: float,
+    ) -> str:
+        quote_line = (
+            f"Bid: {bid_price:.2f} (lvl {bid_lvl})  Ask: {ask_price:.2f} (lvl {ask_lvl})"
+            if bid_price is not None and ask_price is not None else "No quote this round"
+        )
+        buy_line = (
+            f"\U0001F7E2 Buy sent: {buy_size_value:.8f} @ {bid_price_sent:.2f} (id {buy_id})"
+            if buy_sent else "\U0001F7E2 Buy: not sent"
+        )
+        sell_line = (
+            f"\U0001F534 Sell sent: {sell_size_value:.8f} @ {ask_price_sent:.2f} (id {sell_id})"
+            if sell_sent else "\U0001F534 Sell: not sent"
+        )
+        return (
+            f"<b>{self.pair}</b> · {self.strategy.__class__.__name__} · {self.mode_label} · Round {round_no}\n"
+            f"\U0001F550 {stamp}\n\n"
+            f"Quote — {quote_line}\n"
+            f"Market — Best Bid: {best_bid:.2f}  Best Ask: {best_ask:.2f}  Last: {last_price:.2f}\n\n"
+            f"Inventory: {inv_current:.8f}\n"
+            f"Cash: {cash_current:,.2f}\n"
+            f"Wealth: {portfolio_wealth:,.2f}\n\n"
+            f"{buy_line}\n{sell_line}\n\n"
+            f"Transaction cost this round: {round_fee_irt:,.2f} IRT\n"
+            f"Total cost paid — {self.pair}: {symbol_total_fee_irt:,.2f} IRT\n"
+            f"Total cost paid — all symbols: {combined_total_fee_irt:,.2f} IRT"
+        )
 
 
 
@@ -357,35 +425,66 @@ class SimpleMarketMaker:
         """
         orders = self.get_status_orders(statuse)  # fetch only our own tracked closed orders
         print("Closed orders considered for update:", orders)
-    
+
         inv_delta = inv_coin
         cash_delta = inv_cash
-    
+
         # (optional) get last price just in case you need it
         ob = self._get_orderbook()
         last_price = float(ob.get("lastTradePrice")) if ob else 0.0
-    
+
+        # Transaction cost for this round, converted to quote-currency (IRT)
+        # terms so it's comparable/summable across pairs -- buy fees are
+        # charged in the base asset (fee * price), sell fees already in quote.
+        self.last_round_fee_irt = 0.0
+
         for order in orders:
             order_type = order.get("type")
             clid = str(order.get("clientOrderId") or "")
             matched = float(order.get("matchedAmount", 0.0))  # executed volume
             price = float(order.get("price", 0.0))
             fee = float(order.get("_raw", {}).get("fee", 0.0))  # may be str
-    
+
             if order_type == "buy":
                 # Fee is deducted from the base asset
                 inv_delta += (matched - fee)
                 cash_delta -= matched * price
+                self.last_round_fee_irt += fee * price
             elif order_type == "sell":
                 # Fee is deducted from the quote asset
                 inv_delta -= matched
                 cash_delta += matched * price - fee
-    
+                self.last_round_fee_irt += fee
+
             # ✅ Remove this order ID so it won't be processed again
             if clid in self.recent_order_ids:
                 self.recent_order_ids.remove(clid)
-    
+
         return inv_delta, cash_delta
+
+    def _accumulate_cost(self, round_fee_irt: float) -> Tuple[float, float]:
+        """Best-effort, cross-process running total of transaction costs
+        (IRT), shared via a small local JSON file keyed by pair -- so a BTC
+        run and a USDT run (each its own process, per usage.md) can both
+        report a combined total. No locking: a lost update on a rare
+        simultaneous write is an acceptable tradeoff for a demo notification,
+        not something the trading logic depends on.
+
+        Returns (this pair's cumulative cost, combined cost across all pairs).
+        """
+        path = os.path.join(os.path.dirname(__file__), f"demo_costs_{self.mode_label}.json")
+        try:
+            costs = {}
+            if os.path.exists(path):
+                with open(path) as f:
+                    costs = json.load(f)
+            costs[self.pair] = costs.get(self.pair, 0.0) + round_fee_irt
+            with open(path, "w") as f:
+                json.dump(costs, f)
+            return costs[self.pair], sum(costs.values())
+        except Exception as e:
+            print(f"Cost tracking file failed: {e}")
+            return round_fee_irt, round_fee_irt
 
 
 
@@ -432,8 +531,10 @@ class SimpleMarketMaker:
             self.recent_order_ids = []
 
         if not hasattr(self, "session"):
-            self.session = int(datetime.now().timestamp())    
-    
+            self.session = int(datetime.now().timestamp())
+
+        self._notify_startup()
+
         # Initial inventory & cash vectors
         inv_coins, inv_cash = [self.inv_initial], [self.cash_initial]
 
@@ -474,7 +575,8 @@ class SimpleMarketMaker:
 
     
         # CSV path
-        csv_path = getattr(self, "csv_path", getattr(self.cfg, "output_csv", "/root/Nouri/Algo1/btc_track.csv"))
+        csv_path = getattr(self, "csv_path", getattr(self.cfg, "output_csv", None)) \
+            or os.path.join(RESULTS_DIR, "track.csv")
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
     
         # Load or initialize DataFrame and ensure all columns exist
@@ -540,7 +642,10 @@ class SimpleMarketMaker:
                 inv_cash.append(cash_delta)
                 inv_current, cash_current = inv_delta, cash_delta
                 portfolio_wealth = inv_current * last_price + cash_current
-    
+
+                round_fee_irt = getattr(self, "last_round_fee_irt", 0.0)
+                symbol_total_fee_irt, combined_total_fee_irt = self._accumulate_cost(round_fee_irt)
+
                 print(f"[{stamp}] Inventory={inv_current:.6f}, Cash={cash_current:.2f}, Wealth={portfolio_wealth:.2f}")
     
                 # ---- (C2) Cancel stale orders & reflect cancellations in DF/tracking ----
@@ -630,7 +735,16 @@ class SimpleMarketMaker:
 
     
                 order_df.loc[len(order_df)] = new_row
-    
+
+                self._notify_telegram(self._format_round_message(
+                    round_no, stamp, best_bid, best_ask, last_price,
+                    bid_price, ask_price, bid_lvl, ask_lvl,
+                    inv_current, cash_current, portfolio_wealth,
+                    buy_sent, buy_size_value, bid_price_sent, buy_id,
+                    sell_sent, sell_size_value, ask_price_sent, sell_id,
+                    round_fee_irt, symbol_total_fee_irt, combined_total_fee_irt,
+                ))
+
                 # ---- (F) Persist: rewrite full CSV so prior status edits are saved ----
                 order_df.to_csv(csv_path, index=False)
     

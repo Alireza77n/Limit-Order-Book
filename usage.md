@@ -47,10 +47,14 @@ Required variables (`market_maker/.env`, template in `.env.example`):
 | `MYSQL_USER` | yes | none | Trade-log DB user |
 | `MYSQL_PASSWORD` | yes | none | Trade-log DB password |
 | `MYSQL_DATABASE` | no | `trading_bot` | Trade-log DB name (needs `sessions`/`logs` tables) |
+| `TELEGRAM_BOT_TOKEN` | no | none | Enables round-by-round Telegram notifications (§1.7) if set together with `TELEGRAM_CHAT_ID` |
+| `TELEGRAM_CHAT_ID` | no | none | Telegram chat/channel to notify |
 
 Without `NOBITEX_API_TOKEN`, wallet/order calls print "not configured" and
 no-op instead of crashing -- but `run()` still requires MySQL to even
-start (see [§5](#5-why-theres-no-demo-mode-today)).
+start (see [§5](#5-what-demo-mode-does-not-do)). Without both Telegram
+variables, notifications are silently skipped -- they're optional and
+never required to run the bot.
 
 ### 1.2 Run: BTC, Algorithm 1 (the common case)
 
@@ -61,7 +65,7 @@ python run.py --profile btc
 
 Equivalent to old `demo_btc.py`: `BTCIRT` pair, `depth_max=10`,
 `inv_max=0.000472`, `order_size=0.000015`, 60s between rounds, up to 500
-rounds, logs to `/root/Nouri/Algo1/btc_track.csv`.
+rounds, logs to `market_maker/results/btc_track.csv`.
 
 ### 1.3 Run: USDT, Algorithm 1
 
@@ -72,7 +76,7 @@ python run.py --profile usdt
 
 Equivalent to old `demo_usdt.py`: `USDTIRT` pair, `inv_max=50`,
 `order_size=1`, 10s between rounds, up to 50000 rounds, logs to
-`/root/Nouri/Algo1/usdt_track.csv`.
+`market_maker/results/usdt_track.csv`.
 
 ### 1.4 Run: Algorithm 2 (not implemented -- will error)
 
@@ -99,8 +103,9 @@ python run.py --help
                            demo: simulated orders, no MySQL -- see §1b.
 ```
 
-Adding a new profile/algorithm/exchange is a registry entry in `run.py`,
-not a new file -- see README.md's "Extending" section.
+Adding a new currency pair is a `config.TRADING_PROFILES` entry; adding a
+new algorithm/exchange is a `run.py` registry entry -- neither needs a new
+file. See README.md's "Extending" section.
 
 ### 1.6 Stopping
 
@@ -108,6 +113,32 @@ not a new file -- see README.md's "Extending" section.
 to MySQL, then (in `finally`) cancels all open orders on Nobitex before
 exiting. Killing the process any other way (`kill -9`, terminal close)
 skips this cleanup and can leave open orders on the exchange.
+
+### 1.7 Telegram notifications & transaction-cost tracking
+
+Optional, off by default. Set both `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` in `.env` to get:
+
+- A **startup message** when `run()` begins: symbol, algorithm, mode
+  (real/demo), session id.
+- A **message every round**: the quote decided (or "no quote this
+  round"), best bid/ask/last, current inventory/cash/wealth, whether a
+  buy/sell was actually sent (with size and price), the **transaction
+  cost for that round**, the **cumulative cost paid for this symbol**,
+  and the **cumulative cost paid across all symbols combined**.
+
+Cumulative totals are tracked in a small local JSON file
+(`market_maker/demo_costs_<mode>.json`, gitignored, never committed) keyed
+by trading pair -- this is what lets a BTC process and a separately-running
+USDT process each report a combined total that includes the other's costs,
+since every `run.py` invocation is its own process (§1b's "run both at
+once"). No locking: a lost update on a rare simultaneous write from two
+processes is an accepted tradeoff for a notification feature, not
+something the trading logic itself depends on.
+
+Both the notification call and the cost-tracking write are best-effort --
+a Telegram/network hiccup or a file-write failure is caught and logged,
+never allowed to crash the trading loop.
 
 ---
 
@@ -124,6 +155,22 @@ what happens after a quote is decided:
   Nobitex's order-placement endpoint, a simulated order is recorded
   locally and reported back as instantly and fully filled. No real order
   is ever placed; no real money moves.
+- **Transaction cost: simulated realistically.** Each simulated fill's fee
+  is `amount * commission_perc` (buys, base currency) or
+  `amount * price * commission_perc` (sells, quote currency) -- the same
+  `commission_perc` the profile already uses for the spread-feasibility
+  check, not a hardcoded zero. See §1.7 for how costs are reported and
+  accumulated.
+- **Inventory starts from a configurable value, not a hardcoded one.**
+  `run.py --mode demo` sets `inv_initial` from each profile's own
+  `demo_inv_initial` (an `MMConfig` field, default `0.0`) -- paper trading
+  starts flat by default, but BTC and USDT can each be tuned independently
+  by editing `TRADING_PROFILES["btc"]["demo_inv_initial"]` /
+  `TRADING_PROFILES["usdt"]["demo_inv_initial"]` **in `config.py`** (not
+  `run.py` -- all per-pair values, including this one, live in one place).
+  Real mode never reads this field -- it always uses the profile's real
+  `inv_initial`. `cash_initial` is unchanged in demo mode (you still need
+  starting capital to size orders against).
 - **No MySQL required.** `persist_to_db=False` in demo mode -- the engine
   never opens a database connection.
 - **Results still saved completely** -- to a separate CSV so demo runs

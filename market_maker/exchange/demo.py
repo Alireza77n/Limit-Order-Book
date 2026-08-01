@@ -27,9 +27,10 @@ class DemoExchangeClient(ExchangeClient):
     a return estimate.
     """
 
-    def __init__(self, market_data: NobitexExchangeClient, pair: str):
+    def __init__(self, market_data: NobitexExchangeClient, pair: str, commission_perc: float = 0.0):
         self._market_data = market_data
         self._pair = pair.upper()
+        self._commission_perc = commission_perc
         self._orders: Dict[str, Dict[str, Any]] = {}
 
     # ---------- Real market data (read-only, no risk) ----------
@@ -46,6 +47,12 @@ class DemoExchangeClient(ExchangeClient):
         if clientOrderId is None:
             clientOrderId = f"demo-{order_type}-{int(time.time()*1000)}"
 
+        # Simulated commission, in the same units the engine expects a real
+        # exchange's fee to arrive in: base-asset amount for buys, quote
+        # currency (matches send price) for sells.
+        fee = amount * self._commission_perc if order_type == "buy" \
+            else amount * price * self._commission_perc
+
         self._orders[clientOrderId] = {
             "id": clientOrderId,
             "clientOrderId": clientOrderId,
@@ -57,7 +64,7 @@ class DemoExchangeClient(ExchangeClient):
             "price": float(price),
             "created_at": datetime.now(pytz.utc).strftime("%Y-%m-%dT%H:%M:%S.%f%z"),
             "pair": self._pair,
-            "_raw": {"fee": 0.0},
+            "_raw": {"fee": fee},
         }
         return clientOrderId
 

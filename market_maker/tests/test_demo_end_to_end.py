@@ -6,10 +6,25 @@ Nobitex's public orderbook endpoint -- no auth, read-only, nothing placed).
 They're kept in their own file and skip cleanly (not fail) if the network
 is unavailable, so an offline/CI environment doesn't get a false failure.
 
-What they prove, for each of run.py's PROFILES, that pure unit tests can't:
+Construction goes through run.make_cfg()/run.make_bot() -- the exact same
+functions `python run.py --mode demo` calls -- instead of hand-duplicating
+that wiring. An earlier version of this file *did* hand-duplicate it and
+missed the inv_initial=0.0 demo-mode override as a result, which was only
+caught because it (very visibly) sent Telegram messages showing non-zero
+starting inventory. Routing through the real functions makes that class of
+drift structurally impossible: if make_cfg/make_bot ever changes, this
+test automatically exercises the new behavior instead of a stale copy.
+
+Telegram is force-disabled here regardless of what's in this machine's
+.env -- a test run is not a real trading session and must never post to
+a real chat.
+
+What these tests prove, for each of run.py's PROFILES, that pure unit
+tests can't:
 - The whole run() loop actually completes against live data without
-  raising, for a real MMConfig/NobitexExchangeClient/DemoExchangeClient/
-  Algo1Strategy wiring identical to what `python run.py --mode demo` uses.
+  raising, using the exact same setup path the CLI uses.
+- Demo mode actually starts with zero inventory in practice, not just in
+  the code that's supposed to set it.
 - NobitexExchangeClient.send_order is never called, even once, across a
   real run -- not just "DemoExchangeClient doesn't expose a path to it"
   (proven structurally elsewhere) but "the engine's real control flow
@@ -18,7 +33,6 @@ What they prove, for each of run.py's PROFILES, that pure unit tests can't:
 - The output CSV is written with sane, complete rows.
 """
 
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -26,12 +40,7 @@ import pytest
 import requests
 
 import run
-from config import MMConfig
-from portfolio import Nobitex_portfolio
-from engine import SimpleMarketMaker
 from exchange.nobitex import NobitexExchangeClient
-from exchange.demo import DemoExchangeClient
-from strategy.algo1 import Algo1Strategy
 
 EXPECTED_COLUMNS = [
     "Session_id", "Algorithm", "Crypto", "Timestamp", "Bid Level", "Ask Level",
@@ -48,9 +57,14 @@ def _skip_if_offline():
         pytest.skip("No network access to Nobitex -- skipping end-to-end demo test.")
 
 
-@pytest.mark.parametrize("profile_name", sorted(run.PROFILES))
+@pytest.mark.parametrize("profile_name", sorted(run.TRADING_PROFILES))
 def test_demo_mode_end_to_end_real_data_no_real_orders(monkeypatch, tmp_path, profile_name):
     _skip_if_offline()
+
+    # Never let a test post to the real Telegram chat, no matter what this
+    # machine's .env has configured.
+    monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
 
     def _forbidden_send_order(*args, **kwargs):
         raise AssertionError(
@@ -60,27 +74,18 @@ def test_demo_mode_end_to_end_real_data_no_real_orders(monkeypatch, tmp_path, pr
 
     monkeypatch.setattr(NobitexExchangeClient, "send_order", _forbidden_send_order)
 
-    overrides = dict(run.PROFILES[profile_name])
-    overrides["max_rounds"] = 2
-    overrides["time_step"] = 1
-    overrides["output_csv"] = str(tmp_path / f"{profile_name}_demo_e2e.csv")
+    cfg = run.make_cfg(profile_name, mode="demo")
+    cfg.max_rounds = 2
+    cfg.time_step = 1
+    cfg.output_csv = str(tmp_path / f"{profile_name}_demo_e2e.csv")
 
-    cfg = MMConfig(session=datetime.now().timestamp(), **overrides)
-    cfg.algorithm_id = f"{cfg.algorithm_id}-demo-e2e"
+    assert cfg.inv_initial == 0.0  # demo mode must start flat -- this is the bug that shipped once
 
-    nobi_portfo = Nobitex_portfolio(cfg.token)
-    real_exchange = NobitexExchangeClient(
-        token=cfg.token, url_send_order=cfg.url_send_order,
-        url_wallet_balance=cfg.url_wallet_balance, algorithm_id=cfg.algorithm_id,
-    )
-    demo_exchange = DemoExchangeClient(market_data=real_exchange, pair=cfg.pair)
-    strategy = Algo1Strategy(cfg)
-
-    bot = SimpleMarketMaker(cfg, nobi_portfo, demo_exchange, strategy=strategy,
-                             persist_to_db=False)
+    bot = run.make_bot(cfg, algorithm="algo1", exchange_name="nobitex", mode="demo")
 
     assert bot.conn is None
     assert bot.cursor is None
+    assert bot.inv_initial == 0.0
 
     result_df = bot.run()
 
@@ -92,4 +97,8 @@ def test_demo_mode_end_to_end_real_data_no_real_orders(monkeypatch, tmp_path, pr
     assert result_df["Best Bid"].notna().all()
     assert result_df["Best Ask"].notna().all()
     assert (result_df["Best Bid"] <= result_df["Best Ask"]).all()
-    assert Path(overrides["output_csv"]).exists()
+    # Round 1's inventory is logged before any order this run could have
+    # filled -- it must be exactly the flat starting point, not an
+    # inherited real position.
+    assert result_df["inv_current"].iloc[0] == pytest.approx(0.0)
+    assert Path(cfg.output_csv).exists()

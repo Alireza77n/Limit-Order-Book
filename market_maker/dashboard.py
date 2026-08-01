@@ -28,17 +28,19 @@ import plotly.graph_objects as go
 from dash import Dash, dash_table, dcc, html
 from dash.dependencies import Input, Output
 
-from run import PROFILES, _demo_csv_path
+from config import TRADING_PROFILES, demo_csv_path
 
 # Every track this project can produce, explicitly labeled real vs demo so
-# they're never confused with each other in the UI.
+# they're never confused with each other in the UI. Sourced directly from
+# config.TRADING_PROFILES -- the same dict run.py builds MMConfig from --
+# so the dashboard always agrees with run.py about where results live.
 TRACKS = {
-    "btc_real": {"label": "BTC — Real", "path": PROFILES["btc"]["output_csv"], "status": "real"},
+    "btc_real": {"label": "BTC — Real", "path": TRADING_PROFILES["btc"]["output_csv"], "status": "real"},
     "btc_demo": {"label": "BTC — Demo (paper trading)",
-                 "path": _demo_csv_path(PROFILES["btc"]["output_csv"]), "status": "demo"},
-    "usdt_real": {"label": "USDT — Real", "path": PROFILES["usdt"]["output_csv"], "status": "real"},
+                 "path": demo_csv_path(TRADING_PROFILES["btc"]["output_csv"]), "status": "demo"},
+    "usdt_real": {"label": "USDT — Real", "path": TRADING_PROFILES["usdt"]["output_csv"], "status": "real"},
     "usdt_demo": {"label": "USDT — Demo (paper trading)",
-                  "path": _demo_csv_path(PROFILES["usdt"]["output_csv"]), "status": "demo"},
+                  "path": demo_csv_path(TRADING_PROFILES["usdt"]["output_csv"]), "status": "demo"},
 }
 
 ACTIVITY_COLUMNS = [
