@@ -4,11 +4,34 @@ network call happens either way -- the stub's send_order raises if
 called, proving DemoExchangeClient never reaches it.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from exchange.base import ExchangeClient
 from exchange.demo import DemoExchangeClient
 from helpers import make_orderbook
+from paper import PaperLedger
+
+
+T0 = datetime(2026, 8, 1, 8, 0, tzinfo=timezone.utc)
+
+
+def make_demo(pair="BTCIRT", **ledger_overrides):
+    values = {
+        "session_id": "shared",
+        "symbol": pair,
+        "initial_inventory": 10,
+        "initial_cash": 10_000,
+        "commission_perc": 0.01,
+        "valuation_price": 100,
+        "level1_fast_fill_enabled": False,
+    }
+    values.update(ledger_overrides)
+    ledger = PaperLedger(**values)
+    return DemoExchangeClient(
+        market_data=_StubRealExchange(make_orderbook()), pair=pair, ledger=ledger
+    )
 
 
 class _StubRealExchange(ExchangeClient):
@@ -54,48 +77,62 @@ def test_get_orderbook_delegates_to_real_market_data():
     assert stub.get_orderbook_calls == ["BTCIRT"]
 
 
-def test_wallet_balance_delegates_to_real_market_data():
+def test_wallet_balance_does_not_reach_authenticated_real_market_data():
     stub = _StubRealExchange(make_orderbook())
     demo = DemoExchangeClient(market_data=stub, pair="BTCIRT")
 
-    assert demo.wallet_balance("btc") == 123.45
-    assert stub.wallet_balance_calls == ["btc"]
+    assert demo.wallet_balance("btc") is None
+    assert stub.wallet_balance_calls == []
 
 
-def test_send_order_never_touches_real_exchange_and_fills_instantly():
+def test_send_order_never_touches_real_exchange_and_starts_open():
     stub = _StubRealExchange(make_orderbook())
-    demo = DemoExchangeClient(market_data=stub, pair="BTCIRT")
+    ledger = PaperLedger(
+        session_id="shared", symbol="BTCIRT", initial_inventory=10,
+        initial_cash=10_000, commission_perc=0.01, valuation_price=100,
+        level1_fast_fill_enabled=False,
+    )
+    demo = DemoExchangeClient(market_data=stub, pair="BTCIRT", ledger=ledger)
 
-    clid = demo.send_order("buy", "btc", "rls", 0.001, 100.0)
+    clid = demo.send_order(
+        "buy", "btc", "rls", 0.001, 100.0,
+        selected_level=3, now=T0,
+    )
 
     assert clid is not None
-    assert demo.get_order_list_status(status="open") == []
-    closed = demo.get_order_list_status(status="close")
-    assert len(closed) == 1
-    order = closed[0]
+    open_orders = demo.get_order_list_status(status="open")
+    assert len(open_orders) == 1
+    assert demo.get_order_list_status(status="close") == []
+    order = open_orders[0]
     assert order["clientOrderId"] == clid
     assert order["type"] == "buy"
-    assert order["status"] == "done"
-    assert order["matchedAmount"] == 0.001
-    assert order["unmatchedAmount"] == 0.0
+    assert order["status"] == "open"
+    assert order["matchedAmount"] == 0
+    assert order["unmatchedAmount"] == 0.001
     assert order["price"] == 100.0
     assert order["pair"] == "BTCIRT"
 
 
 def test_send_order_respects_explicit_client_order_id():
-    demo = DemoExchangeClient(market_data=_StubRealExchange(make_orderbook()), pair="USDTIRT")
+    demo = make_demo("USDTIRT")
 
-    clid = demo.send_order("sell", "usdt", "rls", 1.0, 50000.0, clientOrderId="my-id-123")
+    clid = demo.send_order(
+        "sell", "usdt", "rls", 1.0, 50000.0,
+        clientOrderId="my-id-123", selected_level=3, now=T0,
+    )
 
     assert clid == "my-id-123"
-    assert demo.get_order_list_status(status="close")[0]["clientOrderId"] == "my-id-123"
+    assert demo.get_order_list_status(status="open")[0]["clientOrderId"] == "my-id-123"
 
 
-def test_cancel_methods_are_safe_no_ops():
-    demo = DemoExchangeClient(market_data=_StubRealExchange(make_orderbook()), pair="BTCIRT")
+def test_cancel_methods_only_cancel_local_simulated_orders():
+    demo = make_demo("BTCIRT")
+    clid = demo.send_order(
+        "buy", "btc", "rls", 1.0, 100.0,
+        clientOrderId="local", selected_level=3, now=T0,
+    )
 
-    assert demo.cancel_all_open_orders(max_pages=10) is None
-    tracked = {"buy": set(), "sell": set()}
-    assert demo.cancel_old_orders(max_age_minutes=10, df=None, tracked_orders=tracked) is tracked
-    result = demo.cancel_order(12345)
+    result = demo.cancel_order(clid, now=T0 + timedelta(seconds=1))
     assert result["status"] == "ok"
+    assert demo.get_order_list_status(status="open") == []
+    assert demo.get_order_list_status(status="close")[0]["status"] == "cancelled"

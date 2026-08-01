@@ -1,104 +1,117 @@
-"""End-to-end tests for demo mode: the full run() loop, for real, against
-real Nobitex market data, for every profile run.py exposes.
+"""Deterministic two-symbol Demo replay with zero-call safety tripwires."""
 
-Unlike every other test in this suite, these make real network calls (to
-Nobitex's public orderbook endpoint -- no auth, read-only, nothing placed).
-They're kept in their own file and skip cleanly (not fail) if the network
-is unavailable, so an offline/CI environment doesn't get a false failure.
-
-Construction goes through run.make_cfg()/run.make_bot() -- the exact same
-functions `python run.py --mode demo` calls -- instead of hand-duplicating
-that wiring. An earlier version of this file *did* hand-duplicate it and
-missed the inv_initial=0.0 demo-mode override as a result, which was only
-caught because it (very visibly) sent Telegram messages showing non-zero
-starting inventory. Routing through the real functions makes that class of
-drift structurally impossible: if make_cfg/make_bot ever changes, this
-test automatically exercises the new behavior instead of a stale copy.
-
-Telegram is force-disabled here regardless of what's in this machine's
-.env -- a test run is not a real trading session and must never post to
-a real chat.
-
-What these tests prove, for each of run.py's PROFILES, that pure unit
-tests can't:
-- The whole run() loop actually completes against live data without
-  raising, using the exact same setup path the CLI uses.
-- Demo mode actually starts with zero inventory in practice, not just in
-  the code that's supposed to set it.
-- NobitexExchangeClient.send_order is never called, even once, across a
-  real run -- not just "DemoExchangeClient doesn't expose a path to it"
-  (proven structurally elsewhere) but "the engine's real control flow
-  never reaches it," verified by monkeypatching it to raise if called.
-- No MySQL connection is attempted (persist_to_db=False).
-- The output CSV is written with sane, complete rows.
-"""
-
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 import pytest
-import requests
 
 import run
+from engine import SimpleMarketMaker
+from exchange.base import ExchangeClient
 from exchange.nobitex import NobitexExchangeClient
 
-EXPECTED_COLUMNS = [
-    "Session_id", "Algorithm", "Crypto", "Timestamp", "Bid Level", "Ask Level",
-    "inv_current", "cash_current", "Portfolio Wealth", "Best Bid", "Best Ask",
-    "Last Price", "Bid Price Sent", "Ask Price Sent", "Buy Size", "Sell Size",
-    "Buy Sent", "Sell Sent", "Buy Status", "Sell Status",
-]
+
+T0 = datetime(2026, 8, 1, 8, 0, tzinfo=timezone.utc)
 
 
-def _skip_if_offline():
-    try:
-        requests.get("https://apiv2.nobitex.ir/v3/orderbook/BTCIRT", timeout=5)
-    except requests.RequestException:
-        pytest.skip("No network access to Nobitex -- skipping end-to-end demo test.")
+class ReplayMarketData(ExchangeClient):
+    def get_orderbook(self, symbol):
+        return {
+            "bids": [[str(1_000_000 - level * 1_000), "10"] for level in range(11)],
+            "asks": [[str(1_001_000 + level * 1_000), "10"] for level in range(11)],
+            "lastTradePrice": "1000500",
+        }
+
+    def wallet_balance(self, currency):
+        raise AssertionError("authenticated wallet access is forbidden")
+
+    def send_order(self, *args, **kwargs):
+        raise AssertionError("real order access is forbidden")
+
+    def get_order_list_status(self, *args, **kwargs):
+        raise AssertionError("real status access is forbidden")
+
+    def cancel_order(self, *args, **kwargs):
+        raise AssertionError("real cancellation is forbidden")
+
+    def cancel_all_open_orders(self, *args, **kwargs):
+        raise AssertionError("real cancellation is forbidden")
+
+    def cancel_old_orders(self, *args, **kwargs):
+        raise AssertionError("real cancellation is forbidden")
 
 
-@pytest.mark.parametrize("profile_name", sorted(run.TRADING_PROFILES))
-def test_demo_mode_end_to_end_real_data_no_real_orders(monkeypatch, tmp_path, profile_name):
-    _skip_if_offline()
+def test_two_symbol_demo_replay_shares_session_isolates_state_and_has_zero_real_calls(
+    monkeypatch, tmp_path
+):
+    calls = {"send": 0, "cancel": 0, "bulk_cancel": 0, "stale_cancel": 0, "mysql": 0}
 
-    # Never let a test post to the real Telegram chat, no matter what this
-    # machine's .env has configured.
+    def forbidden(name):
+        def tripwire(*args, **kwargs):
+            calls[name] += 1
+            raise AssertionError(f"forbidden real side effect: {name}")
+        return tripwire
+
     monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
     monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr("engine.mysql.connector.connect", forbidden("mysql"))
+    monkeypatch.setattr(NobitexExchangeClient, "send_order", forbidden("send"))
+    monkeypatch.setattr(NobitexExchangeClient, "cancel_order", forbidden("cancel"))
+    monkeypatch.setattr(NobitexExchangeClient, "cancel_all_open_orders", forbidden("bulk_cancel"))
+    monkeypatch.setattr(NobitexExchangeClient, "cancel_old_orders", forbidden("stale_cancel"))
 
-    def _forbidden_send_order(*args, **kwargs):
-        raise AssertionError(
-            "NobitexExchangeClient.send_order was called during a demo-mode "
-            "run -- this must never happen, real orders must never be placed."
-        )
+    shared_session = "deterministic-shared-session"
+    fee_path = tmp_path / "fee-scopes.json"
+    results = {}
+    ledgers = {}
 
-    monkeypatch.setattr(NobitexExchangeClient, "send_order", _forbidden_send_order)
+    for profile_name in sorted(run.TRADING_PROFILES):
+        cfg = run.make_cfg(profile_name, mode="demo", session_id=shared_session)
+        cfg.max_rounds = 2
+        cfg.time_step = 0
+        cfg.output_csv = str(tmp_path / f"{profile_name}_demo.csv")
+        cfg.demo_state_path = str(tmp_path / f"{profile_name}_state.json")
+        cfg.demo_fee_state_path = str(fee_path)
+        cfg.demo_level1_fill_delay_seconds = 0
 
-    cfg = run.make_cfg(profile_name, mode="demo")
-    cfg.max_rounds = 2
-    cfg.time_step = 1
-    cfg.output_csv = str(tmp_path / f"{profile_name}_demo_e2e.csv")
+        bot = run.make_bot(cfg, algorithm="algo1", exchange_name="nobitex", mode="demo")
+        bot.exchange._market_data = ReplayMarketData()
+        times = iter([T0, T0 + timedelta(seconds=1), T0 + timedelta(seconds=2)])
+        bot.now_provider = lambda times=times: next(times)
+        bot.sleep_fn = lambda seconds: None
 
-    assert cfg.inv_initial == 0.0  # demo mode must start flat -- this is the bug that shipped once
+        results[profile_name] = bot.run()
+        ledgers[profile_name] = bot.exchange.ledger
 
-    bot = run.make_bot(cfg, algorithm="algo1", exchange_name="nobitex", mode="demo")
+        assert bot.conn is None
+        assert bot.cursor is None
+        assert cfg.inv_initial == 0.0
+        assert Path(cfg.output_csv).exists()
 
-    assert bot.conn is None
-    assert bot.cursor is None
-    assert bot.inv_initial == 0.0
+    assert calls == {"send": 0, "cancel": 0, "bulk_cancel": 0, "stale_cancel": 0, "mysql": 0}
+    assert {ledger.session_id for ledger in ledgers.values()} == {shared_session}
+    assert ledgers["btc"].symbol == "BTCIRT"
+    assert ledgers["usdt"].symbol == "USDTIRT"
+    assert set(ledgers["btc"].order_history).isdisjoint(ledgers["usdt"].order_history)
 
-    result_df = bot.run()
+    for profile_name, frame in results.items():
+        assert isinstance(frame, pd.DataFrame)
+        assert len(frame) == 2
+        assert list(frame.columns) == SimpleMarketMaker.DEMO_COLUMNS
+        assert set(frame["Session_id"]) == {shared_session}
+        assert set(frame["Mode"]) == {"demo"}
+        assert set(frame["Crypto"]) == {run.TRADING_PROFILES[profile_name]["pair"]}
+        assert frame["Best Bid"].notna().all()
+        assert frame["Best Ask"].notna().all()
+        assert frame["Buy Status"].iloc[0] == "filled"
+        assert frame["Buy Fill Reason"].iloc[0] == "level1_fast_fill"
+        assert frame["Buy Matched Amount"].iloc[0] > 0
+        assert frame["Buy Remaining Amount"].iloc[0] == pytest.approx(0)
+        assert frame["Sell Status"].iloc[0] == "not_sent_insufficient_inventory"
+        assert frame["Buy Status"].iloc[1] == "cancelled"
+        assert frame["Sell Status"].iloc[1] == "cancelled"
 
-    assert isinstance(result_df, pd.DataFrame)
-    assert len(result_df) == 2
-    assert list(result_df.columns) == EXPECTED_COLUMNS
-    assert (result_df["Algorithm"] == cfg.algorithm_id).all()
-    assert (result_df["Crypto"] == cfg.pair).all()
-    assert result_df["Best Bid"].notna().all()
-    assert result_df["Best Ask"].notna().all()
-    assert (result_df["Best Bid"] <= result_df["Best Ask"]).all()
-    # Round 1's inventory is logged before any order this run could have
-    # filled -- it must be exactly the flat starting point, not an
-    # inherited real position.
-    assert result_df["inv_current"].iloc[0] == pytest.approx(0.0)
-    assert Path(cfg.output_csv).exists()
+    scopes = ledgers["btc"].fee_scopes()
+    expected_combined = ledgers["btc"].fees_quote + ledgers["usdt"].fees_quote
+    assert scopes.session_all_symbols == pytest.approx(expected_combined)

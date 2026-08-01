@@ -8,6 +8,7 @@ hardcoded literal), and real mode must be completely unaffected.
 import pytest
 
 import run
+from session import initialize_stack_session
 
 
 @pytest.mark.parametrize("profile_name", sorted(run.TRADING_PROFILES))
@@ -34,3 +35,42 @@ def test_demo_inv_initial_is_independently_configurable_per_profile(monkeypatch)
     assert run.make_cfg("usdt", mode="demo").inv_initial == 42.0
     # Real mode is never affected by the demo_inv_initial value.
     assert run.make_cfg("btc", mode="real").inv_initial == run.TRADING_PROFILES["btc"]["inv_initial"]
+
+
+@pytest.mark.parametrize("mode", ["real", "demo"])
+def test_make_cfg_records_explicit_trading_mode(mode):
+    cfg = run.make_cfg("btc", mode=mode)
+
+    assert cfg.mode == mode
+
+
+def test_make_cfg_uses_explicit_shared_session_id_for_both_profiles():
+    shared = "demo-session-20260801-001"
+
+    btc = run.make_cfg("btc", mode="demo", session_id=shared)
+    usdt = run.make_cfg("usdt", mode="demo", session_id=shared)
+
+    assert btc.session == shared
+    assert usdt.session == shared
+
+
+def test_make_cfg_loads_demo_session_from_configured_file(monkeypatch, tmp_path):
+    path = tmp_path / "stack-session.json"
+    shared = initialize_stack_session(path, nonce="compose")
+    monkeypatch.setenv("DEMO_SESSION_FILE", str(path))
+
+    btc = run.make_cfg("btc", mode="demo")
+    usdt = run.make_cfg("usdt", mode="demo")
+
+    assert btc.session == shared
+    assert usdt.session == shared
+
+
+def test_real_mode_ignores_demo_session_file(monkeypatch, tmp_path):
+    path = tmp_path / "stack-session.json"
+    shared = initialize_stack_session(path, nonce="compose")
+    monkeypatch.setenv("DEMO_SESSION_FILE", str(path))
+
+    cfg = run.make_cfg("btc", mode="real")
+
+    assert cfg.session != shared

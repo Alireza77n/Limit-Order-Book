@@ -4,7 +4,7 @@ server involved, just CSV-in/DataFrame-out logic."""
 import pandas as pd
 import pytest
 
-from dashboard import filter_session, load_track, session_ids, with_derived_spreads
+from dashboard import activity_records, filter_session, load_track, session_ids, with_derived_spreads
 
 COLUMNS = [
     "Session_id", "Algorithm", "Crypto", "Timestamp",
@@ -12,6 +12,60 @@ COLUMNS = [
     "Best Bid", "Best Ask", "Last Price", "Bid Price Sent", "Ask Price Sent",
     "Buy Size", "Sell Size", "Buy Sent", "Sell Sent", "Buy Status", "Sell Status",
 ]
+
+DEMO_ROW = {
+    "Session_id": "shared-session",
+    "Algorithm": "1usdt",
+    "Crypto": "USDTIRT",
+    "Mode": "demo",
+    "Round": 2,
+    "Timestamp": "2026-08-01 12:00:01",
+    "Quote Status": "quote_generated",
+    "No Quote Reason": None,
+    "Bid Level": 2,
+    "Ask Level": 3,
+    "inv_current": 0.4,
+    "cash_current": 960.0,
+    "Locked Cash": 0.0,
+    "Locked Inventory": 0.0,
+    "Available Cash": 960.0,
+    "Available Inventory": 0.4,
+    "Portfolio Wealth": 1000.0,
+    "Best Bid": 99.0,
+    "Best Ask": 100.0,
+    "Last Price": 100.0,
+    "Bid Price": 98.0,
+    "Ask Price": 101.0,
+    "Buy Order ID": "buy-1",
+    "Buy Status": "partially_filled",
+    "Buy Not Sent Reason": None,
+    "Buy Original Amount": 1.0,
+    "Buy Matched Amount": 0.4,
+    "Buy Processed Matched Amount": 0.4,
+    "Buy Remaining Amount": 0.6,
+    "Buy Fill Reason": "trade_cross",
+    "Buy Selected Level": 2,
+    "Buy Limit Price": 98.0,
+    "Buy Locked Cash": 58.8,
+    "Buy Telegram Message ID": 101,
+    "Sell Order ID": None,
+    "Sell Status": "not_sent_insufficient_inventory",
+    "Sell Not Sent Reason": "insufficient_inventory",
+    "Sell Original Amount": 0.0,
+    "Sell Matched Amount": 0.0,
+    "Sell Processed Matched Amount": 0.0,
+    "Sell Remaining Amount": 0.0,
+    "Sell Fill Reason": None,
+    "Sell Selected Level": None,
+    "Sell Limit Price": None,
+    "Sell Locked Inventory": 0.0,
+    "Sell Telegram Message ID": None,
+    "Round Fee": 0.04,
+    "Session Pair Fee": 0.04,
+    "Session All Symbols Fee": 0.04,
+    "Pair All Time Fee": 1.04,
+    "All Symbols All Time Fee": 2.04,
+}
 
 
 def _make_csv(tmp_path, rows):
@@ -81,3 +135,26 @@ def test_filter_session_specific_id_filters_rows(tmp_path):
     filtered = filter_session(df, 2)
     assert len(filtered) == 1
     assert filtered["Session_id"].iloc[0] == 2
+
+
+def test_demo_spreads_use_explicit_quote_price_columns():
+    frame = pd.DataFrame([DEMO_ROW])
+
+    result = with_derived_spreads(frame)
+
+    assert result["Bid Spread"].iloc[0] == pytest.approx(1.5)
+    assert result["Ask Spread"].iloc[0] == pytest.approx(1.5)
+
+
+def test_demo_activity_matches_explicit_csv_lifecycle_fields():
+    frame = pd.DataFrame([DEMO_ROW])
+
+    records = activity_records(frame)
+
+    assert len(records) == 1
+    assert records[0]["Buy Order ID"] == "buy-1"
+    assert records[0]["Buy Status"] == "partially_filled"
+    assert records[0]["Buy Matched Amount"] == pytest.approx(0.4)
+    assert records[0]["Buy Remaining Amount"] == pytest.approx(0.6)
+    assert records[0]["Buy Telegram Message ID"] == 101
+    assert records[0]["Sell Status"] == "not_sent_insufficient_inventory"
