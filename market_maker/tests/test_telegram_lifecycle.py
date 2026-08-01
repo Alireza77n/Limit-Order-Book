@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import pytest
 
 from paper import PaperLedger
+from no_quote import NoQuoteMonitor
+from result_store import DemoResultStore
 from telegram_lifecycle import PaperTelegramReporter, TelegramClient
 
 
@@ -179,3 +181,43 @@ def test_failure_uses_unthreaded_fallback_and_never_changes_accounting(tmp_path)
     assert after == before
     assert ledger.get_order("buy-1").telegram_last_reported_matched == pytest.approx(1)
     assert ledger.get_order("buy-1").telegram_pending_event is None
+
+
+def test_no_quote_alert_and_recovery_include_operational_evidence(tmp_path):
+    store = DemoResultStore(tmp_path / "results.sqlite3", ["Session_id", "Crypto", "Round"])
+    monitor = NoQuoteMonitor(
+        store,
+        "shared-session",
+        "USDTIRT",
+        alert_rounds=1,
+        alert_seconds=300,
+        cooldown_seconds=1800,
+    )
+    diagnostics = {
+        "commission": 0.001,
+        "exp_ret_min": 0.001,
+        "required_threshold": 0.002,
+        "candidates": [{"bid_price": 100, "ask_price": 100.1, "spread": 0.001}],
+    }
+    alert = monitor.record_no_quote(1, NOW, "profitability_threshold", diagnostics)
+    post = _Post([
+        _Response(200, {"ok": True, "result": {"message_id": 301}}),
+        _Response(200, {"ok": True, "result": {"message_id": 302}}),
+    ])
+    reporter = PaperTelegramReporter(TelegramClient("token", "chat", post=post))
+
+    assert reporter.no_quote_alert(alert) == 301
+    monitor.mark_delivered(alert, 301)
+    recovery = monitor.record_quote(2, NOW.replace(minute=1))
+    assert reporter.no_quote_recovered(recovery) == 302
+
+    alert_text = post.calls[0][1]["text"]
+    assert "USDTIRT" in alert_text
+    assert "profitability_threshold" in alert_text
+    assert "Commission: 0.001" in alert_text
+    assert "Minimum expected return: 0.001" in alert_text
+    assert "Required threshold: 0.002" in alert_text
+    assert "bid=100" in alert_text
+    assert "ask=100.1" in alert_text
+    assert "spread=0.001" in alert_text
+    assert "NO-QUOTE RECOVERED" in post.calls[1][1]["text"]

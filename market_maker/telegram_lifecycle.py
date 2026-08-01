@@ -154,3 +154,64 @@ class PaperTelegramReporter:
                 self.order_submitted(ledger, order)
             if order.telegram_pending_event:
                 self.order_changed(ledger, PaperEvent(**order.telegram_pending_event))
+
+    @staticmethod
+    def _candidate_lines(diagnostics) -> str:
+        candidates = diagnostics.get("candidates") or []
+        if not candidates:
+            return "Candidates: none"
+        lines = []
+        for index, candidate in enumerate(candidates, start=1):
+            lines.append(
+                f"Candidate {index}: "
+                f"bid={candidate.get('bid_price')} "
+                f"ask={candidate.get('ask_price')} "
+                f"spread={candidate.get('spread')}"
+            )
+        return "\n".join(lines)
+
+    @classmethod
+    def _no_quote_alert_text(cls, decision) -> str:
+        diagnostics = decision.payload.get("diagnostics") or decision.snapshot.diagnostics or {}
+        return (
+            "🚨 DEMO NO-QUOTE ALERT\n\n"
+            f"Symbol: {decision.snapshot.symbol}\n"
+            f"Session: {decision.snapshot.session_id}\n"
+            f"Alert type: {decision.kind}\n"
+            f"Consecutive rounds: {decision.payload.get('count', decision.snapshot.consecutive_count)}\n"
+            f"Episode seconds: {decision.payload.get('episode_seconds', decision.snapshot.episode_seconds)}\n"
+            f"Reason: {decision.payload.get('reason', decision.snapshot.reason)}\n"
+            f"Commission: {diagnostics.get('commission')}\n"
+            f"Minimum expected return: {diagnostics.get('exp_ret_min')}\n"
+            f"Required threshold: {diagnostics.get('required_threshold')}\n"
+            f"{cls._candidate_lines(diagnostics)}"
+        )
+
+    @staticmethod
+    def _no_quote_recovery_text(decision) -> str:
+        return (
+            "✅ DEMO NO-QUOTE RECOVERED\n\n"
+            f"Symbol: {decision.snapshot.symbol}\n"
+            f"Session: {decision.snapshot.session_id}\n"
+            f"Episode rounds: {decision.payload.get('episode_count', 0)}\n"
+            f"Episode seconds: {decision.payload.get('episode_seconds', 0)}\n"
+            f"Previous reason: {decision.payload.get('reason')}\n"
+            "Status: QUOTE GENERATED"
+        )
+
+    def no_quote_alert(self, decision) -> Optional[int]:
+        if decision is None or not decision.kind or decision.kind == "recovered":
+            return None
+        if not self.client.configured:
+            return None
+        return self.client.send(self._no_quote_alert_text(decision))
+
+    def no_quote_recovered(self, decision) -> Optional[int]:
+        if decision is None or decision.kind != "recovered":
+            return None
+        if not self.client.configured:
+            return None
+        return self.client.send(
+            self._no_quote_recovery_text(decision),
+            reply_to_message_id=decision.snapshot.last_message_id,
+        )
