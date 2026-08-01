@@ -18,3 +18,11 @@ market_maker/research/
 **/.pytest_cache/
 market_maker/tests/
 .DS_Store
+
+.docker-validation-results*
+runtime/
+deploy/backups/
+deploy/*.secret
+.env
+**/.env
+!deploy/demo.env
