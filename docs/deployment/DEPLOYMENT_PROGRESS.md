@@ -692,3 +692,107 @@ the server checkout too.
 Exact next step is unchanged: a separate session/tool ("Codex") performs the
 actual server deployment by following `docs/deployment/ADMIN_PAGE.md` end to
 end against the production host. This session still deploys nothing.
+
+## 2026-08-01 — Admin Demo Control production deployment
+
+Deployment completed on `ubuntu@185.206.95.141`. The originally authorized
+feature commit was `778510b82ccf3c63a66830b06495917492b07cae`; production
+ultimately runs follow-up fix commit
+`a4707439a88699053a88d415296d030d8251c119` after two production verification
+failures were reproduced and fixed test-first.
+
+Completed work and evidence:
+
+- Fast-forwarded only `parsaoryani/admin-demo-control` and `production`.
+  `main` remained untouched at `ba44366ba266b4e00d9da9467a888ef4f8492727`.
+- Created gitignored `deploy/admin.env` on the server with mode `0600`, a
+  generated PBKDF2 password hash, and a 64-hex-character session secret.
+  Docker Compose interpolates dollar signs in `env_file` values, so both
+  PBKDF2 separators are stored as `$$`. A disposable `compose run --no-deps`
+  check proved the container receives exactly two single `$` separators, and
+  a final live-container `check_password_hash` returned true.
+- Created only the isolated `runtime/control/{commands,results}` and
+  `runtime/backups` directories.
+- Built image
+  `sha256:fb108d43898b243f61666212561ac99829504dd21f17a57c702b020f3099f9ee`
+  with OCI revision `a4707439a88699053a88d415296d030d8251c119` and OCI created
+  value `2026-08-01T18:06:31Z` (145054941 bytes).
+- Installed and enabled `/etc/systemd/system/lob-control-agent.service`.
+  It runs as `ubuntu:ubuntu`, had `NRestarts=0`, and used about 13 MiB in the
+  final sample.
+- Backed up the previous LOB Nginx site under
+  `/home/ubuntu/limit-order-book/runtime/backups/nginx-admin-20260801T175134Z`,
+  installed `/etc/nginx/lob-admin.htpasswd`, validated with `nginx -t`, and
+  reloaded (never restarted) Nginx.
+- Verified external authentication: `/admin/login` returns 401 without the
+  separate admin Basic Auth credentials and 200 with them. App login returned
+  the shared session/worker status and accepted the generated app credential.
+- Submitted safe `create_backup` command
+  `b231a9108d9c415f96e6596aee0e4bc6`. It succeeded into
+  `runtime/backups/manual-20260801T180753Z`, including both Demo CSV/SQLite
+  stores and the shared Demo state. That exact command ID appears once in
+  `runtime/control/audit.log`.
+- Final shared session:
+  `demo-20260801T180639Z-ecdabcde3c06`, created
+  `2026-08-01T18:06:39.227942+00:00`.
+- `lob-admin`, both workers, and `lob-dashboard` were healthy with zero
+  restarts and zero OOM events. Current logs each contained one startup guard
+  marker and no traceback, exception, fatal, permission, or `stack_shutdown`
+  match.
+- Only the dashboard and admin publish host ports, respectively
+  `127.0.0.1:8652` and `127.0.0.1:8653`. An external connection to port 8653
+  timed out. No service has a Docker socket or sensitive Nobitex/MySQL/Telegram
+  environment variable.
+- Final LOB container memory sample: BTC 65.36 MiB, USDT 90.59 MiB, dashboard
+  102.1 MiB, admin 83.54 MiB (about 342 MiB total), plus the 13 MiB control
+  agent. Host still had about 901 MiB available RAM and 1.9 GiB free swap.
+- Sarkhatti remained container
+  `4ffa1cdf90fef73f8f068fd646c84c1bf0f85cb5f0ef02a21c676d87425d57f5`,
+  healthy, zero restarts, original start time, original mounts and loopback
+  ports. Its Compose, `.env`, and Nginx site hashes remained exactly
+  `66563a50...`, `106edced...`, and `0403e33f...`; final latency samples were
+  5.2–7.0 ms.
+
+Production verification problems and fixes:
+
+1. Initial Compose validation warned that PBKDF2 `$salt$hash` fragments were
+   being interpolated. Deployment stopped before startup. Escaping each `$` as
+   `$$` eliminated warnings and the delivered-value round-trip matched the
+   original hash exactly.
+2. The first safe backup failed because root-running workers created mode-600
+   CSV files unreadable by the unprivileged host agent. It also revealed two
+   audit records per action because both agent and app appended. Commit
+   `a470743` adds the shared Compose runtime user `1000:1000` and makes the
+   authenticated admin app the sole audit writer. Regression tests failed
+   before and passed after the fix; the full suite finished at **299 passed,
+   1 existing Dash deprecation warning**.
+3. During ownership migration, gracefully stopping the old root containers
+   after the first `chown` recreated their CSVs as root. The corrected order
+   was: stop both old workers, validate the four exact runtime directory
+   targets and reject symlinks, `chown` only those directories to
+   `ubuntu:ubuntu`, then force-recreate only the two workers under UID/GID
+   1000. Both finished healthy with zero restart counts and mode-600 files
+   owned by `ubuntu`.
+
+Files changed outside `/home/ubuntu/limit-order-book`:
+
+```text
+/etc/systemd/system/lob-control-agent.service
+/etc/systemd/system/multi-user.target.wants/lob-control-agent.service
+/etc/nginx/lob-admin.htpasswd
+/etc/nginx/sites-available/lob-dashboard
+```
+
+Rollback remains scoped to the Limit Order Book project and never touches
+Sarkhatti:
+
+```bash
+cd /home/ubuntu/limit-order-book
+./deploy/rollback.sh
+```
+
+Current status: the feature passed a short production verification window,
+including a real authenticated admin-to-agent backup round trip. This is not
+long-term readiness evidence. Exact next step: monitor restart counts, memory,
+the shared session ID, control-agent status, audit cardinality, and Sarkhatti's
+baseline again after an extended interval without recreating either project.
