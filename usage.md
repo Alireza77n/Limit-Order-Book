@@ -586,65 +586,98 @@ uses `deploy/docker-compose.production.yml` — the same 4 services plus a
 isn't a Docker container at all. Every server command below assumes you're
 already `cd`'d into `/home/ubuntu/limit-order-book`.
 
+`up` vs. `start`, and `down` vs. `stop` are not the same pair, worth being
+precise about since they're used below:
+
+| Verb | Creates containers? | Rebuilds image? | Removes containers? |
+|---|---|---|---|
+| `up -d [--build]` | yes, if they don't exist yet | only with `--build` | no |
+| `start` | no — **fails if the container was never created** (run `up` first, at least once) | no | no |
+| `stop` | n/a | n/a | no — container stays, `ps -a` shows it `Exited` |
+| `restart` | n/a | no | no — same container, just cycled |
+| `down` | n/a | n/a | **yes** — containers + the Compose network. `runtime/` data is a bind mount, not a Docker volume, so it's untouched either way |
+
+Because of that, the normal day-to-day pair is `up -d` / `stop` (fast,
+keeps containers around); reach for `down` only when you actually want a
+clean removal (e.g. before a rebuild-from-scratch, or decommissioning).
+
 ### 7.1 Local: everything at once
 
 ```sh
-docker compose up -d --build --wait     # start (build if needed), wait for healthy
-docker compose stop                     # stop, keep containers (fast restart later)
-docker compose down                     # stop and remove containers + network
-docker compose ps -a                    # what's running right now
+docker compose up -d --build --wait   # create+start (build if needed), wait for healthy
+docker compose up -d                  # create+start, reuse existing images, no rebuild
+docker compose start                  # resume containers already created by a prior `up`
+docker compose stop                   # halt, keep containers (fast to resume: `start` or `up -d`)
+docker compose restart                # stop then start every service, no rebuild
+docker compose down                   # stop AND remove all containers + the network
+docker compose ps -a                  # what's running right now, including exited
+docker compose logs -f                # follow every service's logs at once
 ```
 
 ### 7.2 Local: one service at a time
 
+Valid service names: `session-init` (runs once and exits — not something
+you start/stop directly, it's a dependency of the other three),
+`btc-demo`, `usdt-demo`, `dashboard`.
+
 ```sh
-docker compose up -d btc-demo           # start just BTC (starts session-init first if needed)
-docker compose stop btc-demo            # stop just BTC, leave usdt-demo/dashboard running
-docker compose restart usdt-demo        # restart just USDT, same session
+docker compose up -d btc-demo           # create+start just BTC (starts session-init first if needed)
+docker compose up -d --build btc-demo   # same, but rebuild its image first
+docker compose start btc-demo           # resume a previously-`stop`ped BTC container
+docker compose stop btc-demo            # halt just BTC, leave usdt-demo/dashboard running
+docker compose restart usdt-demo        # restart just USDT, same session, no rebuild
 docker compose logs -f dashboard        # follow one service's logs
 ```
 
-Swap `btc-demo` / `usdt-demo` / `dashboard` for whichever service you mean.
-`session-init` runs once and exits (0) on its own — you don't start/stop it
-directly, it's a dependency of the other three.
+`docker compose down` does **not** take a service name (it's whole-project
+only). To fully remove just one service's container instead of stopping
+it, use:
+
+```sh
+docker compose rm -sf btc-demo          # stop (-s) and remove (-f, no confirm) just BTC's container
+```
 
 ### 7.3 Server: everything at once
 
 ```sh
 cd /home/ubuntu/limit-order-book
+COMPOSE="docker compose -p limit-order-book -f deploy/docker-compose.production.yml --env-file deploy/demo.env"
 
-# start (build if needed), wait for healthy -- all 5 services
-docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
-  --env-file deploy/demo.env up -d --build --wait
-
-# stop, keep containers
-docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
-  --env-file deploy/demo.env stop
-
-# stop and remove containers + network (data in runtime/ is untouched)
-docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
-  --env-file deploy/demo.env down
-
-# what's running right now
-docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
-  --env-file deploy/demo.env ps -a
+$COMPOSE up -d --build --wait   # create+start all 5 services (build if needed), wait for healthy
+$COMPOSE up -d                  # create+start, reuse existing images, no rebuild
+$COMPOSE start                  # resume containers already created by a prior `up`
+$COMPOSE stop                   # halt, keep containers
+$COMPOSE restart                # stop then start every service, no rebuild
+$COMPOSE down                   # stop AND remove all containers + the network
+$COMPOSE ps -a                  # what's running right now, including exited
+$COMPOSE logs -f                # follow every service's logs at once
 ```
 
 ### 7.4 Server: one service at a time
+
+Valid service names: `session-init` (runs once and exits — dependency of
+the other four, not something you start/stop directly), `btc-demo`,
+`usdt-demo`, `dashboard`, `admin`.
 
 ```sh
 cd /home/ubuntu/limit-order-book
 COMPOSE="docker compose -p limit-order-book -f deploy/docker-compose.production.yml --env-file deploy/demo.env"
 
-$COMPOSE up -d btc-demo        # start just BTC
-$COMPOSE stop usdt-demo        # stop just USDT, leave everything else running
-$COMPOSE restart admin         # restart just the admin panel (e.g. after a code deploy)
-$COMPOSE logs -f dashboard     # follow one service's logs
+$COMPOSE up -d btc-demo           # create+start just BTC
+$COMPOSE up -d --build admin      # create+start admin, rebuilding its image first (e.g. after a code deploy)
+$COMPOSE start usdt-demo          # resume a previously-`stop`ped USDT container
+$COMPOSE stop usdt-demo           # halt just USDT, leave everything else running
+$COMPOSE restart admin            # restart just the admin panel, no rebuild
+$COMPOSE logs -f dashboard        # follow one service's logs
+$COMPOSE rm -sf admin             # stop and fully remove just the admin container (not `down`, that's whole-project)
 ```
 
-Swap `btc-demo` / `usdt-demo` / `dashboard` / `admin` for whichever service
-you mean. Restarting `admin` never restarts the BTC/USDT workers, and vice
-versa — they're independent containers.
+Restarting `admin` never restarts the BTC/USDT workers, and vice versa —
+they're independent containers. This is also the exact pattern used to
+ship an admin-only code deploy without touching the running workers (see
+`docs/deployment/DEPLOYMENT_PROGRESS.md`'s admin hotfix entries): `up -d
+--build admin` (or `rm -sf admin` then `up -d --build admin` for a fully
+clean recreate) and nothing else.
 
 **Alternative to SSH for worker start/stop/restart**: once the stack
 (including `admin`) is already up, use the Admin Control Panel itself —
