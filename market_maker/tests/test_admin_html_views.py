@@ -332,6 +332,25 @@ def test_balances_ignores_stale_session_ledger_file(app):
     assert response.get_json()["btc"] is None
 
 
+def test_balances_html_shows_starting_amount_before_any_round(app):
+    """No ledger yet for the current session (fresh session, worker hasn't
+    completed a round) must show the configured starting cash/inventory,
+    not a bare empty state -- the JSON API keeps returning null there."""
+    client = app.test_client()
+    (Path(app.config["STATE_DIR"]) / "stack_session.json").write_text(json.dumps({"session_id": "brand-new"}))
+    _login(client)
+
+    html_response = client.get("/admin/balances", headers=HTML)
+    assert html_response.status_code == 200
+    body = _html(html_response)
+    assert "No ledger data available" not in body
+    assert f"{TRADING_PROFILES['btc']['cash_initial']:.2f}" in body
+    assert "Starting balance" in body
+
+    json_response = client.get("/admin/balances")
+    assert json_response.get_json()["btc"] is None
+
+
 # ---------- Backups: create, restore confirmation, per-backup download ----------
 
 def test_backups_page_html(client):

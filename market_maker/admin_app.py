@@ -319,6 +319,22 @@ def _ledger_account(app: Flask, pair: str):
         return None
 
 
+def _starting_account(pair: str, path) -> dict:
+    """Fallback account view for a pair with no ledger file yet this
+    session (worker hasn't completed a round, or hasn't started) -- the
+    configured starting point (profile default + Demo overlay, same
+    effective values config.html shows) instead of an empty state. Zero
+    valuation/fees is accurate here, not a placeholder: nothing has traded
+    yet, so there's genuinely nothing to value or charge a fee on."""
+    effective = _effective_config_values(pair, path)
+    return {
+        "inventory": effective["demo_inv_initial"],
+        "cash": effective["cash_initial"],
+        "valuation_price": 0.0,
+        "fees_quote": 0.0,
+    }
+
+
 def _has_value(value) -> bool:
     if value is None:
         return False
@@ -802,8 +818,18 @@ def _register_routes(app: Flask) -> None:
     def admin_balances():
         balances = {pair: _ledger_account(app, pair) for pair in PAIRS}
         if _wants_html():
+            # Browsers get the configured starting point instead of an empty
+            # state when a pair has no ledger yet this session (fresh session,
+            # worker hasn't completed a round) -- the JSON API keeps returning
+            # null there unchanged, for any existing consumer relying on it.
+            is_starting = {pair: balances[pair] is None for pair in PAIRS}
+            display_balances = {
+                pair: balances[pair] if balances[pair] is not None
+                else _starting_account(pair, overlay_path(app.config["STATE_DIR"], pair))
+                for pair in PAIRS
+            }
             return render_template(
-                "admin/balances.html", balances=balances,
+                "admin/balances.html", balances=display_balances, is_starting=is_starting,
                 fee_scopes=_fee_scopes_summary(app),
                 starting_cash_btc=TRADING_PROFILES["btc"]["cash_initial"],
                 starting_cash_usdt=TRADING_PROFILES["usdt"]["cash_initial"],

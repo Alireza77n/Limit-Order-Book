@@ -8,38 +8,34 @@
   <div class="card">
     <div class="card-header">
       <h2 style="margin: 0; text-transform: uppercase;">{{ pair }} Balances</h2>
+      {% if is_starting[pair] %}
+        <span class="status-badge status-warning">Starting balance — no rounds yet this session</span>
+      {% endif %}
     </div>
     <div class="card-body">
       {% set account = balances[pair] %}
-      {% if account %}
-        <div class="kv-list">
-          <div class="kv-item">
-            <span class="kv-label">Inventory ({{ 'BTC' if pair == 'btc' else 'USDT' }})</span>
-            <span class="kv-value mono">{{ '%.8f'|format(account.inventory or 0) }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-label">Available Cash (IRT)</span>
-            <span class="kv-value mono">{{ '%.2f'|format(account.cash or 0) }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-label">Valuation Price (IRT)</span>
-            <span class="kv-value mono">{{ '%.2f'|format(account.valuation_price or 0) }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-label">Fees (IRT)</span>
-            <span class="kv-value mono">{{ '%.2f'|format(account.fees_quote or 0) }}</span>
-          </div>
-          <div class="kv-item">
-            <span class="kv-label">Portfolio Wealth (IRT)</span>
-            <span class="kv-value mono">{{ '%.2f'|format((account.inventory or 0) * (account.valuation_price or 0) + (account.cash or 0)) }}</span>
-          </div>
+      <div class="kv-list">
+        <div class="kv-item">
+          <span class="kv-label">Inventory ({{ 'BTC' if pair == 'btc' else 'USDT' }})</span>
+          <span class="kv-value mono">{{ '%.8f'|format(account.inventory or 0) }}</span>
         </div>
-      {% else %}
-        <div class="empty-state">
-          <div class="icon">💰</div>
-          <p>No ledger data available for {{ pair.upper() }}</p>
+        <div class="kv-item">
+          <span class="kv-label">Available Cash (IRT)</span>
+          <span class="kv-value mono">{{ '%.2f'|format(account.cash or 0) }}</span>
         </div>
-      {% endif %}
+        <div class="kv-item">
+          <span class="kv-label">Valuation Price (IRT)</span>
+          <span class="kv-value mono">{{ '%.2f'|format(account.valuation_price or 0) }}{% if is_starting[pair] %} (no trades yet){% endif %}</span>
+        </div>
+        <div class="kv-item">
+          <span class="kv-label">Fees (IRT)</span>
+          <span class="kv-value mono">{{ '%.2f'|format(account.fees_quote or 0) }}</span>
+        </div>
+        <div class="kv-item">
+          <span class="kv-label">Portfolio Wealth (IRT)</span>
+          <span class="kv-value mono">{{ '%.2f'|format((account.inventory or 0) * (account.valuation_price or 0) + (account.cash or 0)) }}</span>
+        </div>
+      </div>
     </div>
   </div>
   {% endfor %}
