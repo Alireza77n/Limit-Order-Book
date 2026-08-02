@@ -218,3 +218,37 @@ def test_activity_exposes_no_quote_operational_fields():
     assert record["No Quote Episode Seconds"] == 300
     assert record["No Quote Alert State"] == "alerted"
     assert record["No Quote Candidate Diagnostics"] == '{"required_threshold":0.002}'
+
+
+def test_no_quote_summary_explains_chart_gaps(tmp_path):
+    """Rounds where Algorithm 1 declined to quote log no Bid/Ask Price, so the
+    line charts gap. The status line must say so, otherwise the gaps read as
+    lost data -- see reports/demo-portfolio-jump-investigation.md."""
+    from dashboard import no_quote_summary
+
+    df = pd.DataFrame([
+        {"Quote Status": "no_quote", "No Quote Reason": "profitability_threshold"},
+        {"Quote Status": "no_quote", "No Quote Reason": "profitability_threshold"},
+        {"Quote Status": "quote_generated", "No Quote Reason": None},
+    ])
+
+    summary = no_quote_summary(df)
+
+    assert "2 of 3 rounds produced no quote" in summary
+    assert "profitability_threshold: 2" in summary
+    assert "not missing data" in summary
+
+
+def test_no_quote_summary_silent_when_every_round_quoted(tmp_path):
+    from dashboard import no_quote_summary
+
+    df = pd.DataFrame([{"Quote Status": "quote_generated", "No Quote Reason": None}])
+
+    assert no_quote_summary(df) == ""
+
+
+def test_no_quote_summary_tolerates_legacy_csv_without_the_column(tmp_path):
+    """Older Real-mode CSVs have no Quote Status column at all."""
+    from dashboard import no_quote_summary
+
+    assert no_quote_summary(pd.DataFrame([{"Portfolio Wealth": 1.0}])) == ""

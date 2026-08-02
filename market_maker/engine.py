@@ -765,6 +765,13 @@ class SimpleMarketMaker:
         fields[f"{title} Locked Cash" if side == "buy" else f"{title} Locked Inventory"] = locked
         return fields
 
+    def _open_order_count(self, side: str) -> int:
+        """Resting (open/partially filled) paper orders on one side."""
+        ledger = getattr(self.exchange, "ledger", None)
+        if ledger is None:
+            return 0
+        return sum(1 for order in ledger.active_orders.values() if order.side == side)
+
     def _demo_queue_ahead(self, ob: Dict[str, Any], side: str, level: int) -> float:
         if not self.cfg.demo_queue_enabled:
             return 0.0
@@ -862,30 +869,28 @@ class SimpleMarketMaker:
         if self.result_store is None or not events:
             return
         lifecycle = {}
-        financial = {}
         for event in events:
             try:
                 order = self.exchange.ledger.get_order(event.order_id)
             except KeyError:
                 continue
             lifecycle[event.order_id] = self._demo_side_fields(order.side, order, None)
-            fields = {
-                "inv_current": snapshot.inventory,
-                "cash_current": snapshot.cash,
-                "Locked Cash": snapshot.locked_cash,
-                "Locked Inventory": snapshot.locked_inventory,
-                "Available Cash": snapshot.available_cash,
-                "Available Inventory": snapshot.available_inventory,
-                "Portfolio Wealth": snapshot.wealth,
-                "Session Pair Fee": scopes.session_pair,
-                "Session All Symbols Fee": scopes.session_all_symbols,
-                "Pair All Time Fee": scopes.pair_all_time,
-                "All Symbols All Time Fee": scopes.all_symbols_all_time,
-            }
-            if round_fee is not None:
-                fields["Round Fee"] = round_fee
-            financial[event.order_id] = fields
-        self.result_store.update_order_rows(lifecycle, financial)
+        # Only the ORDER's lifecycle fields are back-filled onto the round row
+        # that created it. The portfolio snapshot columns (inv_current /
+        # cash_current / locked+available / Portfolio Wealth / Round Fee / fee
+        # scopes) are a per-round TIME SERIES and must keep the values observed
+        # in that round.
+        #
+        # They used to be rewritten here with the CURRENT snapshot, and since
+        # update_order_rows() locates the historical row by order id, an order
+        # opened in round 2 and filled in round 9 stamped round 9's balances
+        # onto round 2's row. The SQLite store is canonical and the CSV is
+        # exported from it, so this corrupted both. Verified: engine inventory
+        # rose a clean +0.999/round while the store recorded
+        # 0.999, 7.992, 8.991, 4.995, ... -- the "large unexpected jumps" on
+        # the dashboard, and the reason PnL/drawdown/strategy comparison could
+        # not be trusted. See reports/demo-portfolio-jump-investigation.md.
+        self.result_store.update_order_rows(lifecycle)
 
     @staticmethod
     def _write_demo_csv(order_df: pd.DataFrame, csv_path: str) -> bool:
@@ -928,27 +933,24 @@ class SimpleMarketMaker:
                 fields = self._demo_side_fields(side, order, None)
                 for column, value in fields.items():
                     order_df.at[index, column] = value
-                if order_id in changed and snapshot is not None:
-                    financial_fields = {
-                        "inv_current": snapshot.inventory,
-                        "cash_current": snapshot.cash,
-                        "Locked Cash": snapshot.locked_cash,
-                        "Locked Inventory": snapshot.locked_inventory,
-                        "Available Cash": snapshot.available_cash,
-                        "Available Inventory": snapshot.available_inventory,
-                        "Portfolio Wealth": snapshot.wealth,
-                    }
-                    if round_fee is not None:
-                        financial_fields["Round Fee"] = round_fee
-                    if scopes is not None:
-                        financial_fields.update({
-                            "Session Pair Fee": scopes.session_pair,
-                            "Session All Symbols Fee": scopes.session_all_symbols,
-                            "Pair All Time Fee": scopes.pair_all_time,
-                            "All Symbols All Time Fee": scopes.all_symbols_all_time,
-                        })
-                    for column, value in financial_fields.items():
-                        order_df.at[index, column] = value
+                # NOTE: only the ORDER's own lifecycle fields are refreshed on
+                # a historical row. The portfolio snapshot columns
+                # (inv_current / cash_current / locked+available / Portfolio
+                # Wealth / Round Fee / fee scopes) are a per-round TIME SERIES
+                # and must keep the values observed in the round that row
+                # belongs to.
+                #
+                # They used to be rewritten here with the CURRENT snapshot
+                # whenever an older order changed state, so an order opened in
+                # round 2 and filled in round 9 stamped round 9's balances onto
+                # round 2's row. Since this runs before the current round's row
+                # is appended, every row it touched was a past round -- the
+                # whole portfolio trajectory got scrambled (verified: engine
+                # inventory rose a clean +0.999/round while the CSV recorded
+                # 0.999, 7.992, 8.991, 4.995, ...). That is the "large
+                # unexpected jumps" seen on the dashboard, and it made PnL,
+                # drawdown and any strategy comparison meaningless.
+                # See reports/demo-portfolio-jump-investigation.md.
 
     def _finish_demo_session(
         self,
@@ -1129,7 +1131,9 @@ class SimpleMarketMaker:
                         0.0,
                         min(self.cfg.order_size, snapshot.available_inventory - float(self.cfg.inv_min)),
                     )
-                    if sell_amount > 1e-10:
+                    if self._open_order_count("sell") >= self.cfg.demo_max_open_orders_per_side:
+                        sell_reason = "max_open_orders"
+                    elif sell_amount > 1e-10:
                         sell_id = (
                             f"{self.pair.lower()}-sell-{round_no}-{int(now.timestamp() * 1000)}"
                         )
@@ -1155,7 +1159,13 @@ class SimpleMarketMaker:
                     )
                     affordable = snapshot.available_cash / bid_price if bid_price and bid_price > 0 else 0.0
                     buy_amount = max(0.0, min(self.cfg.order_size, affordable))
-                    if buy_amount <= 1e-10:
+                    # Cap concurrent resting orders per side. inv_max/cash
+                    # alone allowed ~15-49 buys to pile up at near-identical
+                    # prices, so one price touch could fill them all at once
+                    # (reports/demo-portfolio-jump-investigation.md).
+                    if self._open_order_count("buy") >= self.cfg.demo_max_open_orders_per_side:
+                        buy_reason = "max_open_orders"
+                    elif buy_amount <= 1e-10:
                         buy_reason = "insufficient_cash"
                     elif buy_locked_amount + snapshot.inventory + self.cfg.order_size >= self.cfg.inv_max:
                         buy_reason = "inventory_cap"

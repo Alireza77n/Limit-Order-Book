@@ -38,6 +38,19 @@ class MMConfig:
     demo_level1_fill_delay_seconds: float = 0.0
     demo_level1_fill_fraction: float = 1.0
     demo_queue_enabled: bool = False
+    # Liquidity one market observation can absorb per side, shared across all
+    # resting paper orders in price-time priority. Expressed as a MULTIPLE of
+    # order_size so it scales correctly for both pairs (BTC order_size is
+    # 0.000015, USDT's is 1 -- an absolute figure would be meaningless for
+    # one of them). 1.0 means "about one order fills per observation".
+    # Without this budget a single price touch filled every eligible resting
+    # order in full at once -- see
+    # reports/demo-portfolio-jump-investigation.md.
+    demo_max_fill_per_observation_orders: float = 1.0
+    # Hard cap on resting paper orders per side. inv_max/cash alone allowed
+    # ~15-49 concurrent buys to pile up at near-identical prices, which is
+    # what made the batch fill so large.
+    demo_max_open_orders_per_side: int = 3
     demo_state_path: Optional[str] = None
     demo_fee_state_path: Optional[str] = None
     demo_archive_path: Optional[str] = None

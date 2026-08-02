@@ -360,15 +360,50 @@ def _serialize_orders(records):
     return serialized
 
 
-def _filter_orders(records, side=None, status=None):
+def _is_real_order(record) -> bool:
+    """True only when a paper order was actually submitted this round.
+
+    engine.py writes one CSV row per ROUND, not per order (see
+    _demo_side_fields): rounds that produced no order still carry a status
+    describing why -- "no_quote", "not_sent_insufficient_cash",
+    "not_sent_inventory_cap", "not_sent_max_open_orders", "rejected". Those
+    are decision records, not orders, and previously rendered in the Orders
+    table with a blank ("nan") order id and zero amounts. The presence of a
+    real order id is the authoritative signal, not a non-empty status
+    string. See reports/demo-portfolio-jump-investigation.md.
+    """
+    return _has_value(record.get("Buy Order ID")) or _has_value(record.get("Sell Order ID"))
+
+
+def _decision_reason(record):
+    """Why a round produced no order, for display in the decisions view."""
+    for key in ("Buy Not Sent Reason", "Sell Not Sent Reason", "No Quote Reason"):
+        value = record.get(key)
+        if _has_value(value):
+            return value
+    for key in ("Buy Status", "Sell Status"):
+        value = record.get(key)
+        if _has_value(value):
+            return value
+    return None
+
+
+def _filter_orders(records, side=None, status=None, include_decisions=False):
     """Narrow activity_records() rows by side (buy/sell) and/or status
-    (open/filled/cancelled/not_sent) -- both admin_orders' JSON and HTML
-    responses share this so filtering behaves identically either way."""
+    (open/filled/cancelled/...) -- both admin_orders' JSON and HTML
+    responses share this so filtering behaves identically either way.
+
+    By default only rows carrying a real submitted order are returned;
+    include_decisions=True adds the no-order rounds back with their reason.
+    """
     def keep(record):
-        buy_status, sell_status = record.get("Buy Status"), record.get("Sell Status")
-        if side == "buy" and not _has_value(buy_status):
+        if not include_decisions and not _is_real_order(record):
             return False
-        if side == "sell" and not _has_value(sell_status):
+        buy_id, sell_id = record.get("Buy Order ID"), record.get("Sell Order ID")
+        buy_status, sell_status = record.get("Buy Status"), record.get("Sell Status")
+        if side == "buy" and not (_has_value(buy_id) or _has_value(buy_status)):
+            return False
+        if side == "sell" and not (_has_value(sell_id) or _has_value(sell_status)):
             return False
         if status:
             present = {s for s in (buy_status, sell_status) if _has_value(s)}
@@ -797,6 +832,11 @@ def _register_routes(app: Flask) -> None:
             return ("unknown pair", 400)
         side = request.args.get("side") or None
         status = request.args.get("status") or None
+        # Default view is real submitted orders only; ?view=decisions adds
+        # the rounds that deliberately produced no order (no_quote,
+        # insufficient cash, inventory/open-order caps) with their reason.
+        view = request.args.get("view") or "orders"
+        include_decisions = view == "decisions"
         # Join against this app's own RESULTS_DIR (not the global profile
         # path) so a ro-mounted runtime/results in production, or a tmp
         # dir in tests, is what actually gets read.
@@ -804,12 +844,19 @@ def _register_routes(app: Flask) -> None:
         csv_path = os.path.join(app.config["RESULTS_DIR"], csv_name)
         df = load_track(csv_path)  # dashboard.py's own pure loader -- not re-implemented here
         records = activity_records(df) if df is not None else []
-        orders = _serialize_orders(_filter_orders(records, side=side, status=status))
+        filtered = _filter_orders(
+            records, side=side, status=status, include_decisions=include_decisions
+        )
+        orders = _serialize_orders(filtered)
+        for record in orders:
+            record["is_order"] = _is_real_order(record)
+            record["decision_reason"] = None if record["is_order"] else _decision_reason(record)
         if _wants_html():
             return render_template(
                 "admin/orders.html", orders=orders, selected_pair=pair,
-                side_filter=side, status_filter=status, csrf_token=get_csrf_token(),
-                session_id=_session_id(app),
+                side_filter=side, status_filter=status, view=view,
+                decision_count=sum(1 for r in records if not _is_real_order(r)),
+                csrf_token=get_csrf_token(), session_id=_session_id(app),
             )
         return jsonify({"orders": orders})
 

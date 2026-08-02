@@ -101,6 +101,13 @@ def make_cfg(
     return cfg
 
 
+def _max_fill_per_observation(cfg: MMConfig) -> float:
+    """Per-side liquidity budget for one market observation, in base-currency
+    units -- config carries it as a multiple of order_size so it scales
+    across pairs (see MMConfig.demo_max_fill_per_observation_orders)."""
+    return float(cfg.order_size) * float(cfg.demo_max_fill_per_observation_orders)
+
+
 def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobitex",
              mode: str = "real") -> SimpleMarketMaker:
     """Build the SimpleMarketMaker for an already-constructed cfg (see
@@ -123,6 +130,10 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
                 raise RuntimeError("Demo Mode state file does not match configured session and symbol")
             ledger.hot_terminal_order_limit = cfg.demo_hot_terminal_order_limit
             ledger.archive_max_bytes = cfg.demo_archive_max_bytes
+            # Apply the CURRENT fill-realism config to a resumed ledger too,
+            # otherwise a ledger persisted before this setting existed (or
+            # under an older value) would keep filling the old way forever.
+            ledger.max_fill_per_observation = _max_fill_per_observation(cfg)
             if cfg.demo_archive_path:
                 ledger.archive_path = Path(cfg.demo_archive_path)
                 ledger._archived_order_ids = ledger._load_archived_order_ids()
@@ -138,6 +149,7 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
                 level1_fill_delay_seconds=cfg.demo_level1_fill_delay_seconds,
                 level1_fill_fraction=cfg.demo_level1_fill_fraction,
                 queue_enabled=cfg.demo_queue_enabled,
+                max_fill_per_observation=_max_fill_per_observation(cfg),
                 state_path=cfg.demo_state_path,
                 fee_state_path=cfg.demo_fee_state_path,
                 archive_path=cfg.demo_archive_path,

@@ -144,6 +144,29 @@ def activity_records(df: pd.DataFrame, limit: int = 200) -> List[dict]:
     )
 
 
+def no_quote_summary(df: pd.DataFrame) -> str:
+    """Explain gaps in the price/spread charts.
+
+    A round where Algorithm 1 found no profitable quote logs no Bid/Ask
+    Price, so the line charts render a gap. Without this the gaps look like
+    lost data -- in the observed USDT session 1827 of 2085 rounds were
+    legitimate `profitability_threshold` refusals. Returns "" when the
+    columns aren't present (older Real-mode CSVs) or nothing was skipped.
+    """
+    if "Quote Status" not in df.columns:
+        return ""
+    skipped = df[df["Quote Status"] == "no_quote"]
+    if skipped.empty:
+        return ""
+    part = f" — {len(skipped)} of {len(df)} rounds produced no quote"
+    if "No Quote Reason" in skipped.columns:
+        reasons = skipped["No Quote Reason"].dropna().value_counts()
+        if not reasons.empty:
+            detail = ", ".join(f"{reason}: {count}" for reason, count in reasons.items())
+            part += f" ({detail})"
+    return part + ". Chart gaps are these rounds, not missing data."
+
+
 def session_ids(df: pd.DataFrame) -> List:
     """Distinct Session_id values, most recent (largest) first."""
     return sorted(df["Session_id"].dropna().unique().tolist(), reverse=True)
@@ -367,6 +390,7 @@ def refresh_dashboard(track_key, session_id, _):
 
     activity = activity_records(df)
     status = f"{len(df)} rows" + ("" if comparing else f" — session {session_id}")
+    status += no_quote_summary(df)
 
     return status, wealth_fig, inv_fig, cash_fig, levels_fig, spreads_fig, activity
 

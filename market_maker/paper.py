@@ -105,6 +105,7 @@ class PaperLedger:
         level1_fill_delay_seconds: float = 0.0,
         level1_fill_fraction: float = 1.0,
         queue_enabled: bool = False,
+        max_fill_per_observation: Optional[float] = None,
         state_path=None,
         fee_state_path=None,
         archive_path=None,
@@ -113,6 +114,8 @@ class PaperLedger:
     ) -> None:
         if not 0 < level1_fill_fraction <= 1:
             raise ValueError("level1_fill_fraction must be in (0, 1]")
+        if max_fill_per_observation is not None and max_fill_per_observation <= 0:
+            raise ValueError("max_fill_per_observation must be positive when set")
         self.session_id = str(session_id)
         self.symbol = symbol.upper()
         self.inventory = float(initial_inventory)
@@ -123,6 +126,9 @@ class PaperLedger:
         self.level1_fill_delay_seconds = float(level1_fill_delay_seconds)
         self.level1_fill_fraction = float(level1_fill_fraction)
         self.queue_enabled = bool(queue_enabled)
+        self.max_fill_per_observation = (
+            None if max_fill_per_observation is None else float(max_fill_per_observation)
+        )
         self.state_path = Path(state_path) if state_path is not None else None
         self.fee_state_path = Path(fee_state_path) if fee_state_path is not None else None
         if archive_path is not None:
@@ -173,6 +179,7 @@ class PaperLedger:
                 "level1_fill_delay_seconds": self.level1_fill_delay_seconds,
                 "level1_fill_fraction": self.level1_fill_fraction,
                 "queue_enabled": self.queue_enabled,
+                "max_fill_per_observation": self.max_fill_per_observation,
                 "fee_state_path": str(self.fee_state_path) if self.fee_state_path else None,
                 "archive_path": str(self.archive_path) if self.archive_path else None,
                 "hot_terminal_order_limit": self.hot_terminal_order_limit,
@@ -206,6 +213,9 @@ class PaperLedger:
             level1_fill_delay_seconds=config["level1_fill_delay_seconds"],
             level1_fill_fraction=config["level1_fill_fraction"],
             queue_enabled=config["queue_enabled"],
+            # Ledgers written before this field existed load with the
+            # default rather than failing -- restart compatibility.
+            max_fill_per_observation=config.get("max_fill_per_observation", 1.0),
             state_path=path,
             fee_state_path=config.get("fee_state_path"),
             archive_path=config.get("archive_path"),
@@ -611,6 +621,13 @@ class PaperLedger:
             wealth_after=snap.wealth,
         )
 
+    def _fill_priority(self, order: PaperOrder):
+        """Price-time priority, the way a real matching engine allocates
+        incoming volume: better price first, then oldest first. Buys are
+        'better' at a HIGHER limit price, sells at a LOWER one."""
+        price_rank = -order.limit_price if order.side == "buy" else order.limit_price
+        return (price_rank, order.created_at)
+
     def process_market(
         self,
         *,
@@ -621,11 +638,54 @@ class PaperLedger:
         trade_price: Optional[float] = None,
         traded_volume: Optional[float] = None,
     ) -> List[PaperEvent]:
+        """Apply one market observation to every resting paper order.
+
+        A single observation carries a FINITE amount of liquidity, shared
+        across all resting orders in price-time priority -- one incoming
+        market order of size V fills V across the whole queue, not V to
+        each order. Before this budget existed, N orders whose limit price
+        was touched by the same tick each filled in full, which is what
+        produced the observed "inventory jumped 0 -> 7.35 USDT in one
+        round" (8 orders filling at one instant); see
+        reports/demo-portfolio-jump-investigation.md.
+        """
         self.valuation_price = float(last_price)
         events: List[PaperEvent] = []
-        for order_id in list(self.active_orders):
+
+        # Liquidity budget for this observation, tracked SEPARATELY per side:
+        # a resting buy is filled by incoming sell flow and a resting sell by
+        # incoming buy flow, so the two do not compete for the same size.
+        # None means unbounded (the historical behavior, still the default for
+        # a directly-constructed ledger); run.py always supplies a real value
+        # in Demo mode.
+        def initial_budget() -> Optional[float]:
+            if traded_volume is not None:
+                return max(0.0, float(traded_volume))
+            if self.max_fill_per_observation is None:
+                return None
+            return float(self.max_fill_per_observation)
+
+        budgets = {"buy": initial_budget(), "sell": initial_budget()}
+
+        def take(side: str, wanted: float) -> float:
+            budget = budgets[side]
+            return wanted if budget is None else min(wanted, budget)
+
+        def spend(side: str, amount: float) -> None:
+            if budgets[side] is not None:
+                budgets[side] = max(0.0, budgets[side] - amount)
+
+        def exhausted(side: str) -> bool:
+            return budgets[side] is not None and budgets[side] <= EPSILON
+
+        for order_id in sorted(
+            list(self.active_orders),
+            key=lambda oid: self._fill_priority(self.active_orders[oid]),
+        ):
             order = self.active_orders.get(order_id)
             if order is None:
+                continue
+            if exhausted(order.side):
                 continue
             elapsed = (now - order.created_at).total_seconds()
             if (
@@ -633,7 +693,18 @@ class PaperLedger:
                 and order.selected_level == 1
                 and elapsed >= self.level1_fill_delay_seconds
             ):
-                amount = min(order.remaining_amount, order.original_amount * self.level1_fill_fraction)
+                # Level-1 fast fill models sitting at the very front of the
+                # queue, so it is served first -- but still out of the same
+                # per-side budget, not on top of it.
+                amount = take(
+                    order.side,
+                    min(
+                        order.remaining_amount,
+                        order.original_amount * self.level1_fill_fraction,
+                    ),
+                )
+                if amount <= EPSILON:
+                    continue
                 event = self.apply_cumulative_fill(
                     order_id,
                     cumulative_matched=order.matched_amount + amount,
@@ -642,6 +713,7 @@ class PaperLedger:
                     now=now,
                 )
                 if event:
+                    spend(order.side, event.new_fill)
                     events.append(event)
                 continue
 
@@ -657,18 +729,20 @@ class PaperLedger:
                 continue
 
             reason = "trade_cross" if trade_eligible else "price_touch"
-            fill_amount = order.remaining_amount
             fill_price = float(trade_price) if trade_eligible else order.limit_price
-            if self.queue_enabled and trade_eligible and traded_volume is not None:
-                volume = max(0.0, float(traded_volume))
-                consumed = min(order.queue_ahead, volume)
+            if self.queue_enabled and trade_eligible and budgets[order.side] is not None:
+                # Orders resting ahead of us consume the same budget first.
+                consumed = min(order.queue_ahead, budgets[order.side])
                 order.queue_ahead -= consumed
-                volume -= consumed
-                if volume <= EPSILON:
+                spend(order.side, consumed)
+                if exhausted(order.side):
                     self._persist()
                     continue
-                fill_amount = min(order.remaining_amount, volume)
                 reason = "queue_consumed"
+
+            fill_amount = take(order.side, order.remaining_amount)
+            if fill_amount <= EPSILON:
+                continue
 
             event = self.apply_cumulative_fill(
                 order_id,
@@ -678,6 +752,7 @@ class PaperLedger:
                 now=now,
             )
             if event:
+                spend(order.side, event.new_fill)
                 events.append(event)
         return events
 

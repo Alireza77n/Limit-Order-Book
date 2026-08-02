@@ -84,7 +84,15 @@ def test_orders_route_matches_dashboard_activity_records(client, app):
             if stamp.tzinfo is not None:
                 stamp = stamp.tz_localize(None)
             record["Timestamp"] = stamp.isoformat()
-    assert got == expected
+    # The route annotates each row with is_order/decision_reason (so the UI
+    # can tell a submitted order from a no-order round -- see
+    # test_admin_orders_decisions.py). Those are additions on top of
+    # activity_records(); every shared field must still match it exactly,
+    # which is what this test exists to prove.
+    annotations = {"is_order", "decision_reason"}
+    assert all(annotations <= set(record) for record in got)
+    got_shared = [{k: v for k, v in record.items() if k not in annotations} for record in got]
+    assert got_shared == expected
 
 
 def test_balances_route_reads_ledger_account(client, app):

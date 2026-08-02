@@ -128,17 +128,27 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     assert set(result["Session_id"]) == {"shared-session"}
     assert set(result["Mode"]) == {"demo"}
 
+    # Round 1: the buy is SUBMITTED here. Its lifecycle fields are back-filled
+    # onto this row once it terminates (that is per-order state), but the
+    # portfolio columns must stay as observed in round 1 -- the fill happens in
+    # round 2's matching pass, so round 1 still shows the untouched starting
+    # balances. These previously read 0.999/910.0/0.09 because round 2's
+    # snapshot was being stamped backwards onto this row; see
+    # test_demo_timeseries_integrity.py and
+    # reports/demo-portfolio-jump-investigation.md.
     first = result.iloc[0]
     assert first["Buy Status"] == "filled"
     assert first["Buy Matched Amount"] == pytest.approx(1.0)
     assert first["Buy Remaining Amount"] == 0
     assert first["Buy Fill Reason"] == "level1_fast_fill"
-    assert first["inv_current"] == pytest.approx(0.999)
-    assert first["cash_current"] == pytest.approx(910.0)
-    assert first["Round Fee"] == pytest.approx(0.09)
+    assert first["inv_current"] == pytest.approx(0.0)
+    assert first["cash_current"] == pytest.approx(1_000.0)
+    assert first["Round Fee"] == pytest.approx(0.0)
     assert first["Sell Status"] == "not_sent_insufficient_inventory"
     assert first["Sell Not Sent Reason"] == "insufficient_inventory"
 
+    # Round 2: the fill actually lands here, so THIS row carries the balance
+    # change and the fee.
     second = result.iloc[1]
     assert second["Buy Status"] == "cancelled"
     assert second["Sell Status"] == "cancelled"
