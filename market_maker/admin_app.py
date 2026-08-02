@@ -295,18 +295,26 @@ def _recent_audit(app: Flask, limit: int = 20):
 
 
 def _ledger_account(app: Flask, pair: str):
-    """Most recently written paper ledger's `account` block (inventory,
-    cash, valuation_price, fees_quote) for `pair`, read directly -- the
-    same field names paper.py's own save/load round-trip uses."""
-    state_dir = Path(app.config["STATE_DIR"])
-    matches = sorted(
-        state_dir.glob(f"paper_*_{PAIR_LOCK_SUFFIX[pair]}.json"),
-        key=lambda p: p.stat().st_mtime, reverse=True,
-    )
-    if not matches:
+    """The CURRENT active session's paper ledger `account` block (inventory,
+    cash, valuation_price, fees_quote) for `pair` -- the same field names
+    paper.py's own save/load round-trip uses.
+
+    Deliberately keyed off the live session_id (stack_session.json), not
+    "whichever ledger file was modified most recently": once a worker is
+    stopped, its last-written ledger stays the newest file on disk even
+    after a new session starts, so mtime-sorting silently showed a dead
+    session's numbers as if they were current. Scoping to the exact
+    session file (or nothing, if that pair's worker hasn't written one for
+    this session yet) keeps this page honest about what it's showing."""
+    session_id = _session_id(app)
+    if not session_id:
+        return None
+    safe_session = str(session_id).replace("/", "_")
+    path = Path(app.config["STATE_DIR"]) / f"paper_{safe_session}_{PAIR_LOCK_SUFFIX[pair]}.json"
+    if not path.exists():
         return None
     try:
-        return json.loads(matches[0].read_text()).get("account")
+        return json.loads(path.read_text()).get("account")
     except (OSError, ValueError):
         return None
 
@@ -355,21 +363,32 @@ def _filter_orders(records, side=None, status=None):
 
 
 def _fee_scopes_summary(app: Flask):
-    """Read paper_fee_scopes.json (shared by both pairs' PaperLedger
-    instances, see paper.py's FeeScopes) directly -- read-only, no
-    PaperLedger instantiated here, matching _ledger_account's pattern."""
+    """CURRENT session's fee totals per pair from paper_fee_scopes.json
+    (shared by both pairs' PaperLedger instances, see paper.py's
+    FeeScopes) -- read-only, no PaperLedger instantiated here, matching
+    _ledger_account's pattern.
+
+    Only the active session's rows -- not every session ever recorded.
+    Mixing old sessions into this table read as "combined/aggregate fees"
+    with no way to tell which slice was current, which is exactly the
+    confusion _ledger_account's mtime-sort bug caused on the balances
+    above it; scoping both the same way keeps the whole page internally
+    consistent."""
     path = Path(app.config["STATE_DIR"]) / "paper_fee_scopes.json"
     if not path.exists():
+        return []
+    session_id = _session_id(app)
+    if not session_id:
         return []
     try:
         document = json.loads(path.read_text())
     except (OSError, ValueError):
         return []
-    scopes = []
-    for session_id, per_pair in (document.get("sessions") or {}).items():
-        for pair, fees_quote in (per_pair or {}).items():
-            scopes.append({"session_id": session_id, "pair": pair, "fees_quote": float(fees_quote)})
-    return scopes
+    per_pair = (document.get("sessions") or {}).get(str(session_id), {})
+    return [
+        {"session_id": session_id, "pair": pair, "fees_quote": float(fees_quote)}
+        for pair, fees_quote in (per_pair or {}).items()
+    ]
 
 
 RESET_GLOBS = ("*_demo.csv", "*_demo.sqlite3", "paper_*.json", "paper_*_archive.jsonl", "paper_fee_scopes.json")
@@ -450,7 +469,7 @@ def _effective_config_values(pair: str, path) -> dict:
     return {key: getattr(cfg, key) for key in FIELD_SPECS}
 
 
-def _config_page_context(pair: str, path, *, error=None, success=None, attempted=None) -> dict:
+def _config_page_context(app: Flask, pair: str, path, *, error=None, success=None, attempted=None) -> dict:
     values = _effective_config_values(pair, path)
     if attempted:
         values = dict(values, **attempted)
@@ -462,6 +481,7 @@ def _config_page_context(pair: str, path, *, error=None, success=None, attempted
         "FIELD_SPECS": FIELD_SPECS,
         "field_help": FIELD_HELP,
         "csrf_token": get_csrf_token(),
+        "session_id": _session_id(app),
         "error": error,
         "success": success,
     }
@@ -470,17 +490,18 @@ def _config_page_context(pair: str, path, *, error=None, success=None, attempted
 def _workers_html_response(app: Flask, result):
     workers = {pair: _worker_running(app, pair) for pair in PAIRS}
     return render_template("admin/workers.html", workers=workers,
-                            csrf_token=get_csrf_token(), result=result)
+                            csrf_token=get_csrf_token(), session_id=_session_id(app), result=result)
 
 
 def _backups_html_response(app: Flask):
     return render_template("admin/backups.html", backups=_list_backups(app),
-                            csrf_token=get_csrf_token())
+                            csrf_token=get_csrf_token(), session_id=_session_id(app))
 
 
 def _recovery_html_response(app: Flask):
     return render_template(
         "admin/recovery.html", diagnostics=_recover_diagnostics(app),
+        session_id=_session_id(app),
         reset_files=_reset_preview(app), csrf_token=get_csrf_token(),
     )
 
@@ -516,7 +537,7 @@ def _register_routes(app: Flask) -> None:
         if request.method == "GET":
             if _wants_html():
                 return render_template(
-                    "admin/config.html", **_config_page_context(pair, path),
+                    "admin/config.html", **_config_page_context(app, pair, path),
                 )
             return jsonify({
                 "pair": pair,
@@ -533,7 +554,7 @@ def _register_routes(app: Flask) -> None:
         workers = {pair: _worker_running(app, pair) for pair in PAIRS}
         if _wants_html():
             return render_template("admin/workers.html", workers=workers,
-                                    csrf_token=get_csrf_token(), result=None)
+                                    csrf_token=get_csrf_token(), session_id=_session_id(app), result=None)
         return jsonify({"workers": workers})
 
     @app.route("/admin/workers/<action>", methods=["POST"])
@@ -603,7 +624,7 @@ def _register_routes(app: Flask) -> None:
     def admin_backups():
         if _wants_html():
             return render_template("admin/backups.html", backups=_list_backups(app),
-                                    csrf_token=get_csrf_token())
+                                    csrf_token=get_csrf_token(), session_id=_session_id(app))
         return jsonify({"backups": _list_backups(app)})
 
     @app.route("/admin/backups/create", methods=["POST"])
@@ -701,6 +722,7 @@ def _register_routes(app: Flask) -> None:
             return render_template(
                 "admin/recovery.html", diagnostics=diagnostics,
                 reset_files=_reset_preview(app), csrf_token=get_csrf_token(),
+                session_id=_session_id(app),
             )
         return jsonify(dict(diagnostics, reset_files=_reset_preview(app)))
 
@@ -771,6 +793,7 @@ def _register_routes(app: Flask) -> None:
             return render_template(
                 "admin/orders.html", orders=orders, selected_pair=pair,
                 side_filter=side, status_filter=status, csrf_token=get_csrf_token(),
+                session_id=_session_id(app),
             )
         return jsonify({"orders": orders})
 
@@ -784,7 +807,7 @@ def _register_routes(app: Flask) -> None:
                 fee_scopes=_fee_scopes_summary(app),
                 starting_cash_btc=TRADING_PROFILES["btc"]["cash_initial"],
                 starting_cash_usdt=TRADING_PROFILES["usdt"]["cash_initial"],
-                csrf_token=get_csrf_token(),
+                csrf_token=get_csrf_token(), session_id=_session_id(app),
             )
         return jsonify(balances)
 
@@ -810,7 +833,7 @@ def _register_routes(app: Flask) -> None:
                     continue
         if _wants_html():
             return render_template("admin/logs.html", entries=entries, selected_pair=pair,
-                                    csrf_token=get_csrf_token())
+                                    csrf_token=get_csrf_token(), session_id=_session_id(app))
         return jsonify({"entries": entries})
 
     @app.route("/admin/audit")
@@ -821,7 +844,7 @@ def _register_routes(app: Flask) -> None:
         audit = _recent_audit(app, limit=limit)
         if _wants_html():
             return render_template("admin/audit.html", audit=audit, limit=limit,
-                                    csrf_token=get_csrf_token())
+                                    csrf_token=get_csrf_token(), session_id=_session_id(app))
         return jsonify({"audit": audit})
 
 
@@ -835,13 +858,13 @@ def _admin_config_post(app: Flask, pair: str, path):
         except OperationInProgress as exc:
             if wants_html:
                 return render_template(
-                    "admin/config.html", **_config_page_context(pair, path, error=str(exc)),
+                    "admin/config.html", **_config_page_context(app, pair, path, error=str(exc)),
                 ), 409
             return (str(exc), 409)
         if wants_html:
             return render_template(
                 "admin/config.html",
-                **_config_page_context(pair, path, success="Reverted to previous configuration."),
+                **_config_page_context(app, pair, path, success="Reverted to previous configuration."),
             )
         return jsonify(result)
 
@@ -858,7 +881,7 @@ def _admin_config_post(app: Flask, pair: str, path):
             message = f"invalid value for {key}"
             if wants_html:
                 return render_template(
-                    "admin/config.html", **_config_page_context(pair, path, error=message),
+                    "admin/config.html", **_config_page_context(app, pair, path, error=message),
                 ), 400
             return (message, 400)
     try:
@@ -869,7 +892,7 @@ def _admin_config_post(app: Flask, pair: str, path):
         if wants_html:
             return render_template(
                 "admin/config.html",
-                **_config_page_context(pair, path, error=str(exc), attempted=overrides),
+                **_config_page_context(app, pair, path, error=str(exc), attempted=overrides),
             ), 400
         return (str(exc), 400)
 
@@ -878,13 +901,13 @@ def _admin_config_post(app: Flask, pair: str, path):
     except OperationInProgress as exc:
         if wants_html:
             return render_template(
-                "admin/config.html", **_config_page_context(pair, path, error=str(exc)),
+                "admin/config.html", **_config_page_context(app, pair, path, error=str(exc)),
             ), 409
         return (str(exc), 409)
     if wants_html:
         return render_template(
             "admin/config.html",
-            **_config_page_context(pair, path, success="Configuration applied."),
+            **_config_page_context(app, pair, path, success="Configuration applied."),
         )
     return jsonify(result)
 

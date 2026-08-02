@@ -298,10 +298,12 @@ def test_orders_html_renders_table(orders_app):
 
 def test_balances_html_includes_fee_scopes(app):
     client = app.test_client()
+    (Path(app.config["STATE_DIR"]) / "stack_session.json").write_text(json.dumps({"session_id": "s1"}))
     fee_path = Path(app.config["STATE_DIR"]) / "paper_fee_scopes.json"
     fee_path.write_text(json.dumps({
-        "sessions": {"s1": {"BTCIRT": 12.5}},
-        "all_time": {"BTCIRT": 12.5},
+        # An older, no-longer-active session's fees -- must NOT appear.
+        "sessions": {"s0-stale": {"BTCIRT": 999.99}, "s1": {"BTCIRT": 12.5}},
+        "all_time": {"BTCIRT": 1012.49},
     }))
     ledger_path = Path(app.config["STATE_DIR"]) / "paper_s1_btcirt.json"
     ledger_path.write_text(json.dumps({
@@ -312,6 +314,22 @@ def test_balances_html_includes_fee_scopes(app):
     assert response.status_code == 200
     body = _html(response)
     assert "12.50" in body
+    assert "999.99" not in body
+
+
+def test_balances_ignores_stale_session_ledger_file(app):
+    """A ledger left over from a session that isn't the current one anymore
+    must not be shown as if it were current -- this was the actual bug."""
+    client = app.test_client()
+    (Path(app.config["STATE_DIR"]) / "stack_session.json").write_text(json.dumps({"session_id": "s-new"}))
+    # Old session's ledger, written (and thus most-recently-modified) before
+    # the new session started -- must be ignored now, not shown as current.
+    stale = Path(app.config["STATE_DIR"]) / "paper_s-old_btcirt.json"
+    stale.write_text(json.dumps({"account": {"inventory": 99.0, "cash": 99.0}}))
+    _login(client)
+    response = client.get("/admin/balances")
+    assert response.status_code == 200
+    assert response.get_json()["btc"] is None
 
 
 # ---------- Backups: create, restore confirmation, per-backup download ----------

@@ -88,6 +88,10 @@ def test_orders_route_matches_dashboard_activity_records(client, app):
 
 
 def test_balances_route_reads_ledger_account(client, app):
+    # Balances are scoped to the CURRENT active session (stack_session.json),
+    # not "whichever ledger file was modified most recently" -- see
+    # admin_app._ledger_account's docstring for why that used to be wrong.
+    (Path(app.config["STATE_DIR"]) / "stack_session.json").write_text(json.dumps({"session_id": "s1"}))
     ledger_path = Path(app.config["STATE_DIR"]) / "paper_s1_btcirt.json"
     ledger_path.write_text(json.dumps({
         "account": {"inventory": 0.1, "cash": 500.0, "valuation_price": 100.0, "fees_quote": 1.5},
