@@ -303,6 +303,17 @@ app.layout = html.Div([
 @app.callback(Output("session", "options"), Output("session", "value"),
               Input("track", "value"), Input("tick", "n_intervals"))
 def refresh_session_options(track_key, _):
+    """Default the session picker to "All sessions (compare)", not the
+    newest single session. session.py's initialize_stack_for_workers()
+    deliberately mints a new session_id on every full-stack restart (once
+    no worker lease is held) -- that's correct/intentional, but it means
+    the newest session is near-empty right after a restart. Defaulting to
+    it made the dashboard look wiped on every restart even though every
+    prior session's rows are still in the store; the admin panel's audit
+    log and orders view were never session-filtered, so they never showed
+    that false reset. Defaulting to "all" here keeps both pages showing
+    the same cumulative picture -- an operator can still narrow to one
+    session from the dropdown when they want to."""
     df = load_track(TRACKS[track_key]["path"])
     if df is None:
         return [], None
@@ -310,7 +321,7 @@ def refresh_session_options(track_key, _):
     options = [{"label": "All sessions (compare)", "value": "all"}] + [
         {"label": str(s), "value": s} for s in ids
     ]
-    return options, ids[0] if ids else "all"
+    return options, "all"
 
 
 @app.callback(Output("status-badge", "children"), Input("track", "value"))

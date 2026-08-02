@@ -138,6 +138,27 @@ def test_filter_session_specific_id_filters_rows(tmp_path):
     assert filtered["Session_id"].iloc[0] == 2
 
 
+def test_session_picker_defaults_to_all_not_newest(tmp_path, monkeypatch):
+    """session.py mints a new session_id on every full-stack restart (see
+    initialize_stack_for_workers) -- the newest session is near-empty right
+    after one. Defaulting the dashboard's picker to that newest session
+    made a restart look like data loss even though every prior session's
+    rows are still in the store. Must default to "all" instead."""
+    import dashboard
+
+    path = _make_csv(tmp_path, [
+        [1, "1btc", "BTCIRT", "2026-07-31 10:00:00", 1, 1, 0, 0, 0, 100, 101, 100, 99, 102, 0, 0, 0, 0, "a", "b"],
+        [2, "1btc", "BTCIRT", "2026-07-31 10:01:00", 1, 1, 0, 0, 0, 100, 101, 100, 99, 102, 0, 0, 0, 0, "a", "b"],
+    ])
+    monkeypatch.setitem(dashboard.TRACKS, "btc_demo", dict(dashboard.TRACKS["btc_demo"], path=path))
+
+    options, default_value = dashboard.refresh_session_options("btc_demo", 0)
+
+    assert default_value == "all"
+    assert options[0] == {"label": "All sessions (compare)", "value": "all"}
+    assert {opt["value"] for opt in options[1:]} == {1, 2}
+
+
 def test_demo_spreads_use_explicit_quote_price_columns():
     frame = pd.DataFrame([DEMO_ROW])
 

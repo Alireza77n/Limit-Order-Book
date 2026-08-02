@@ -717,3 +717,44 @@ the LOB-specific Nginx site/auth files (`lob-dashboard`, the two
 separate, unrelated `sarkhatti` service on the same host, and never
 deletes `runtime/` data — a subsequent `docker compose ... up -d --build
 --wait` picks the existing session back up.
+
+### 7.7 Server: recovering from an accidental `runtime/` git commit
+
+`runtime/` (backups, control queue/audit log, results, state — everything
+Docker bind-mounts in) was missing from `.gitignore` for a while. If it
+was ever `git add`ed and committed on the server (a stray `git add -A` /
+`git add .` will do it — `git status` shows dozens of `runtime/...` files
+as new), fix it in this order. **Do not run `git reset --hard` for this**
+— that resets the working tree too and would delete every one of those
+files from disk, not just from git (they'd only still exist in git's
+history, not in `runtime/` where the running containers actually read
+them from).
+
+```sh
+cd /home/ubuntu/limit-order-book
+
+# 1. Confirm this is actually the situation before doing anything:
+git status --short | grep '^A.*runtime/' | head    # should list the accidental adds
+git log --oneline -1                                # the bad commit, if already committed
+
+# 2. If already committed: undo the commit, unstage everything, but leave
+#    every file exactly where it is on disk (mixed reset, not --hard):
+git reset HEAD~1
+
+# 2b. If only staged (not yet committed), same idea without the ~1:
+git reset
+
+# 3. Pull the fix that adds /runtime/ to .gitignore so this can't recur,
+#    fast-forward only:
+git fetch origin
+git merge-base --is-ancestor HEAD origin/production && git merge --ff-only origin/production
+
+# 4. Confirm runtime/ is now silently ignored and nothing was lost:
+git status --short          # should show nothing runtime/-related at all
+ls runtime/results/          # your data is still here, untouched
+```
+
+If step 2's commit already got pushed somewhere before you could fix it,
+stop and don't force-push over it — say so and work out the specific
+history-rewrite instead of guessing; force-pushing a shared branch can
+strand other clones on an orphaned history.
