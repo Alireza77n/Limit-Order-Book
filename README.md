@@ -7,7 +7,7 @@ This repository contains implementations and experiments focused on **limit orde
 The project currently includes:
 
 * **Algorithm 1:** a custom depth-aware, inventory-skewed quoting strategy — **implemented, tested, and runnable live** against Nobitex.
-* **Algorithm 2:** the Avellaneda-Stoikov optimal market-making model — **not implemented**. Only documented below and explored in parameter-estimation notebooks (`market_maker/research/`). See [Algorithm 2](#algorithm-2-avellaneda-stoikov-model) and [Current status](#current-status) for the honest picture.
+* **Algorithm 2:** the Avellaneda-Stoikov optimal market-making model — **not implemented**. Only documented below and explored in parameter-estimation notebooks (`market_maker/research/`). See [Algorithm 2](#algorithm-2-avellaneda-stoikov-model) for the full model and [Known limitations / next steps](#known-limitations--next-steps) for the honest picture of what's missing.
 
 The goal of this project is to simulate, backtest, and compare different market-making approaches on cryptocurrency order book data.
 
@@ -19,25 +19,167 @@ The goal of this project is to simulate, backtest, and compare different market-
 
 ---
 
-## About the market-making logic
+## Table of contents
 
-Market making consists of continuously placing bid and ask limit orders around the current market price.
+- [Limit order book and market-making fundamentals](#limit-order-book-and-market-making-fundamentals) — start here if you're new to the topic
+  - [What is a limit order book?](#what-is-a-limit-order-book)
+  - [Key order book terms](#key-order-book-terms)
+  - [What is market making?](#what-is-market-making)
+  - [Core risks a market maker faces](#core-risks-a-market-maker-faces)
+  - [Two approaches in this repository](#two-approaches-in-this-repository)
+- [Algorithm 1: Depth-Aware Inventory-Skewed Quoting Strategy](#algorithm-1-depth-aware-inventory-skewed-quoting-strategy)
+  - [Main idea](#main-idea)
+  - [Order book notation](#order-book-notation)
+  - [Step 1: Inventory normalization](#step-1-inventory-normalization)
+  - [Step 2: Inventory-dependent level-pair generation](#step-2-inventory-dependent-level-pair-generation)
+  - [Step 3: Spread-feasibility condition](#step-3-spread-feasibility-condition)
+  - [Step 4: Final quote construction](#step-4-final-quote-construction)
+  - [Step 5: Reported spreads](#step-5-reported-spreads)
+  - [Algorithm 1 summary](#algorithm-1-summary)
+  - [Algorithm 1 pseudocode](#algorithm-1-pseudocode)
+  - [Output of Algorithm 1](#output-of-algorithm-1)
+  - [Why Algorithm 1 is useful](#why-algorithm-1-is-useful)
+  - [Algorithm 1 in practice: three scenarios](#algorithm-1-in-practice-three-scenarios)
+- [Algorithm 2: Avellaneda-Stoikov Model](#algorithm-2-avellaneda-stoikov-model)
+  - [The idea](#the-idea)
+  - [The formulas](#the-formulas)
+  - [Reading the formulas in plain English](#reading-the-formulas-in-plain-english)
+  - [What's missing to implement it](#whats-missing-to-implement-it)
+  - [Algorithm 1 vs. Algorithm 2](#algorithm-1-vs-algorithm-2)
+- [Architecture](#architecture)
+- [Project structure](#project-structure)
+- [Tracked vs. local-only files](#tracked-vs-local-only-files)
+- [Setup, running, and testing](#setup-running-and-testing)
+- [Known limitations / next steps](#known-limitations--next-steps)
+- [Extending](#extending)
+- [Example workflow](#example-workflow)
+- [Research purpose](#research-purpose)
+- [Disclaimer](#disclaimer)
 
-A market maker attempts to earn the bid-ask spread, but also faces several risks:
+---
 
-* **Inventory risk:** holding too much long or short inventory
-* **Adverse selection risk:** being filled before the market moves against the quote
-* **Execution risk:** quotes may not be filled
-* **Order book risk:** available liquidity changes across depth levels
-* **Tick-size and fee constraints:** quotes must remain valid and economically meaningful
+# Limit order book and market-making fundamentals
 
-This repository studies two market-making approaches:
+This section is a from-scratch primer. If you already know what a bid, an
+ask, and a spread are, skip to [Algorithm 1](#algorithm-1-depth-aware-inventory-skewed-quoting-strategy).
 
-1. A **deterministic depth-aware strategy**, called Algorithm 1
-2. A **model-based optimal strategy**, based on the Avellaneda-Stoikov framework
+## What is a limit order book?
 
-Algorithm 1 is designed as a practical baseline that directly uses inventory and order book depth.
-Algorithm 2 provides a theoretical benchmark based on stochastic market-making theory.
+Almost every modern exchange — crypto or otherwise — matches buyers and
+sellers through a **limit order book (LOB)**. Instead of negotiating
+directly with a counterparty, every participant submits a **limit order**:
+an instruction of the form "buy up to X units at price P or better" (or
+the sell equivalent). The exchange collects every open order into two
+ordered lists:
+
+* The **bid side** — every outstanding *buy* order, sorted from the
+  highest offered price (the most eager buyer) down to the lowest.
+* The **ask side** (also called the *offer* side) — every outstanding
+  *sell* order, sorted from the lowest offered price (the most eager
+  seller) up to the highest.
+
+A trade happens the instant a new order's price crosses an order already
+resting on the other side — the exchange matches them automatically, at
+the resting order's price. Everything that doesn't cross yet simply
+*rests* in the book, visible to everyone, until it's matched or cancelled.
+
+Two orders at the exact same price are typically matched in **price-time
+priority**: the better price is always filled first, and among orders at
+the same price, the one that arrived first is filled first. This is why
+being an early, well-priced order in the book matters — it's queued ahead
+of everyone who arrives later at the same price.
+
+## Key order book terms
+
+These are used throughout this README and the codebase; Algorithm 1's
+notation below builds directly on them.
+
+| Term | Meaning |
+|---|---|
+| **Best bid** (`B0`) | The highest price any buyer is currently willing to pay. |
+| **Best ask** (`A0`) | The lowest price any seller is currently willing to accept. |
+| **Spread** | `A0 - B0` — the gap between the best bid and best ask. A tighter spread generally means a more liquid, more competitively traded market. |
+| **Mid-price** | `(B0 + A0) / 2` — a common single-number reference for "the price" of the asset right now, even though no trade necessarily happens exactly there. |
+| **Depth / level** | Orders don't all sit at the best price — some rest one tick below the best bid (`B1`), one tick below that (`B2`), and so on (mirrored on the ask side as `A1`, `A2`, ...). "Depth" is how much volume is available at or near the top of the book; a "level" is one specific price tier away from the touch. |
+| **Tick size** | The smallest allowed price increment on the exchange — prices can only take values that are multiples of the tick size. |
+| **Order book imbalance** | The relative amount of resting volume on the bid side vs. the ask side. Heavy bid-side volume can signal upward pressure (more people want in than out), and vice versa — though it's a signal, not a guarantee. |
+| **Inventory** | How much of the asset a market maker currently holds (positive = long, negative = short), as a result of its own past fills. |
+
+## What is market making?
+
+A **market maker** is a participant who continuously quotes *both* sides
+of the book at once — a bid to buy and an ask to sell, usually straddling
+the current mid-price — rather than taking a directional view on where
+price is headed. Their business is the **spread**: buy low (at their bid,
+when someone sells to them), sell high (at their ask, when someone buys
+from them), and pocket the difference, over and over, at high volume and
+thin margin per trade.
+
+This is a genuine service to the market — it's what lets any other trader
+buy or sell *immediately* at a reasonable price instead of waiting for a
+matching counterparty to show up — and exchanges often reward market
+makers with lower fees (sometimes rebates) in exchange for it. But it is
+not free money: every quote a market maker posts is a standing offer that
+*anyone* can trade against, including someone who knows something the
+market maker doesn't yet. That asymmetry is where most of the risk below
+comes from.
+
+## Core risks a market maker faces
+
+* **Inventory risk.** Every fill on one side leaves the market maker
+  holding more or less inventory than before. If the price then moves
+  against that position before it can be worked back to neutral, the
+  market maker loses money on the position itself — separately from
+  whatever spread it earned getting into it. This is *the* central
+  tension a market-making strategy has to manage: quote tightly and
+  symmetrically to maximize fill rate and spread capture, or skew quotes
+  to manage inventory and accept fewer/worse fills. Both algorithms in
+  this repo exist specifically to answer that tradeoff — Algorithm 1 by
+  a direct, rule-based inventory skew (see [Step 2](#step-2-inventory-dependent-level-pair-generation)); Algorithm 2 by solving
+  it as a formal utility-maximization problem (see [The formulas](#the-formulas)).
+* **Adverse selection risk.** A market maker's quotes are filled
+  precisely when someone *wants* to trade against them — and the people
+  most eager to trade right now are often the ones who know the price is
+  about to move (news, a large incoming order, a faster/better-informed
+  trader). Getting filled isn't automatically good news; it can mean
+  being picked off just before the market moves against the new
+  position.
+* **Execution risk.** The reverse problem: a quote sitting in the book is
+  not guaranteed to be filled at all. If the market moves away before
+  anyone trades against it, the market maker earns nothing on that quote
+  and has to reprice — repeatedly, if the market keeps moving.
+  Quoting too conservatively (too far from the touch) reduces adverse
+  selection risk but increases execution risk; quoting too aggressively
+  does the opposite. There is no setting that eliminates both.
+* **Order book / liquidity risk.** Depth is not static — it can thin out
+  or disappear during volatile periods, exactly when a market maker most
+  needs to unwind inventory. A strategy that assumes yesterday's depth
+  will still be there today can end up quoting into a much thinner book
+  than intended.
+* **Tick-size and fee constraints.** A quote isn't valid or meaningful
+  just because it looks profitable on paper — it has to land on an
+  allowed tick, and it has to clear the exchange's trading commission
+  *and* whatever minimum profit margin the strategy requires, or the
+  "profit" is actually a loss once fees are paid. Both algorithms enforce
+  this explicitly rather than assuming it away — see Algorithm 1's
+  [Step 3](#step-3-spread-feasibility-condition) and this project's `commission_perc`/`exp_ret_min` config fields.
+
+## Two approaches in this repository
+
+1. A **deterministic depth-aware strategy** ([Algorithm 1](#algorithm-1-depth-aware-inventory-skewed-quoting-strategy)):
+   a rule-based heuristic that reads inventory and order book depth
+   directly and picks quotes from a fixed decision procedure — no
+   probability model, no calibration required.
+2. A **model-based optimal strategy** ([Algorithm 2](#algorithm-2-avellaneda-stoikov-model)):
+   the Avellaneda-Stoikov framework, which models the market
+   stochastically and *solves* for the utility-maximizing quotes given
+   that model, at the cost of needing calibrated parameters for how the
+   market actually behaves.
+
+Algorithm 1 is a practical baseline that works today with no data-fitting
+step. Algorithm 2 is a theoretical benchmark — more principled in theory,
+but only as good as its calibration in practice, and not yet implemented
+in this repository (see [Known limitations / next steps](#known-limitations--next-steps)).
 
 ---
 
@@ -104,6 +246,11 @@ The tick size is:
 ```math
 \epsilon
 ```
+
+In this codebase, `Algo1Strategy.tick_size()` sets `epsilon = 10` for
+IRT-quoted pairs (BTCIRT, USDTIRT) and `epsilon = 0.01` for everything
+else — the actual project only ever runs the IRT pairs, so `epsilon = 10`
+in practice today.
 
 The mid-price is defined as:
 
@@ -207,43 +354,31 @@ When inventory is close to neutral, the strategy tends to quote more symmetrical
 
 ## Step 3: Spread-feasibility condition
 
-For each candidate pair ((b_k,a_k)), the algorithm checks whether the corresponding bid and ask levels satisfy a spread condition.
+For each candidate pair ((b_k,a_k)), the algorithm checks whether quoting at those levels would actually be **profitable after fees** — not just whether the two prices don't cross.
 
-The final bid quote will be placed one tick above the selected bid level:
-
-```math
-p_b = B_{b_k} + \epsilon
-```
-
-The final ask quote will be placed one tick below the selected ask level:
+This is the exact condition `Algo1Strategy.spread_ok()` checks:
 
 ```math
-p_a = A_{a_k} - \epsilon
+\frac{A_{a_k} - B_{b_k}}{L} \; > \; c + r_{\min}
 ```
 
-To avoid crossed or invalid quotes, the algorithm requires:
+where:
 
-```math
-B_{b_k} + \epsilon < A_{a_k} - \epsilon
-```
+* (L) is the last traded price (the denominator that turns an absolute price gap into a *fractional* spread, comparable across assets and price levels)
+* (c) is `commission_perc` — the exchange's round-trip trading commission, as a fraction
+* (r_{\min}) is `exp_ret_min` — the minimum extra profit margin required *beyond* covering fees. If not explicitly configured, it defaults to `commission_perc` itself (i.e. the required gross spread becomes at least `2 * commission_perc`) — see `SimpleMarketMaker.__init__` in `market_maker/engine.py`.
 
-Equivalently:
-
-```math
-A_{a_k} - B_{b_k} > 2\epsilon
-```
-
-This condition ensures that after moving both quotes one tick inward, the bid quote remains below the ask quote.
-
-In the implementation, this check is handled by `Algo1Strategy.spread_ok()`:
+In code:
 
 ```python
-self.spread_ok(ob, bidx, aidx)
+return (ask - bid) / last > (self.cfg.commission_perc + self.cfg.exp_ret_min)
 ```
 
-If `spread_ok` includes exchange fees or additional spread constraints, those constraints are also applied at this step.
+In plain terms: a candidate pair is only feasible if the fractional gap between its ask and bid levels is wide enough to pay the trading fee on both legs *and* still leave the configured minimum profit on top. A pair that would merely break even, or lose money after fees, is rejected — this is what keeps the strategy from quoting itself into a guaranteed loss just to win a fill.
 
-The algorithm scans the candidate pairs sequentially. It keeps updating the selected bid and ask levels while the spread condition remains valid. Once the condition fails, the search stops.
+(Separately, once a pair is *selected*, [Step 4](#step-4-final-quote-construction) moves each quote one tick further inward before sending it — that's a placement rule for slightly better fill priority, not part of this feasibility check.)
+
+The algorithm scans the candidate pairs sequentially, starting from the widest/most conservative pair and walking toward tighter ones (`Algo1Strategy.leg_pairs()` generates them in that order). It keeps updating the selected bid and ask levels while the condition holds. Once it fails, the search stops — so a *later*, tighter pair is never selected once an earlier, wider one has already failed.
 
 Therefore, the selected pair is the last feasible pair before the first infeasible pair:
 
@@ -483,7 +618,7 @@ Step 9:
         bid_spread = mid_price - bid_price
         ask_spread = ask_price - mid_price
 
-Output:
+Output of this stage (algo1_bid_ask_prices):
     bid price
     ask price
     selected bid level
@@ -491,13 +626,30 @@ Output:
     last traded price
     bid spread
     ask spread
+
+Step 10 (the actual entry point the trading engine calls -- decide_order):
+    Re-check the spread condition (Step 3) on the FINAL selected pair,
+    the same way Step 4's scan checked every candidate:
+
+        If spread condition holds on (bid_level, ask_level):
+            return the Step 1-9 output above -- place this quote
+        Else:
+            return "no quote this round" (None) -- do not place any order
+
+    This matters specifically when Step 4 never found a feasible pair at
+    all: bid_level/ask_level are still sitting at their Step 3 initial
+    value (D, D -- the widest, most conservative pair) rather than a pair
+    that was actually confirmed profitable. Step 10 is what stops that
+    unconfirmed fallback from ever being sent as a real order -- if even
+    the widest possible spread doesn't clear the profitability bar, the
+    round produces no quote instead of a guaranteed-unprofitable one.
 ```
 
 ---
 
 ## Output of Algorithm 1
 
-For each order book snapshot, Algorithm 1 returns a dictionary:
+For each order book snapshot where a quote **is** placed, Algorithm 1 returns a dictionary:
 
 ```python
 {
@@ -524,6 +676,14 @@ The most important outputs are:
 * **ask spread:** distance between the ask quote and the mid-price
 * **bid exec prob:** placeholder execution probability for the bid side
 * **ask exec prob:** placeholder execution probability for the ask side
+
+When no candidate pair clears the profitability bar (Step 10), `decide_order()`
+returns `None` instead of this dictionary — the engine places no order that
+round. In demo/paper mode this is logged as a `no_quote` round with the
+specific reason (`invalid_or_single_level_order_book`,
+`inventory_skew_unexpressible_in_shallow_book`, or the general
+`profitability_threshold` case) rather than silently doing nothing — see
+usage.md §1b and `market_maker/no_quote.py`.
 
 ---
 
@@ -567,15 +727,15 @@ Unlike the Avellaneda-Stoikov model, Algorithm 1 does not solve an optimization 
 
 ## Algorithm 1 in practice: three scenarios
 
-These are the exact scenarios pinned by `market_maker/tests/test_strategy_algo1.py`, shown here to make the abstract steps above concrete. All three use an 11-level synthetic order book (bids at 100, 99, 98, ... ; asks at 101, 102, 103, ...; last trade price 100) and a tick size of 0.01.
+These are the exact scenarios pinned by `market_maker/tests/test_algo1_baseline.py` (mirrored more lightly in `test_strategy_algo1.py`), shown here to make the abstract steps above concrete. All three use an 11-level synthetic order book (bids at 100, 99, 98, ... ; asks at 101, 102, 103, ...; last trade price 100), pair `"BTCUSDT"` (tick size 0.01 — the project's real pairs, BTCIRT/USDTIRT, use tick size 10 instead), and vary only `commission_perc` (with `exp_ret_min` defaulting to it).
 
-**Scenario A — spread condition always holds (loose commission threshold).** The scan walks all the way to the shallowest candidate pair without ever hitting an infeasible one. At neutral inventory (`d_q = 0`), the result is bid level 1 / ask level 1 — quoting close to the touch. At high inventory, the ask level is pulled to 0 (most aggressive sell) while the bid level backs off to 5 (least aggressive buy) — exactly the "discourage buying, encourage selling" behavior Step 2 describes.
+**Scenario A — spread condition always holds (`commission_perc = 0.0025`, a loose threshold).** The scan walks all the way to the shallowest candidate pair without ever hitting an infeasible one. At neutral inventory (`q = 0.5`, `d_q = 0`), the result is bid level 1 / ask level 1 — quoting close to the touch. At maximum inventory (`q = 1.0`), the ask level is pulled to 0 (most aggressive sell) while the bid level backs off to 5 (least aggressive buy) — exactly the "discourage buying, encourage selling" behavior Step 2 describes. `decide_order()` places this quote every time — the re-check in Step 10 always passes here.
 
-**Scenario B — spread condition never holds (strict commission threshold).** Every candidate pair fails the feasibility check on the very first iteration, so the levels never move off their initial value (`depth_max`, the deepest/widest level) regardless of inventory. This is the `else: break` branch firing immediately — the algorithm falls back to the most conservative, widest quote available rather than crossing the spread constraint.
+**Scenario B — spread condition never holds (`commission_perc = 0.3`, a deliberately strict threshold no real spread clears).** Every candidate pair fails the feasibility check on the very first iteration, so `algo1_bid_ask_prices()` (the helper) never moves the levels off their Step 3 initial value (`depth_max`, the deepest/widest level) regardless of inventory, and still returns a priced-but-unconfirmed dict for that pair. **`decide_order()` — what the engine actually calls — returns `None` in this scenario**, because Step 10's re-check applies the exact same failing condition to that fallback pair. This is a real `no_quote` round (reason `profitability_threshold`), not a quote at the widest available levels; the helper's own return value is only meaningful directly for diagnostics/analysis, not for what gets sent to the exchange.
 
-**Scenario C — the scan breaks partway through (mid-range commission threshold).** At neutral inventory the deepest five pairs are feasible and the sixth is not, so the search stops at level 5/5. This is the general case: neither always-feasible nor never-feasible, the "last feasible pair before the first infeasible pair" rule from Step 3 actually deciding the outcome.
+**Scenario C — the scan breaks partway through (`commission_perc = exp_ret_min = 0.05`, a mid-range threshold).** At neutral inventory the deepest five pairs are feasible and the sixth is not, so the search stops at level 5/5 — a real, confirmed pair, so `decide_order()` places this quote. This is the general case: neither always-feasible nor never-feasible, the "last feasible pair before the first infeasible pair" rule from Step 3 actually deciding the outcome.
 
-Together these three cases cover the full range of what `spread_ok` can do to the scan (never stops, stops immediately, stops partway) — which is why they're the baseline characterization tests: any future change to Algorithm 1's internals that alters one of these three outcomes is a behavior change, not a refactor.
+Together these three cases cover the full range of what `spread_ok` can do to the scan (never stops, stops immediately, stops partway) — which is why they're the baseline characterization tests: any future change to Algorithm 1's internals that alters one of these three outcomes is a behavior change, not a refactor. Only Scenario B additionally demonstrates the Step 10 gate, since it's the only one of the three where the helper's own fallback value is unprofitable.
 
 ---
 
@@ -615,6 +775,57 @@ giving bid/ask quotes:
 ```math
 p_b = r(s,q,t) - \delta_b, \qquad p_a = r(s,q,t) + \delta_a
 ```
+
+(In the symmetric formulation above, half the total spread sits on each
+side: (\delta_b = \delta_a = \frac{1}{2}(\delta_b+\delta_a)), so the bid
+and ask are placed equally far from the reservation price.)
+
+## Reading the formulas in plain English
+
+The reservation price is what Algorithm 1's inventory skew ([Step 2](#step-2-inventory-dependent-level-pair-generation))
+is doing informally, made precise: instead of picking a *level* to shift
+toward, Avellaneda-Stoikov computes an actual *price* — a "fair value"
+that has already been shifted away from the true mid-price (`s`) to
+account for inventory risk, and centers both quotes on that adjusted
+price instead of on the raw mid-price.
+
+* **`-q * gamma * sigma^2 * (T-t)`** is the size of that shift. It grows
+  with three things, each for an intuitive reason:
+  * **`q`** (inventory): more inventory, more risk, more urgency to shift
+    the price to encourage trading it off.
+  * **`sigma^2`** (volatility): in a calmer market, holding inventory
+    for a while is not very risky, so the model barely needs to shift
+    away; the more volatile the price, the more that same inventory
+    could swing in value before it's unwound, so the shift grows.
+  * **`(T-t)`** (time remaining): far from the end of the trading
+    horizon, there's more time left for the price to move against an
+    open position, so the model shifts more; as `t -> T`, this term
+    shrinks toward zero and the reservation price converges back to the
+    plain mid-price.
+  * **`gamma`** (risk aversion) scales all of the above — a more
+    risk-averse market maker shifts its price further for the same
+    inventory/volatility/time.
+* **The optimal spread** `delta_b + delta_a` has two additive pieces with
+  different jobs:
+  * **`gamma * sigma^2 * (T-t)`** — the same "risk penalty" term as the
+    reservation-price shift, widening the spread to compensate for
+    holding inventory risk over the remaining horizon.
+  * **`(2/gamma) * ln(1 + gamma/kappa)`** — a separate term driven by
+    **`kappa`**, how quickly order arrivals fall off as a quote moves
+    away from the mid-price (a market where orders arrive readily even
+    far from mid has a *small* effect from widening — low `kappa`
+    sensitivity — while a market where arrivals drop off sharply as you
+    move away punishes a wide quote with far fewer fills — high `kappa`
+    sensitivity). This term balances "quote wide enough to earn a good
+    spread per fill" against "don't quote so wide that fills stop
+    arriving at all."
+
+The practical difference from Algorithm 1: Algorithm 1 answers "which
+*existing order-book level* should I quote at?" using today's real book
+depth. Avellaneda-Stoikov answers "what *price* is optimal?" using a
+model of how the market behaves — which is more principled if that model
+is correctly calibrated to the real market ((\sigma) and (\kappa) fit from
+data), but produces nothing meaningful if it isn't.
 
 ## What's missing to implement it
 
