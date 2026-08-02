@@ -13,6 +13,7 @@ project *is* and how it's architected, see [README.md](README.md).
 | [History dashboard](#3-history-dashboard) | `python dashboard.py` | No (reads local SQLite/CSV results) | No | No |
 | [Research notebooks](#4-research-notebooks-read-only) | open in Jupyter | No | No | No |
 | [Docker](#6-docker) | `docker compose up -d --build --wait` | Yes (demo mode) | No -- simulated | No |
+| [Start/stop cheat sheet](#7-startstop-cheat-sheet-local-vs-server-whole-stack-vs-one-service) | local vs. server, full stack vs. one service | n/a | n/a | n/a |
 
 Note on terminology: `demo_btc.py`/`demo_usdt.py` (this branch's `run.py
 --profile btc/usdt --mode real`, the default) were **never** a simulated
@@ -565,3 +566,121 @@ For a buy, released lock is quote-currency cash: `remaining amount × limit
 price`. Cancelling a 1 USDT paper buy at 90 IRT therefore releases `90.00
 IRT`. For a sell, released lock is base-currency inventory and is reported
 as USDT or BTC.
+
+---
+
+## 7. Start/stop cheat sheet: local vs. server, whole stack vs. one service
+
+Everything below is Docker Compose. §1/§1b cover running `run.py`/
+`dashboard.py` natively (no Docker) if you want that instead.
+
+**Local** uses the root `docker-compose.yml` — 4 services: `session-init`,
+`btc-demo`, `usdt-demo`, `dashboard`. It does not include `admin` (run
+`python3 admin_app.py` natively from `market_maker/` if you want the admin
+panel locally — serves `http://localhost:8051/admin/`, no Nginx/Basic Auth
+layer since that's a production-only concern).
+
+**Server** (`ssh ubuntu@185.206.95.141`, `/home/ubuntu/limit-order-book`)
+uses `deploy/docker-compose.production.yml` — the same 4 services plus a
+5th, `admin`, and a host-level systemd unit (`lob-control-agent`) that
+isn't a Docker container at all. Every server command below assumes you're
+already `cd`'d into `/home/ubuntu/limit-order-book`.
+
+### 7.1 Local: everything at once
+
+```sh
+docker compose up -d --build --wait     # start (build if needed), wait for healthy
+docker compose stop                     # stop, keep containers (fast restart later)
+docker compose down                     # stop and remove containers + network
+docker compose ps -a                    # what's running right now
+```
+
+### 7.2 Local: one service at a time
+
+```sh
+docker compose up -d btc-demo           # start just BTC (starts session-init first if needed)
+docker compose stop btc-demo            # stop just BTC, leave usdt-demo/dashboard running
+docker compose restart usdt-demo        # restart just USDT, same session
+docker compose logs -f dashboard        # follow one service's logs
+```
+
+Swap `btc-demo` / `usdt-demo` / `dashboard` for whichever service you mean.
+`session-init` runs once and exits (0) on its own — you don't start/stop it
+directly, it's a dependency of the other three.
+
+### 7.3 Server: everything at once
+
+```sh
+cd /home/ubuntu/limit-order-book
+
+# start (build if needed), wait for healthy -- all 5 services
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env up -d --build --wait
+
+# stop, keep containers
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env stop
+
+# stop and remove containers + network (data in runtime/ is untouched)
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env down
+
+# what's running right now
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env ps -a
+```
+
+### 7.4 Server: one service at a time
+
+```sh
+cd /home/ubuntu/limit-order-book
+COMPOSE="docker compose -p limit-order-book -f deploy/docker-compose.production.yml --env-file deploy/demo.env"
+
+$COMPOSE up -d btc-demo        # start just BTC
+$COMPOSE stop usdt-demo        # stop just USDT, leave everything else running
+$COMPOSE restart admin         # restart just the admin panel (e.g. after a code deploy)
+$COMPOSE logs -f dashboard     # follow one service's logs
+```
+
+Swap `btc-demo` / `usdt-demo` / `dashboard` / `admin` for whichever service
+you mean. Restarting `admin` never restarts the BTC/USDT workers, and vice
+versa — they're independent containers.
+
+**Alternative to SSH for worker start/stop/restart**: once the stack
+(including `admin`) is already up, use the Admin Control Panel itself —
+`https://dashboard.185-206-95-141.nip.io/admin/` → **Workers** page — to
+start/stop/restart BTC/USDT (individually or both) from a browser, no SSH
+needed. It calls the same `deploy/control_agent.py` mutation path, just
+through the control queue instead of a direct `docker compose` command.
+
+### 7.5 Server: the control agent (not a container — a systemd unit)
+
+`deploy/control_agent.py` is what actually executes admin-panel actions
+(worker start/stop, backups, config apply, reset, recovery). It runs as
+`lob-control-agent.service`, independent of the Docker stack:
+
+```sh
+sudo systemctl status lob-control-agent    # is it running, recent log lines
+sudo systemctl start lob-control-agent
+sudo systemctl stop lob-control-agent      # admin-panel actions will time out while stopped
+sudo systemctl restart lob-control-agent
+journalctl -u lob-control-agent -f         # follow its logs
+```
+
+If it's stopped, the admin panel itself still loads (read-only views still
+work), but any action that enqueues a command (worker start/stop, backup,
+config apply, reset, recovery) will hang until it times out.
+
+### 7.6 Server: full rollback (whole LOB stack, never touches Sarkhatti)
+
+```sh
+cd /home/ubuntu/limit-order-book
+./deploy/rollback.sh
+```
+
+Stops `lob-control-agent`, removes the LOB Docker stack, and removes only
+the LOB-specific Nginx site/auth files (`lob-dashboard`, the two
+`.htpasswd` files, the server-names-hash snippet). It never touches the
+separate, unrelated `sarkhatti` service on the same host, and never
+deletes `runtime/` data — a subsequent `docker compose ... up -d --build
+--wait` picks the existing session back up.
