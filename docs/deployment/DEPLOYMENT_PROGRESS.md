@@ -1121,3 +1121,105 @@ Admin-only rollback is the prior application revision
 image definition and followed by force-recreating only admin. Full rollback
 remains `cd /home/ubuntu/limit-order-book && ./deploy/rollback.sh` and never
 touches Sarkhatti. Exact next step: extended monitoring only.
+
+## 2026-08-02 — Demo simulation correctness fixes (prepared, not yet deployed)
+
+Five defects fixed so Algorithm 1 changes can actually be measured. Found by
+tracing real recorded runtime data (session
+`demo-20260801T121032Z-d0277c82f98c`) plus controlled replay, not by reading
+code alone. **Algorithm 1 was not modified** — no algorithmic defect exists.
+**Accounting was not modified** — it reconciled to `0.00e+00` drift on both
+symbols. Full evidence: `reports/demo-portfolio-jump-investigation.md`.
+
+**CRITICAL — retroactive time-series corruption.** `engine.py`'s
+`_sync_demo_order_rows()` and `_update_demo_result_orders()` stamped the
+CURRENT portfolio snapshot onto the HISTORICAL round row that created an
+order, every time that order later changed state.
+`result_store.update_order_rows()` locates rows by order id, so an order
+opened in round 2 and filled in round 9 wrote round 9's balances onto round
+2's row. The SQLite store is canonical and the CSV is exported from it, so
+every downstream consumer saw corrupted data. Verified in a controlled run:
+engine inventory rose a clean `+0.999`/round while the store recorded
+`0.999, 7.992, 8.991, 4.995, ...` — forwards *and backwards*, max single-round
+jump `6.993` against `order_size` `1`. This invalidated PnL, wealth, drawdown
+and any strategy comparison. Only the final row was ever correct, which is why
+end-state reconciliation passed while the dashboard charts looked wrong. Order
+lifecycle fields (status, matched amount, fill reason) are still back-filled —
+that is per-order state; only the per-round time series is now protected.
+
+**HIGH — batch fill with no liquidity budget.** `paper.py`'s
+`process_market()` filled every eligible resting order to its full remaining
+amount from one market observation. Eight orders filled at one instant
+(`7.361475` gross − `0.007362` fees = `7.354113`, matching the observed jump
+exactly). Now a finite per-side budget is shared across orders in price-time
+priority. Also fixed a latent defect where `traded_volume` was re-read inside
+the per-order loop, so each order independently received the full volume even
+with the queue enabled.
+
+**HIGH — unbounded concurrent resting orders.** `inv_max`/available cash alone
+allowed ~15–49 buys to accumulate at near-identical prices. Added
+`demo_max_open_orders_per_side` (default 3), reported as
+`not_sent_max_open_orders`.
+
+**MEDIUM — decisions rendered as orders.** ~1941 of 2085 rows in the Admin
+Orders table were not orders: the engine writes one row per ROUND, and
+no-order rounds carry a status (`no_quote`, `not_sent_*`) that the filter
+treated as "an order exists". Now filters on a real order id, adds an explicit
+"All round decisions" view carrying the reason, and never renders a bare
+`nan`.
+
+**MEDIUM — unexplained chart gaps.** 1827 of 2085 rounds were legitimate
+`profitability_threshold` refusals with no Bid/Ask logged. The dashboard
+status line now reports how many rounds produced no quote and why.
+
+Configuration added (both scale by `order_size`, so BTC `0.000015` and USDT
+`1.0` are each correct):
+
+```python
+demo_max_fill_per_observation_orders: float = 1.0   # x order_size, per side
+demo_max_open_orders_per_side: int = 3
+```
+
+`PaperLedger`'s own budget defaults to `None` (unbounded) so direct
+construction keeps legacy semantics and the budget is opt-in from config.
+Ledgers persisted before the field existed load fine, and a resumed ledger has
+the current config applied rather than keeping a stale persisted value.
+
+Verification:
+
+```text
+$ python3 -m pytest -q
+369 passed, 1 warning        (was 333 before this work)
+
+$ python3 -m compileall -q market_maker deploy/control_agent.py; echo $?
+0
+$ bash -n deploy/rollback.sh; echo $?
+0
+$ docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+    --env-file deploy/demo.env config --quiet; echo $?
+0
+```
+
+31 new regression tests across four files. The time-series tests were verified
+to actually catch the bug: temporarily reverting the fix makes 2 of them fail,
+and they pass again once restored. Two pre-existing tests were corrected
+because they encoded the buggy behavior — notably
+`test_demo_engine_lifecycle` asserted that round 1 held round 2's balances.
+
+Controlled 12-round Demo session after the fixes (reconciliation: inventory
+diff `0.00e+00`, cash `1.63e-08`, fees `7.28e-12`; all lock invariants hold;
+zero real-exchange calls):
+
+```text
+ROUND | inv_current | cash_current | Portfolio Wealth
+    1 |      0.0000 | 30000000.00  |     30000000.00
+    2 |      0.9990 | 29001990.00  |     30030960.00
+   12 |     10.9890 | 19069890.00  |     30388560.00
+max single-round inventory jump = 0.9990 (order_size = 1)   [was 6.993]
+```
+
+Commit `501e8ec` on `parsaoryani/admin-demo-control`, fast-forwarded to
+`production`. **Not yet deployed to the server** — the operator is running the
+deployment. No schema migration is required. Note that existing sessions carry
+corrupted history from before this fix, so a fresh Demo session is recommended
+after deployment to keep evaluation data clean.
