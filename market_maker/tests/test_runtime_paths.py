@@ -57,18 +57,22 @@ def test_make_cfg_writes_outputs_and_state_to_separate_roots():
 
 def test_demo_worker_lease_uses_the_state_root():
     values = _runtime_values(
-        "import argparse, json, run; paths = []; "
+        "import argparse, json, run; paths = []; events = []; "
         "argparse.ArgumentParser.parse_args = lambda self: argparse.Namespace(profile='btc', mode='demo', "
         "algorithm='algo1', exchange='nobitex', continuous=False); "
         "run.install_shutdown_signal_handlers = lambda: None; "
         "sync = type('Sync', (), {'reload_at_round_boundary': lambda self: "
-        "type('Result', (), {'ok': True})()})(); "
+        "events.append('reload') or type('Result', (), {'ok': True})()})(); "
+        "ledger = type('Ledger', (), {'persist_initial_state': lambda self: "
+        "events.append('persist')})(); "
         "run.make_bot = lambda *args: type('Bot', (), "
-        "{'config_sync': sync, 'run': lambda self: None})(); "
+        "{'exchange': type('Exchange', (), {'ledger': ledger})(), "
+        "'config_sync': sync, 'run': lambda self: events.append('run')})(); "
         "run.WorkerLease = lambda path, identity: type('Lease', (), "
-        "{'__enter__': lambda self: paths.append(path) or self, "
-        "'__exit__': lambda self, *args: None})(); "
-        "run.main(); print(json.dumps({'lease': paths[0]}))"
+        "{'__enter__': lambda self: paths.append(path) or events.append('lease') or self, "
+        "'__exit__': lambda self, *args: events.append('release')})(); "
+        "run.main(); print(json.dumps({'lease': paths[0], 'events': events}))"
     )
 
     assert Path(values["lease"]).parent == Path("/app/runtime/state")
+    assert values["events"] == ["lease", "persist", "reload", "run", "release"]

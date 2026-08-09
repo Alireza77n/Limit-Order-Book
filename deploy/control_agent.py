@@ -56,6 +56,11 @@ from session import initialize_stack_session  # noqa: E402
 
 AgentResult = namedtuple("AgentResult", ["ok", "detail"])
 
+
+class WorkerStatusError(RuntimeError):
+    """Worker liveness could not be established authoritatively."""
+
+
 PAIRS = ("btc", "usdt")
 COMPOSE_ARGV_PREFIX = [
     "docker", "compose", "-p", "limit-order-book",
@@ -164,11 +169,19 @@ def is_worker_running(
     if paths.mode == "local":
         run_argv = run_argv or _default_run_argv
         argv = list(LOCAL_WORKER_STATUS_ARGV[pair])
-        completed = run_argv(
-            argv, cwd=str(paths.app_root), capture_output=True, text=True
-        )
-        if getattr(completed, "returncode", 1) != 0:
-            return False
+        try:
+            completed = run_argv(
+                argv, cwd=str(paths.app_root), capture_output=True, text=True
+            )
+        except Exception as exc:  # noqa: BLE001 -- fail closed at authority boundary
+            raise WorkerStatusError(
+                f"{pair} worker status query failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        returncode = getattr(completed, "returncode", None)
+        if returncode != 0:
+            raise WorkerStatusError(
+                f"{pair} worker status query failed with exit code {returncode}"
+            )
         running_services = set((getattr(completed, "stdout", "") or "").splitlines())
         return SERVICE_NAME[pair] in running_services
     lock_path = worker_lock_path(paths, pair)
@@ -181,6 +194,15 @@ def is_worker_running(
             return True
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         return False
+
+
+def worker_statuses(paths: AgentPaths, pairs, run_argv: Callable = None) -> dict:
+    """Resolve every requested status before a caller mutates shared state."""
+    return {pair: is_worker_running(paths, pair, run_argv) for pair in pairs}
+
+
+def liveness_failure(exc: WorkerStatusError) -> AgentResult:
+    return AgentResult(False, {"phase": "liveness", "error": str(exc)})
 
 
 def run_worker_command(paths: AgentPaths, action: str, pair: str, run_argv: Callable = None) -> AgentResult:
@@ -296,7 +318,10 @@ def handle_rollback_config(paths, pair, payload, run_argv):
 
 
 def handle_new_session(paths, pair, payload, run_argv):
-    running_before = {p: is_worker_running(paths, p, run_argv) for p in PAIRS}
+    try:
+        running_before = worker_statuses(paths, PAIRS, run_argv)
+    except WorkerStatusError as exc:
+        return liveness_failure(exc)
     stopped = []
     for p, was_running in running_before.items():
         if was_running:
@@ -344,7 +369,10 @@ def handle_new_session(paths, pair, payload, run_argv):
 
 
 def handle_cancel_orders(paths, pair, payload, run_argv):
-    was_running = is_worker_running(paths, pair, run_argv)
+    try:
+        was_running = worker_statuses(paths, (pair,), run_argv)[pair]
+    except WorkerStatusError as exc:
+        return liveness_failure(exc)
     if not was_running:
         return AgentResult(True, {
             "pair": pair, "was_running": False, "now_running": False,
@@ -368,7 +396,10 @@ def handle_create_backup(paths, pair, payload, run_argv):
 def handle_reset_demo(paths, pair, payload, run_argv):
     if (payload or {}).get("confirm") != "RESET":
         return AgentResult(False, {"error": "confirmation required"})
-    running_before = {p: is_worker_running(paths, p, run_argv) for p in PAIRS}
+    try:
+        running_before = worker_statuses(paths, PAIRS, run_argv)
+    except WorkerStatusError as exc:
+        return liveness_failure(exc)
     for p, was_running in running_before.items():
         if was_running:
             run_worker_command(paths, "stop_worker", p, run_argv)
@@ -422,7 +453,10 @@ def handle_restore_backup(paths, pair, payload, run_argv):
     if backup_dir is None:
         return AgentResult(False, {"error": "invalid or unknown backup name"})
 
-    running_before = {p: is_worker_running(paths, p, run_argv) for p in PAIRS}
+    try:
+        running_before = worker_statuses(paths, PAIRS, run_argv)
+    except WorkerStatusError as exc:
+        return liveness_failure(exc)
     for p, was_running in running_before.items():
         if was_running:
             run_worker_command(paths, "stop_worker", p, run_argv)
@@ -447,10 +481,14 @@ def handle_restore_backup(paths, pair, payload, run_argv):
 
 
 def handle_recover_demo(paths, pair, payload, run_argv):
+    try:
+        running = worker_statuses(paths, PAIRS, run_argv)
+    except WorkerStatusError as exc:
+        return liveness_failure(exc)
     stale_locks = []
     for p in PAIRS:
         lock_path = worker_lock_path(paths, p)
-        if lock_path.exists() and not is_worker_running(paths, p, run_argv):
+        if lock_path.exists() and not running[p]:
             lock_path.unlink()
             stale_locks.append(p)
 

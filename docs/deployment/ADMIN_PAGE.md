@@ -80,9 +80,12 @@ The resolved desired values are pair-isolated in
 prior overlay is retained as `.previous`. Workers own
 `runtime_config_<pair>.json`, which records the stack session, applied
 values, pending new-session values, desired digest, timestamp, and error.
-The initial paper-ledger seed is persisted before the first round, so a
-same-session process restart cannot consume future-session values. Bind
-mounts preserve overlays, ledgers, and snapshots across Compose recreation.
+After the Demo worker owns its exclusive lease, it persists the initial
+paper-ledger seed through a public ledger API before config reload/run. A
+same-session process restart therefore cannot consume future-session values,
+and a concurrent process that loses the lease cannot write shared ledger
+state. Bind mounts preserve overlays, ledgers, and snapshots across Compose
+recreation.
 
 Status labels mean:
 
@@ -153,6 +156,9 @@ Stop the agent with `Ctrl-C` when finished. Local mode uses the root Compose
 project and `market_maker/results`; it queries the fixed BTC/USDT service
 allow-list for liveness and starts workers with `--no-deps`, so `session-init`
 cannot rotate the session except during an explicit stack/session operation.
+If a status query raises or exits nonzero, the agent fails the operation in
+its liveness phase before rotating a session, overwriting a backup, deleting
+Demo data, or clearing a lock.
 Starting the agent processes any already queued commands, so inspect
 `market_maker/results/control/commands/` first when preserving an existing
 runtime. Config and worker actions do not inherently time out locally—the

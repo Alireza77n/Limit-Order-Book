@@ -56,6 +56,7 @@ def make_runtime_bot(state_dir, monkeypatch, *, session="runtime-session"):
     with WorkerLease(
         state_dir / ".worker_usdtirt.lock", identity="USDTIRT-demo"
     ):
+        bot.exchange.ledger.persist_initial_state()
         assert bot.config_sync.reload_at_round_boundary().ok
     return bot
 
@@ -64,6 +65,7 @@ def make_runtime_bot(state_dir, monkeypatch, *, session="runtime-session"):
 def runtime_bot(tmp_path, monkeypatch):
     bot = build_runtime_bot(tmp_path, monkeypatch)
     with WorkerLease(tmp_path / ".runtime-test.lock", identity="runtime-test"):
+        bot.exchange.ledger.persist_initial_state()
         assert bot.config_sync.reload_at_round_boundary().ok
     return bot, tmp_path
 
@@ -75,6 +77,17 @@ def save_desired(state_dir, **values):
         pair="usdt",
         profiles=TRADING_PROFILES,
     )
+
+
+def test_competing_make_bot_constructions_do_not_persist_before_worker_lease(
+    tmp_path, monkeypatch
+):
+    first = build_runtime_bot(tmp_path, monkeypatch, session="s1")
+    second = build_runtime_bot(tmp_path, monkeypatch, session="s1")
+
+    assert first.exchange.ledger is not second.exchange.ledger
+    assert first.exchange.ledger.state_path == tmp_path / "usdt-ledger.json"
+    assert not first.exchange.ledger.state_path.exists()
 
 
 def run_one_round(bot):
@@ -226,7 +239,6 @@ def test_runtime_snapshot_reports_applied_and_pending_values(runtime_bot):
 
 def test_same_session_restart_keeps_commission_pending(tmp_path, monkeypatch):
     first = make_runtime_bot(tmp_path, monkeypatch, session="s1")
-    first.exchange.ledger._persist()
     save_desired(tmp_path, commission_perc=0.02)
 
     restarted = make_runtime_bot(tmp_path, monkeypatch, session="s1")

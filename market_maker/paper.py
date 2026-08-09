@@ -196,6 +196,11 @@ class PaperLedger:
         }
         self._atomic_json_write(self.state_path, document)
 
+    def persist_initial_state(self) -> None:
+        """Persist a new ledger seed after the worker lease is acquired."""
+        if self.state_path is not None and not self.state_path.exists():
+            self._persist()
+
     @classmethod
     def load(cls, state_path):
         path = Path(state_path)

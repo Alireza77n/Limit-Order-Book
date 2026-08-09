@@ -166,10 +166,6 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
                 hot_terminal_order_limit=cfg.demo_hot_terminal_order_limit,
                 archive_max_bytes=cfg.demo_archive_max_bytes,
             )
-            # Freeze new-session fields before the first market round.  A
-            # same-session process restart must reload this seed instead of
-            # consuming values that were submitted for a future session.
-            ledger._persist()
         exchange = DemoExchangeClient(
             market_data=real_exchange,
             pair=cfg.pair,
@@ -218,6 +214,9 @@ def main():
     if args.mode == "demo":
         lease_path = os.path.join(DEMO_STATE_DIR, f".worker_{cfg.pair.lower()}.lock")
         with WorkerLease(lease_path, identity=f"{cfg.pair}-demo"):
+            # Freeze the new-session seed only after this process owns the
+            # worker lease. A concurrent loser must not write shared state.
+            bot.exchange.ledger.persist_initial_state()
             initial_reload = bot.config_sync.reload_at_round_boundary()
             if not initial_reload.ok:
                 bot._record_config_reload_error(initial_reload.error)

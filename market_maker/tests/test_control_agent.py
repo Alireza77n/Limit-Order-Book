@@ -89,6 +89,104 @@ def test_local_new_session_uses_compose_liveness_and_restarts_workers(tmp_path):
     ]
 
 
+@pytest.mark.parametrize("failure_mode", ["nonzero", "exception"])
+def test_local_worker_liveness_query_failure_is_explicit(tmp_path, failure_mode):
+    paths = ca.build_agent_paths("local", tmp_path)
+
+    def failing_runner(argv, **kwargs):
+        if failure_mode == "exception":
+            raise OSError("docker status unavailable")
+        return FakeCompleted(17)
+
+    with pytest.raises(ca.WorkerStatusError, match="btc.*status"):
+        ca.is_worker_running(paths, "btc", failing_runner)
+
+
+def _tree_snapshot(root):
+    return {
+        path.relative_to(root): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+@pytest.mark.parametrize(
+    ("action", "pair", "payload"),
+    [
+        ("new_session", None, None),
+        ("cancel_orders", "btc", None),
+        ("reset_demo", None, {"confirm": "RESET"}),
+        (
+            "restore_backup",
+            None,
+            {"confirm": "RESTORE", "backup_name": "manual"},
+        ),
+        ("recover_demo", None, None),
+    ],
+)
+@pytest.mark.parametrize("failure_mode", ["nonzero", "exception"])
+def test_local_destructive_actions_fail_closed_when_liveness_is_unknown(
+    tmp_path, action, pair, payload, failure_mode
+):
+    paths = ca.build_agent_paths("local", tmp_path)
+    paths.state_dir.mkdir(parents=True)
+    paths.backups_dir.mkdir(parents=True)
+    (paths.state_dir / "stack_session.json").write_text(
+        '{"session_id":"original"}'
+    )
+    (paths.state_dir / "paper_original_btcirt.json").write_text(
+        '{"session_id":"original","value":"live"}'
+    )
+    ca.worker_lock_path(paths, "btc").write_text("btc lock")
+    ca.worker_lock_path(paths, "usdt").write_text("usdt lock")
+    backup_dir = paths.backups_dir / "manual"
+    backup_dir.mkdir()
+    (backup_dir / "paper_original_btcirt.json").write_text(
+        '{"session_id":"original","value":"backup"}'
+    )
+    before = _tree_snapshot(tmp_path)
+
+    def failing_runner(argv, **kwargs):
+        if failure_mode == "exception":
+            raise OSError("docker status unavailable")
+        return FakeCompleted(17)
+
+    result = ca.process_command(
+        paths,
+        {"action": action, "pair": pair, "payload": payload},
+        failing_runner,
+    )
+
+    assert result.ok is False
+    assert result.detail["phase"] == "liveness"
+    assert "worker status" in result.detail["error"]
+    assert _tree_snapshot(tmp_path) == before
+
+
+def test_local_recover_preflights_every_status_before_unlinking(tmp_path):
+    paths = ca.build_agent_paths("local", tmp_path)
+    paths.state_dir.mkdir(parents=True)
+    ca.worker_lock_path(paths, "btc").write_text("btc lock")
+    ca.worker_lock_path(paths, "usdt").write_text("usdt lock")
+    before = _tree_snapshot(tmp_path)
+    queries = []
+
+    def second_query_fails(argv, **kwargs):
+        queries.append(argv[-1])
+        if len(queries) == 2:
+            raise OSError("docker status unavailable")
+        completed = FakeCompleted(0)
+        completed.stdout = ""
+        return completed
+
+    result = ca.handle_recover_demo(paths, None, None, second_query_fails)
+
+    assert result.ok is False
+    assert result.detail["phase"] == "liveness"
+    assert queries == ["btc-demo", "usdt-demo"]
+    assert _tree_snapshot(tmp_path) == before
+
+
 def test_resolve_worker_argv_fixed_dict_lookup():
     argv = ca.resolve_worker_argv("start_worker", "btc")
     assert argv == ca.COMPOSE_ARGV_PREFIX + [
