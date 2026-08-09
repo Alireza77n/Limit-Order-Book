@@ -40,7 +40,11 @@ from strategy.algo1 import Algo1Strategy
 from strategy.algo2 import Algo2Strategy
 from session import WorkerLease, load_stack_session
 from paper import PaperLedger
-from demo_config import apply_overrides, load_overrides, overlay_path
+from demo_config import (
+    RuntimeConfigSynchronizer,
+    apply_overrides,
+    load_desired_config,
+)
 
 STRATEGIES = {
     "algo1": Algo1Strategy,
@@ -74,7 +78,13 @@ def make_cfg(
     if session_id is None and session_file:
         session_id = load_stack_session(session_file)
     session_id = datetime.now().timestamp() if session_id is None else session_id
-    cfg = MMConfig(session=session_id, mode=mode, **TRADING_PROFILES[profile])
+    cfg = MMConfig(
+        session=session_id,
+        mode=mode,
+        profile_name=profile,
+        demo_config_state_dir=DEMO_STATE_DIR if mode == "demo" else None,
+        **TRADING_PROFILES[profile],
+    )
     cfg.continuous = bool(continuous)
     if cfg.continuous:
         cfg.max_rounds = None
@@ -95,9 +105,8 @@ def make_cfg(
         )
         # Admin-editable per-pair overlay (market_maker/demo_config.py) --
         # Demo mode only, applied last so it can tune the profile above.
-        overrides = load_overrides(overlay_path(DEMO_STATE_DIR, profile))
-        if overrides:
-            apply_overrides(cfg, overrides)
+        desired = load_desired_config(profile, DEMO_STATE_DIR, TRADING_PROFILES)
+        apply_overrides(cfg, desired)
     return cfg
 
 
@@ -166,8 +175,21 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
         exchange = real_exchange
     strategy = STRATEGIES[algorithm](cfg)
 
-    return SimpleMarketMaker(cfg, nobi_portfo, exchange, strategy=strategy,
-                              persist_to_db=not is_demo)
+    bot = SimpleMarketMaker(
+        cfg, nobi_portfo, exchange, strategy=strategy, persist_to_db=not is_demo
+    )
+    if is_demo:
+        bot.config_sync = RuntimeConfigSynchronizer(
+            cfg=cfg,
+            ledger=ledger,
+            pair=cfg.profile_name,
+            state_dir=cfg.demo_config_state_dir,
+            profiles=TRADING_PROFILES,
+        )
+        initial_reload = bot.config_sync.reload_at_round_boundary()
+        if not initial_reload.ok:
+            bot._record_config_reload_error(initial_reload.error)
+    return bot
 
 
 def main():

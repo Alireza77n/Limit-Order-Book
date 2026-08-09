@@ -129,6 +129,15 @@ class SimpleMarketMaker:
         if delay:
             self.sleep_fn(delay)
         return target
+
+    def _record_config_reload_error(self, error: Optional[str]) -> None:
+        print(json.dumps({
+            "event": "demo_config_reload_failed",
+            "session_id": str(self.session),
+            "symbol": self.pair,
+            "error": str(error or "unknown configuration reload error"),
+            "timestamp": self.now_provider().isoformat(),
+        }, sort_keys=True), flush=True)
         
 
     # In SimpleMarketMaker
@@ -1027,6 +1036,9 @@ class SimpleMarketMaker:
         termination = None
         try:
             while self._within_horizon():
+                reload_result = self.config_sync.reload_at_round_boundary()
+                if not reload_result.ok:
+                    self._record_config_reload_error(reload_result.error)
                 run_rounds += 1
                 round_no += 1
                 if self.cfg.max_rounds and run_rounds > self.cfg.max_rounds:

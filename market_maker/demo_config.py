@@ -7,10 +7,11 @@ import json
 import math
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 PathLike = Union[str, os.PathLike]
 
@@ -36,6 +37,14 @@ class FieldDefinition:
     maximum: Optional[float]
     mode: ApplicationMode
     help_text: str
+
+
+@dataclass(frozen=True)
+class RuntimeReloadResult:
+    ok: bool
+    error: Optional[str] = None
+    changed_fields: Tuple[str, ...] = ()
+    snapshot: Optional[Dict[str, Any]] = None
 
 
 FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
@@ -138,6 +147,10 @@ def overlay_path(state_dir: PathLike, pair: str) -> Path:
     return Path(state_dir) / f"demo_config_{pair}.json"
 
 
+def runtime_snapshot_path(state_dir: PathLike, pair: str) -> Path:
+    return Path(state_dir) / f"runtime_config_{pair}.json"
+
+
 def _load_document(path: PathLike) -> Dict[str, Any]:
     overlay_file = Path(path)
     if not overlay_file.exists():
@@ -189,6 +202,34 @@ def _atomic_write(path: Path, document: Dict[str, Any]) -> None:
     os.replace(tmp_path, path)
 
 
+def read_runtime_snapshot(state_dir: PathLike, pair: str) -> Optional[Dict[str, Any]]:
+    """Read a worker-owned runtime snapshot, or ``None`` when absent."""
+    path = runtime_snapshot_path(state_dir, pair)
+    if not path.exists():
+        return None
+    try:
+        document = json.loads(path.read_text())
+    except json.JSONDecodeError as error:
+        raise OverlayLoadError(f"invalid JSON in runtime snapshot {path}: {error.msg}") from error
+    except OSError as error:
+        raise OverlayLoadError(f"unable to read runtime snapshot {path}: {error}") from error
+    if not isinstance(document, dict):
+        raise OverlayLoadError(f"runtime snapshot must contain a JSON object: {path}")
+    return document
+
+
+def write_runtime_snapshot(
+    state_dir: PathLike, pair: str, document: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Atomically publish a worker-owned runtime snapshot."""
+    if not isinstance(document, dict):
+        raise OverlayValidationError("runtime snapshot must be a dict")
+    if document.get("pair") != pair:
+        raise OverlayValidationError("runtime snapshot pair does not match target pair")
+    _atomic_write(runtime_snapshot_path(state_dir, pair), document)
+    return document
+
+
 def write_overrides(
     path: PathLike, overrides: Dict[str, Any], *, pair: str,
     profiles: Mapping[str, Mapping[str, Any]],
@@ -229,3 +270,149 @@ def apply_overrides(cfg: Any, overrides: Dict[str, Any]) -> Any:
     for key, value in overrides.items():
         setattr(cfg, key, value)
     return cfg
+
+
+class RuntimeConfigSynchronizer:
+    """Apply validated hot fields and publish the worker's runtime truth."""
+
+    SNAPSHOT_SCHEMA_VERSION = 1
+
+    def __init__(
+        self,
+        *,
+        cfg: Any,
+        ledger: Any,
+        pair: str,
+        state_dir: PathLike,
+        profiles: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        self.cfg = cfg
+        self.ledger = ledger
+        self.pair = pair
+        self.state_dir = Path(state_dir)
+        self.profiles = profiles
+        self._desired_digest: Optional[str] = None
+        self._session_values = {
+            "demo_inv_initial": float(ledger.inventory),
+            "cash_initial": float(ledger.cash),
+            "commission_perc": float(ledger.commission_perc),
+        }
+
+    def _applied_values(self, desired: Mapping[str, Any]) -> Dict[str, Any]:
+        schema = editable_schema(self.pair, self.profiles)
+        applied: Dict[str, Any] = {}
+        for field, definition in schema.items():
+            if definition.mode is ApplicationMode.NEW_SESSION:
+                applied[field] = self._session_values[field]
+            else:
+                applied[field] = getattr(self.cfg, field)
+        return applied
+
+    def _snapshot(
+        self,
+        desired: Mapping[str, Any],
+        *,
+        digest: str,
+        status: str,
+        error: Optional[str],
+    ) -> Dict[str, Any]:
+        schema = editable_schema(self.pair, self.profiles)
+        applied = self._applied_values(desired)
+        pending = {
+            field: desired[field]
+            for field, definition in schema.items()
+            if definition.mode is ApplicationMode.NEW_SESSION
+            and desired[field] != applied[field]
+        }
+        return {
+            "schema_version": self.SNAPSHOT_SCHEMA_VERSION,
+            "pair": self.pair,
+            "session_id": str(self.cfg.session),
+            "applied": applied,
+            "pending_new_session": pending,
+            "desired_digest": digest,
+            "status": status,
+            "error": error,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _publish_error(self, error: Exception) -> RuntimeReloadResult:
+        self._desired_digest = None
+        message = f"{type(error).__name__}: {error}"
+        try:
+            previous = read_runtime_snapshot(self.state_dir, self.pair)
+        except OverlayLoadError:
+            previous = None
+        if previous is None:
+            desired = {
+                field: getattr(self.cfg, field)
+                for field in editable_schema(self.pair, self.profiles)
+            }
+            snapshot = self._snapshot(
+                desired,
+                digest=self._desired_digest or desired_digest(desired),
+                status="error",
+                error=message,
+            )
+        else:
+            snapshot = dict(previous)
+            snapshot.update({
+                "status": "error",
+                "error": message,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            })
+        try:
+            write_runtime_snapshot(self.state_dir, self.pair, snapshot)
+        except (OSError, OverlayValidationError) as write_error:
+            message = f"{message}; snapshot publish failed: {write_error}"
+        return RuntimeReloadResult(ok=False, error=message, snapshot=snapshot)
+
+    def reload_at_round_boundary(self) -> RuntimeReloadResult:
+        try:
+            desired = load_desired_config(self.pair, self.state_dir, self.profiles)
+            digest = desired_digest(desired)
+        except (OverlayLoadError, OverlayValidationError, KeyError, OSError) as error:
+            return self._publish_error(error)
+
+        if digest == self._desired_digest:
+            try:
+                current_snapshot = read_runtime_snapshot(self.state_dir, self.pair)
+            except OverlayLoadError:
+                current_snapshot = None
+            if current_snapshot is not None and current_snapshot.get("status") == "applied":
+                return RuntimeReloadResult(ok=True, snapshot=current_snapshot)
+
+        schema = editable_schema(self.pair, self.profiles)
+        hot_values = {
+            field: desired[field]
+            for field, definition in schema.items()
+            if definition.mode is ApplicationMode.HOT
+        }
+        changed_fields = tuple(
+            field for field, value in hot_values.items()
+            if getattr(self.cfg, field) != value
+        )
+        previous_hot_values = {
+            field: getattr(self.cfg, field) for field in hot_values
+        }
+        for field, value in hot_values.items():
+            setattr(self.cfg, field, value)
+
+        snapshot = self._snapshot(
+            desired,
+            digest=digest,
+            status="applied",
+            error=None,
+        )
+        try:
+            write_runtime_snapshot(self.state_dir, self.pair, snapshot)
+        except (OSError, OverlayValidationError) as error:
+            for field, value in previous_hot_values.items():
+                setattr(self.cfg, field, value)
+            return self._publish_error(error)
+        self._desired_digest = digest
+        return RuntimeReloadResult(
+            ok=True,
+            changed_fields=changed_fields,
+            snapshot=snapshot,
+        )

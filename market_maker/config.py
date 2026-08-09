@@ -77,6 +77,8 @@ class MMConfig:
     
     session: Any = None
     mode: str = "real"
+    profile_name: Optional[str] = None
+    demo_config_state_dir: Optional[str] = None
 
 
     # API auth endpoints (required to read balances / place orders)
