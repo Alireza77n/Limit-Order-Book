@@ -465,6 +465,102 @@ def test_reset_demo_backs_up_then_clears_only_demo_suffixed_files(tmp_path):
     assert (paths.state_dir / "stack_session.json").exists()  # new_session created it
 
 
+def _local_destructive_fixture(tmp_path):
+    paths = ca.build_agent_paths("local", tmp_path)
+    paths.state_dir.mkdir(parents=True)
+    paths.backups_dir.mkdir(parents=True)
+    (paths.state_dir / "stack_session.json").write_text(
+        '{"session_id":"original"}'
+    )
+    (paths.state_dir / "paper_original_btcirt.json").write_text(
+        '{"session_id":"original","value":"live"}'
+    )
+    backup_dir = paths.backups_dir / "manual"
+    backup_dir.mkdir()
+    (backup_dir / "paper_original_btcirt.json").write_text(
+        '{"session_id":"original","value":"backup"}'
+    )
+    return paths
+
+
+@pytest.mark.parametrize(
+    ("handler", "payload"),
+    [
+        (ca.handle_reset_demo, {"confirm": "RESET"}),
+        (
+            ca.handle_restore_backup,
+            {"confirm": "RESTORE", "backup_name": "manual"},
+        ),
+    ],
+)
+def test_destructive_action_stop_failure_aborts_before_state_mutation(
+    tmp_path, handler, payload
+):
+    paths = _local_destructive_fixture(tmp_path)
+    before = _tree_snapshot(tmp_path)
+
+    def failing_stop(argv, **kwargs):
+        completed = FakeCompleted(1 if "stop" in argv else 0)
+        completed.stdout = f"{argv[-1]}\n" if "ps" in argv else ""
+        return completed
+
+    result = handler(paths, None, payload, failing_stop)
+
+    assert result.ok is False
+    assert result.detail == {
+        "phase": "stop",
+        "pair": "btc",
+        "action": "stop_worker",
+        "failure": {
+            "argv": ca.LOCAL_COMPOSE_ARGV_PREFIX + ["stop", "btc-demo"],
+            "returncode": 1,
+        },
+        "stopped": [],
+    }
+    assert _tree_snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("handler", "payload"),
+    [
+        (ca.handle_reset_demo, {"confirm": "RESET"}),
+        (
+            ca.handle_restore_backup,
+            {"confirm": "RESTORE", "backup_name": "manual"},
+        ),
+    ],
+)
+def test_destructive_action_restart_failure_is_reported_with_partial_state(
+    tmp_path, handler, payload
+):
+    paths = _local_destructive_fixture(tmp_path)
+
+    def failing_btc_start(argv, **kwargs):
+        completed = FakeCompleted(
+            1 if "up" in argv and argv[-1] == "btc-demo" else 0
+        )
+        completed.stdout = f"{argv[-1]}\n" if "ps" in argv else ""
+        return completed
+
+    result = handler(paths, None, payload, failing_btc_start)
+
+    assert result.ok is False
+    assert result.detail["phase"] == "start"
+    assert result.detail["pair"] == "btc"
+    assert result.detail["action"] == "start_worker"
+    assert result.detail["stopped"] == ["btc", "usdt"]
+    assert result.detail["started"] == ["usdt"]
+    assert result.detail["failures"] == [{
+        "pair": "btc",
+        "action": "start_worker",
+        "detail": {
+            "argv": ca.LOCAL_COMPOSE_ARGV_PREFIX
+            + ["up", "-d", "--no-deps", "--no-recreate", "btc-demo"],
+            "returncode": 1,
+        },
+    }]
+
+
 def test_restore_backup_rejects_path_traversal(tmp_path):
     paths = make_paths(tmp_path)
     result = ca.handle_restore_backup(paths, None, {"confirm": "RESTORE", "backup_name": "../etc"}, RecordingRunner())

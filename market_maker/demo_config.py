@@ -489,9 +489,9 @@ class RuntimeConfigSynchronizer:
         self.profiles = profiles
         self._desired_digest: Optional[str] = None
         self._session_values = {
-            "demo_inv_initial": float(ledger.inventory),
-            "cash_initial": float(ledger.cash),
-            "commission_perc": float(ledger.commission_perc),
+            "demo_inv_initial": float(ledger.initial_inventory),
+            "cash_initial": float(ledger.initial_cash),
+            "commission_perc": float(ledger.initial_commission_perc),
         }
 
     def _applied_values(self, desired: Mapping[str, Any]) -> Dict[str, Any]:
@@ -591,8 +591,19 @@ class RuntimeConfigSynchronizer:
         previous_hot_values = {
             field: getattr(self.cfg, field) for field in hot_values
         }
+        previous_max_fill = getattr(self.ledger, "max_fill_per_observation", None)
+        update_max_fill = (
+            "order_size" in changed_fields
+            and hasattr(self.cfg, "demo_max_fill_per_observation_orders")
+            and hasattr(self.ledger, "max_fill_per_observation")
+        )
         for field, value in hot_values.items():
             setattr(self.cfg, field, value)
+        if update_max_fill:
+            self.ledger.max_fill_per_observation = (
+                float(self.cfg.order_size)
+                * float(self.cfg.demo_max_fill_per_observation_orders)
+            )
 
         snapshot = self._snapshot(
             desired,
@@ -605,6 +616,8 @@ class RuntimeConfigSynchronizer:
         except (OSError, OverlayValidationError) as error:
             for field, value in previous_hot_values.items():
                 setattr(self.cfg, field, value)
+            if update_max_fill:
+                self.ledger.max_fill_per_observation = previous_max_fill
             return self._publish_error(error)
         self._desired_digest = digest
         return RuntimeReloadResult(

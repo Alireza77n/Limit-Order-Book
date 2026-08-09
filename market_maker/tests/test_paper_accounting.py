@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -152,6 +153,61 @@ def test_state_recovers_open_order_locks_and_processed_fill_without_duplication(
     assert recovered.snapshot().locked_cash == 600.0
     assert recovered.snapshot().cash == pytest.approx(1_600.0)
     assert recovered.snapshot().inventory == pytest.approx(23.96)
+
+
+def test_state_persists_immutable_session_seed_across_balance_changes(tmp_path):
+    state_path = tmp_path / "seed-state.json"
+    ledger = make_ledger(state_path=state_path)
+    ledger.submit_order(
+        side="buy", limit_price=100, amount=1, selected_level=1,
+        client_order_id="seed-buy", now=T0,
+    )
+    ledger.apply_cumulative_fill(
+        "seed-buy", cumulative_matched=1, fill_price=100,
+        reason="price_touch", now=T0 + timedelta(seconds=1),
+    )
+
+    document = json.loads(state_path.read_text())
+    recovered = PaperLedger.load(state_path)
+
+    assert document["session_seed"] == {
+        "inventory": 20.0,
+        "cash": 2_000.0,
+        "commission_perc": 0.01,
+    }
+    assert (
+        recovered.initial_inventory,
+        recovered.initial_cash,
+        recovered.initial_commission_perc,
+    ) == (20.0, 2_000.0, 0.01)
+    assert (recovered.inventory, recovered.cash) == pytest.approx((20.99, 1_900))
+
+
+def test_legacy_state_without_session_seed_loads_current_account_as_seed(tmp_path):
+    state_path = tmp_path / "legacy-state.json"
+    ledger = make_ledger(state_path=state_path)
+    ledger.submit_order(
+        side="sell", limit_price=100, amount=1, selected_level=1,
+        client_order_id="legacy-sell", now=T0,
+    )
+    ledger.apply_cumulative_fill(
+        "legacy-sell", cumulative_matched=1, fill_price=100,
+        reason="price_touch", now=T0 + timedelta(seconds=1),
+    )
+    document = json.loads(state_path.read_text())
+    document.pop("session_seed", None)
+    document["version"] = 2
+    state_path.write_text(json.dumps(document))
+
+    recovered = PaperLedger.load(state_path)
+
+    assert (
+        recovered.initial_inventory,
+        recovered.initial_cash,
+        recovered.initial_commission_perc,
+    ) == pytest.approx(
+        (recovered.inventory, recovered.cash, recovered.commission_perc)
+    )
 
 
 def test_fee_scopes_separate_round_session_pair_and_all_time(tmp_path):

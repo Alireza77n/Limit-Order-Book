@@ -65,7 +65,7 @@ current field requires a worker or stack restart.
 
 | Field | Mode | Meaning |
 |---|---|---|
-| `order_size` | hot | Base-asset amount per order round |
+| `order_size` | hot | Base-asset amount per order round; also updates the coupled Demo fill budget |
 | `inv_max` | hot | Maximum inventory |
 | `inv_min` | hot | Minimum inventory |
 | `cancel_after_minutes` | hot | Resting-order cancellation age |
@@ -81,11 +81,18 @@ prior overlay is retained as `.previous`. Workers own
 `runtime_config_<pair>.json`, which records the stack session, applied
 values, pending new-session values, desired digest, timestamp, and error.
 After the Demo worker owns its exclusive lease, it persists the initial
-paper-ledger seed through a public ledger API before config reload/run. A
+paper-ledger seed through a public ledger API before config reload/run. The
+versioned paper state records this immutable `session_seed`; runtime status
+uses the ledger's public initial inventory/cash/commission values rather than
+balances changed by trading. A
 same-session process restart therefore cannot consume future-session values,
 and a concurrent process that loses the lease cannot write shared ledger
 state. Bind mounts preserve overlays, ledgers, and snapshots across Compose
 recreation.
+
+At the same round boundary, an `order_size` change also recomputes the paper
+ledger's per-observation fill budget. If runtime snapshot publication fails,
+both the configuration value and this coupled ledger value are rolled back.
 
 Status labels mean:
 
@@ -159,6 +166,9 @@ cannot rotate the session except during an explicit stack/session operation.
 If a status query raises or exits nonzero, the agent fails the operation in
 its liveness phase before rotating a session, overwriting a backup, deleting
 Demo data, or clearing a lock.
+Reset and restore additionally require every running worker to stop
+successfully before file mutation. Any restart failure is reported with its
+pair/action and stopped/started lists; it is never returned as success.
 Starting the agent processes any already queued commands, so inspect
 `market_maker/results/control/commands/` first when preserving an existing
 runtime. Config and worker actions do not inherently time out locally—the

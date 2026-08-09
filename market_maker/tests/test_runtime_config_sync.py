@@ -135,6 +135,20 @@ def test_hot_order_size_changes_next_round_order_amount(runtime_bot):
     assert buy_orders[0].original_amount == 2.0
 
 
+def test_hot_order_size_updates_demo_fill_budget_at_round_boundary(runtime_bot):
+    bot, state_dir = runtime_bot
+    bot.cfg.demo_max_fill_per_observation_orders = 1.5
+    bot.exchange.ledger.max_fill_per_observation = (
+        bot.cfg.order_size * bot.cfg.demo_max_fill_per_observation_orders
+    )
+    save_desired(state_dir, order_size=2.0)
+
+    result = bot.config_sync.reload_at_round_boundary()
+
+    assert result.ok
+    assert bot.exchange.ledger.max_fill_per_observation == 3.0
+
+
 def test_hot_inventory_bounds_change_strategy_skew(runtime_bot):
     bot, state_dir = runtime_bot
     book = make_orderbook()
@@ -282,6 +296,46 @@ def test_same_session_restart_before_first_round_keeps_session_fields_pending(
     }
 
 
+def test_same_session_restart_after_fill_reports_original_session_seed(
+    tmp_path, monkeypatch
+):
+    first = make_runtime_bot(tmp_path, monkeypatch, session="s1")
+    ledger = first.exchange.ledger
+    ledger.submit_order(
+        side="buy",
+        limit_price=100,
+        amount=1,
+        selected_level=1,
+        client_order_id="seed-regression-buy",
+        now=NOW,
+    )
+    ledger.apply_cumulative_fill(
+        "seed-regression-buy",
+        cumulative_matched=1,
+        fill_price=100,
+        reason="test_fill",
+        now=NOW,
+    )
+    assert (ledger.inventory, ledger.cash) != (0, 30_000_000)
+
+    make_runtime_bot(tmp_path, monkeypatch, session="s1")
+    snapshot = demo_config.read_runtime_snapshot(tmp_path, "usdt")
+
+    assert {
+        field: snapshot["applied"][field]
+        for field in (
+            "demo_inv_initial",
+            "cash_initial",
+            "commission_perc",
+        )
+    } == {
+        "demo_inv_initial": 0.0,
+        "cash_initial": 30_000_000.0,
+        "commission_perc": 0.001,
+    }
+    assert snapshot["pending_new_session"] == {}
+
+
 def test_new_session_consumes_pending_inventory_cash_and_commission(
     tmp_path, monkeypatch
 ):
@@ -363,6 +417,11 @@ def test_unchanged_hot_digest_does_not_rewrite_snapshot(runtime_bot, monkeypatch
 def test_hot_snapshot_write_failure_rolls_back_config(runtime_bot, monkeypatch):
     bot, state_dir = runtime_bot
     before = bot.cfg.order_size
+    bot.cfg.demo_max_fill_per_observation_orders = 1.5
+    bot.exchange.ledger.max_fill_per_observation = (
+        bot.cfg.order_size * bot.cfg.demo_max_fill_per_observation_orders
+    )
+    before_fill_budget = bot.exchange.ledger.max_fill_per_observation
     save_desired(state_dir, order_size=2.0)
     monkeypatch.setattr(
         demo_config,
@@ -374,6 +433,7 @@ def test_hot_snapshot_write_failure_rolls_back_config(runtime_bot, monkeypatch):
 
     assert not result.ok
     assert bot.cfg.order_size == before
+    assert bot.exchange.ledger.max_fill_per_observation == before_fill_budget
 
 
 def test_unleased_construction_cannot_overwrite_active_worker_snapshot(

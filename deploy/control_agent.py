@@ -205,6 +205,60 @@ def liveness_failure(exc: WorkerStatusError) -> AgentResult:
     return AgentResult(False, {"phase": "liveness", "error": str(exc)})
 
 
+def _lifecycle_command(paths, action, pair, run_argv) -> AgentResult:
+    try:
+        return run_worker_command(paths, action, pair, run_argv)
+    except Exception as exc:  # noqa: BLE001 -- preserve lifecycle context
+        return AgentResult(False, {"error": f"{type(exc).__name__}: {exc}"})
+
+
+def _stop_running_workers(paths, running_before, run_argv):
+    stopped = []
+    for pair, was_running in running_before.items():
+        if not was_running:
+            continue
+        result = _lifecycle_command(paths, "stop_worker", pair, run_argv)
+        if not result.ok:
+            return stopped, AgentResult(False, {
+                "phase": "stop",
+                "pair": pair,
+                "action": "stop_worker",
+                "failure": result.detail,
+                "stopped": stopped,
+            })
+        stopped.append(pair)
+    return stopped, None
+
+
+def _start_stopped_workers(paths, stopped, run_argv):
+    started = []
+    failures = []
+    for pair in stopped:
+        result = _lifecycle_command(paths, "start_worker", pair, run_argv)
+        if result.ok:
+            started.append(pair)
+        else:
+            failures.append({
+                "pair": pair,
+                "action": "start_worker",
+                "detail": result.detail,
+            })
+    return started, failures
+
+
+def _start_failure(stopped, started, failures, operation_detail):
+    first = failures[0]
+    return AgentResult(False, {
+        **operation_detail,
+        "phase": "start",
+        "pair": first["pair"],
+        "action": first["action"],
+        "stopped": stopped,
+        "started": started,
+        "failures": failures,
+    })
+
+
 def run_worker_command(paths: AgentPaths, action: str, pair: str, run_argv: Callable = None) -> AgentResult:
     run_argv = run_argv or _default_run_argv
     argv = resolve_worker_argv(action, pair, mode=paths.mode)
@@ -400,9 +454,11 @@ def handle_reset_demo(paths, pair, payload, run_argv):
         running_before = worker_statuses(paths, PAIRS, run_argv)
     except WorkerStatusError as exc:
         return liveness_failure(exc)
-    for p, was_running in running_before.items():
-        if was_running:
-            run_worker_command(paths, "stop_worker", p, run_argv)
+    stopped, stop_failure = _stop_running_workers(
+        paths, running_before, run_argv
+    )
+    if stop_failure is not None:
+        return stop_failure
 
     backup_name = f"demo-reset-{_stamp()}"
     backup_files = create_backup(paths, backup_name)
@@ -418,14 +474,14 @@ def handle_reset_demo(paths, pair, payload, run_argv):
                     removed.append(target.name)
 
     session_id = initialize_stack_session(paths.state_dir / "stack_session.json", force_new=True)
-    restarted = [p for p, was_running in running_before.items() if was_running]
-    for p in restarted:
-        run_worker_command(paths, "start_worker", p, run_argv)
-
-    return AgentResult(True, {
+    operation_detail = {
         "backup": backup_name, "backup_files": backup_files,
-        "removed": removed, "session_id": session_id, "restarted": restarted,
-    })
+        "removed": removed, "session_id": session_id,
+    }
+    started, failures = _start_stopped_workers(paths, stopped, run_argv)
+    if failures:
+        return _start_failure(stopped, started, failures, operation_detail)
+    return AgentResult(True, {**operation_detail, "restarted": started})
 
 
 def _safe_backup_dir(paths: AgentPaths, name: Optional[str]) -> Optional[Path]:
@@ -457,9 +513,11 @@ def handle_restore_backup(paths, pair, payload, run_argv):
         running_before = worker_statuses(paths, PAIRS, run_argv)
     except WorkerStatusError as exc:
         return liveness_failure(exc)
-    for p, was_running in running_before.items():
-        if was_running:
-            run_worker_command(paths, "stop_worker", p, run_argv)
+    stopped, stop_failure = _stop_running_workers(
+        paths, running_before, run_argv
+    )
+    if stop_failure is not None:
+        return stop_failure
 
     pre_restore_name = f"pre-restore-{_stamp()}"
     create_backup(paths, pre_restore_name)
@@ -470,14 +528,14 @@ def handle_restore_backup(paths, pair, payload, run_argv):
         _atomic_copy(source_file, dest_dir / source_file.name)
         restored.append(source_file.name)
 
-    restarted = [p for p, was_running in running_before.items() if was_running]
-    for p in restarted:
-        run_worker_command(paths, "start_worker", p, run_argv)
-
-    return AgentResult(True, {
+    operation_detail = {
         "restored_from": backup_dir.name, "pre_restore_backup": pre_restore_name,
-        "files": restored, "restarted": restarted,
-    })
+        "files": restored,
+    }
+    started, failures = _start_stopped_workers(paths, stopped, run_argv)
+    if failures:
+        return _start_failure(stopped, started, failures, operation_detail)
+    return AgentResult(True, {**operation_detail, "restarted": started})
 
 
 def handle_recover_demo(paths, pair, payload, run_argv):

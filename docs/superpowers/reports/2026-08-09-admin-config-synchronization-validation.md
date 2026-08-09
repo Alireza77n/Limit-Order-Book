@@ -41,6 +41,26 @@ real-order path was changed or exercised.
    dependency and rotate the stack session after `new_session` had already
    returned an ID. The fixed start action is `compose up -d --no-deps
    --no-recreate <worker>`, keeping session rotation explicit and truthful.
+6. Runtime snapshot construction originally treated the ledger's mutable
+   inventory and cash balances as the session seed. After fills, a same-session
+   restart therefore advertised trading balances as applied
+   `demo_inv_initial`/`cash_initial` and falsely marked unchanged desired seeds
+   pending. Paper state version 3 now persists an immutable `session_seed`;
+   public `initial_inventory`, `initial_cash`, and
+   `initial_commission_perc` attributes are the synchronizer's truth. Version-2
+   ledgers remain loadable and use their current account/config as the only
+   available fallback because older files never recorded the original seed.
+7. Reset and restore preflighted liveness but ignored worker stop/start command
+   results. A failed stop could be followed by live-state deletion/overwrite,
+   while a failed restart was reported as success. Both operations now abort
+   before mutation on stop failure and return an explicit partial `start`
+   failure with pair/action and stopped/started/failure lists.
+8. `order_size` is hot configuration, but the paper ledger's per-observation
+   fill budget is derived from it. Runtime reload previously updated only the
+   strategy configuration, leaving fill behavior stale while the snapshot
+   reported the new value applied. The round-boundary update now changes
+   `ledger.max_fill_per_observation` with `cfg.order_size` and rolls both back
+   if snapshot publication fails.
 
 Algorithm 1 logic and the Admin web service's read-only/mutation authority
 boundary were not changed.
@@ -144,6 +164,26 @@ python3 -m pytest -q market_maker/tests/test_demo_config.py \
   market_maker/tests/test_deployment_contract.py \
   market_maker/tests/test_runtime_paths.py
 # FINAL FOCUSED: 248 passed, 2 warnings in 84.82s
+
+python3 -m pytest -q \
+  market_maker/tests/test_runtime_config_sync.py::test_same_session_restart_after_fill_reports_original_session_seed \
+  market_maker/tests/test_paper_accounting.py::test_state_persists_immutable_session_seed_across_balance_changes \
+  market_maker/tests/test_paper_accounting.py::test_legacy_state_without_session_seed_loads_current_account_as_seed
+# SESSION-SEED RED: 3 failed
+# SESSION-SEED GREEN: 3 passed in 0.59s
+
+python3 -m pytest -q market_maker/tests/test_control_agent.py \
+  -k 'destructive_action_stop_failure or destructive_action_restart_failure'
+# RESET/RESTORE LIFECYCLE RED: 4 failed
+
+python3 -m pytest -q market_maker/tests/test_control_agent.py \
+  -k 'destructive_action_stop_failure or destructive_action_restart_failure or reset_demo or restore_backup'
+# RESET/RESTORE LIFECYCLE GREEN: 13 passed, 34 deselected in 0.61s
+
+python3 -m pytest -q market_maker/tests/test_runtime_config_sync.py \
+  -k 'hot_order_size_updates_demo_fill_budget or hot_snapshot_write_failure_rolls_back_config'
+# ORDER-SIZE/FILL-BUDGET RED: 1 failed, 1 passed, 24 deselected
+# ORDER-SIZE/FILL-BUDGET GREEN: 2 passed, 24 deselected in 0.74s
 ```
 
 ## Local end-to-end evidence
@@ -431,8 +471,12 @@ while True:
             ledger = json.loads((state / f"paper_{current}_{symbol}.json").read_text())
             actual = (ledger["account"]["inventory"], ledger["account"]["cash"],
                       ledger["config"]["commission_perc"])
+            seed_values = (ledger["session_seed"]["inventory"],
+                           ledger["session_seed"]["cash"],
+                           ledger["session_seed"]["commission_perc"])
             snap = json.loads((state / f"runtime_config_{pair}.json").read_text())
-            assert actual == seed and snap["session_id"] == current
+            assert actual == seed and seed_values == seed
+            assert snap["session_id"] == current
             assert not snap["pending_new_session"]
         break
     except (AssertionError, FileNotFoundError, json.JSONDecodeError):
@@ -630,11 +674,18 @@ Preserve these architectural boundaries:
 - BTC and USDT validation, persistence, snapshots, and ledgers stay isolated.
 - Hot fields change only at safe round boundaries; initial inventory, cash,
   and commission change only when a new session creates a new ledger.
+- Applying hot `order_size` also updates the coupled paper fill budget at the
+  same boundary; a failed acknowledgement rolls back both values.
 - Demo ledger construction is read-only. Only the process holding
   `WorkerLease` calls the public `persist_initial_state()` before initial
   config reload/run.
+- Runtime session-field truth comes from immutable ledger
+  `initial_inventory`, `initial_cash`, and `initial_commission_perc` values,
+  not live trading balances. New paper state writes these as `session_seed`.
 - Indeterminate worker liveness is an explicit failure. Destructive control
   actions preflight every required pair before mutating shared state.
+- Reset/restore must also prove every required stop before mutation and must
+  report partial restart failures rather than returning success.
 
 Before making a new completion claim, rerun the focused suite and both Compose
 checks shown above. For the full suite, explicitly set

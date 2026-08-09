@@ -118,9 +118,12 @@ class PaperLedger:
             raise ValueError("max_fill_per_observation must be positive when set")
         self.session_id = str(session_id)
         self.symbol = symbol.upper()
-        self.inventory = float(initial_inventory)
-        self.cash = float(initial_cash)
-        self.commission_perc = float(commission_perc)
+        self.initial_inventory = float(initial_inventory)
+        self.initial_cash = float(initial_cash)
+        self.initial_commission_perc = float(commission_perc)
+        self.inventory = self.initial_inventory
+        self.cash = self.initial_cash
+        self.commission_perc = self.initial_commission_perc
         self.valuation_price = float(valuation_price)
         self.level1_fast_fill_enabled = bool(level1_fast_fill_enabled)
         self.level1_fill_delay_seconds = float(level1_fill_delay_seconds)
@@ -170,7 +173,12 @@ class PaperLedger:
         if self.state_path is None:
             return
         document = {
-            "version": 2,
+            "version": 3,
+            "session_seed": {
+                "inventory": self.initial_inventory,
+                "cash": self.initial_cash,
+                "commission_perc": self.initial_commission_perc,
+            },
             "config": {
                 "session_id": self.session_id,
                 "symbol": self.symbol,
@@ -207,12 +215,17 @@ class PaperLedger:
         document = json.loads(path.read_text())
         config = document["config"]
         account = document["account"]
+        session_seed = document.get("session_seed") or {
+            "inventory": account["inventory"],
+            "cash": account["cash"],
+            "commission_perc": config["commission_perc"],
+        }
         ledger = cls(
             session_id=config["session_id"],
             symbol=config["symbol"],
-            initial_inventory=account["inventory"],
-            initial_cash=account["cash"],
-            commission_perc=config["commission_perc"],
+            initial_inventory=session_seed["inventory"],
+            initial_cash=session_seed["cash"],
+            commission_perc=session_seed["commission_perc"],
             valuation_price=account["valuation_price"],
             level1_fast_fill_enabled=config["level1_fast_fill_enabled"],
             level1_fill_delay_seconds=config["level1_fill_delay_seconds"],
@@ -227,6 +240,9 @@ class PaperLedger:
             hot_terminal_order_limit=config.get("hot_terminal_order_limit", 1_000),
             archive_max_bytes=config.get("archive_max_bytes", 10_000_000),
         )
+        ledger.inventory = float(account["inventory"])
+        ledger.cash = float(account["cash"])
+        ledger.commission_perc = float(config["commission_perc"])
         ledger.fees_quote = float(account.get("fees_quote", 0.0))
         for order_document in document.get("orders", []):
             values = dict(order_document)
