@@ -1,9 +1,15 @@
 import pytest
 
+import config
+
 from demo_config import (
+    OverlayLoadError,
     OverlayValidationError,
     apply_overrides,
+    desired_digest,
+    editable_schema,
     has_previous,
+    load_desired_config,
     load_overrides,
     overlay_path,
     rollback_overrides,
@@ -13,51 +19,78 @@ from demo_config import (
 from run import make_cfg
 
 
+PROFILES = config.TRADING_PROFILES
+
+
+EXPECTED = {
+    "order_size": "hot", "inv_max": "hot", "inv_min": "hot",
+    "cancel_after_minutes": "hot", "depth_max": "hot", "time_step": "hot",
+    "demo_inv_initial": "new_session", "cash_initial": "new_session",
+    "commission_perc": "new_session",
+}
+
+
+@pytest.mark.parametrize("pair", ["btc", "usdt"])
+def test_editable_schema_is_pair_profile_intersection(pair):
+    from demo_config import editable_schema
+
+    schema = editable_schema(pair, config.TRADING_PROFILES)
+    assert {key: field.mode.value for key, field in schema.items()} == EXPECTED
+    assert set(schema) <= set(config.TRADING_PROFILES[pair])
+
+
+def test_obsolete_and_continuous_only_fields_are_not_editable():
+    from demo_config import editable_schema
+
+    assert "no_quote_recovery_alert" not in editable_schema("btc", config.TRADING_PROFILES)
+    assert "max_rounds" not in editable_schema("btc", config.TRADING_PROFILES)
+
+
 def test_validate_accepts_known_fields():
-    validated = validate_overrides({"order_size": 5, "demo_queue_enabled": True})
-    assert validated == {"order_size": 5.0, "demo_queue_enabled": True}
+    validated = validate_overrides({"order_size": 5, "depth_max": 2}, pair="btc", profiles=PROFILES)
+    assert validated == {"order_size": 5.0, "depth_max": 2}
 
 
 @pytest.mark.parametrize("key", ["pair", "token", "url_send_order", "algorithm_id"])
 def test_validate_rejects_identity_and_secret_fields(key):
     with pytest.raises(OverlayValidationError):
-        validate_overrides({key: "x"})
+        validate_overrides({key: "x"}, pair="btc", profiles=PROFILES)
 
 
 def test_validate_rejects_unknown_field():
     with pytest.raises(OverlayValidationError):
-        validate_overrides({"not_a_real_field": 1})
+        validate_overrides({"not_a_real_field": 1}, pair="btc", profiles=PROFILES)
 
 
 @pytest.mark.parametrize("payload", [
     {"commission_perc": -0.1},
     {"commission_perc": 1.5},
     {"depth_max": 0},
-    {"demo_level1_fill_fraction": 2},
+    {"time_step": 0},
     {"order_size": -1},
 ])
 def test_validate_rejects_out_of_range(payload):
     with pytest.raises(OverlayValidationError):
-        validate_overrides(payload)
+        validate_overrides(payload, pair="btc", profiles=PROFILES)
 
 
 def test_validate_rejects_wrong_type():
     with pytest.raises(OverlayValidationError):
-        validate_overrides({"order_size": "lots"})
+        validate_overrides({"order_size": "lots"}, pair="btc", profiles=PROFILES)
 
 
 def test_write_read_round_trip(tmp_path):
     path = overlay_path(tmp_path, "btc")
-    write_overrides(path, {"order_size": 3, "depth_max": 5})
+    write_overrides(path, {"order_size": 3, "depth_max": 5}, pair="btc", profiles=PROFILES)
     assert load_overrides(path) == {"order_size": 3.0, "depth_max": 5}
 
 
 def test_previous_created_and_restorable(tmp_path):
     path = overlay_path(tmp_path, "btc")
     assert not has_previous(path)
-    write_overrides(path, {"order_size": 1})
+    write_overrides(path, {"order_size": 1}, pair="btc", profiles=PROFILES)
     assert not has_previous(path)  # nothing to preserve on first write
-    write_overrides(path, {"order_size": 2})
+    write_overrides(path, {"order_size": 2}, pair="btc", profiles=PROFILES)
     assert has_previous(path)
     assert load_overrides(path) == {"order_size": 2.0}
     restored = rollback_overrides(path)
@@ -69,6 +102,53 @@ def test_rollback_without_previous_raises(tmp_path):
     path = overlay_path(tmp_path, "btc")
     with pytest.raises(OverlayValidationError):
         rollback_overrides(path)
+
+
+def test_load_desired_config_layers_only_pair_editable_values(tmp_path):
+    write_overrides(overlay_path(tmp_path, "btc"), {"order_size": 0.25}, pair="btc", profiles=PROFILES)
+    desired = load_desired_config("btc", tmp_path, PROFILES)
+    assert desired["order_size"] == 0.25
+    assert desired["time_step"] == PROFILES["btc"]["time_step"]
+    assert load_desired_config("usdt", tmp_path, PROFILES)["order_size"] == PROFILES["usdt"]["order_size"]
+
+
+def test_load_desired_config_supports_a_profile_field_intersection(tmp_path):
+    profiles = {"btc": {"order_size": 0.25}}
+
+    assert load_desired_config("btc", tmp_path, profiles) == {"order_size": 0.25}
+
+
+def test_corrupt_overlay_is_an_explicit_error(tmp_path):
+    overlay_path(tmp_path, "btc").write_text("{")
+    with pytest.raises(OverlayLoadError, match="invalid JSON"):
+        load_desired_config("btc", tmp_path, PROFILES)
+
+
+@pytest.mark.parametrize("values", [
+    {"inv_min": 2, "inv_max": 1},
+    {"order_size": 0},
+])
+def test_cross_field_validation_rejects_invalid_desired_config(tmp_path, values):
+    with pytest.raises(OverlayValidationError):
+        write_overrides(overlay_path(tmp_path, "btc"), values, pair="btc", profiles=PROFILES)
+
+
+def test_known_legacy_keys_are_removed_while_unknown_keys_fail_closed(tmp_path):
+    path = overlay_path(tmp_path, "btc")
+    path.write_text('{"order_size": 0.25, "max_rounds": 4}')
+
+    assert load_desired_config("btc", tmp_path, PROFILES)["order_size"] == 0.25
+    assert "max_rounds" not in load_overrides(path, pair="btc", profiles=PROFILES)
+
+    path.write_text('{"not_a_real_field": 4}')
+    with pytest.raises(OverlayValidationError, match="unknown field"):
+        load_desired_config("btc", tmp_path, PROFILES)
+
+
+def test_desired_digest_is_stable_across_mapping_order():
+    assert desired_digest({"order_size": 1.0, "depth_max": 2}) == desired_digest(
+        {"depth_max": 2, "order_size": 1.0}
+    )
 
 
 def test_apply_overrides_mutates_cfg_fields():
@@ -85,7 +165,9 @@ def test_make_cfg_applies_overlay_only_in_demo_mode(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DEMO_STATE_DIR", str(tmp_path))
     import run
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
-    write_overrides(overlay_path(tmp_path, "btc"), {"order_size": 42})
+    write_overrides(
+        overlay_path(tmp_path, "btc"), {"order_size": 42}, pair="btc", profiles=config.TRADING_PROFILES
+    )
 
     demo_cfg = make_cfg("btc", mode="demo")
     assert demo_cfg.order_size == 42.0
