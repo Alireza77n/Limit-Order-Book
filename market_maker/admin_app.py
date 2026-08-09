@@ -673,6 +673,10 @@ def _register_routes(app: Flask) -> None:
                 return _workers_html_response(app, None), 409
             return (str(exc), 409)
         if _wants_html():
+            failed = [result for result in results if not result.get("ok")]
+            if failed:
+                flash(_command_failure_message({"results": failed}), "error")
+                return _workers_html_response(app, results), 502
             flash(f"{action.capitalize()} requested for {', '.join(pairs)}.", "success")
             return _workers_html_response(app, results)
         return jsonify({"results": results})
@@ -689,6 +693,9 @@ def _register_routes(app: Flask) -> None:
                 return _workers_html_response(app, None), 409
             return (str(exc), 409)
         if _wants_html():
+            if not result.get("ok"):
+                flash(_command_failure_message(result), "error")
+                return _workers_html_response(app, result), 502
             flash("New demo session created.", "success")
             return _workers_html_response(app, result)
         return jsonify(result)

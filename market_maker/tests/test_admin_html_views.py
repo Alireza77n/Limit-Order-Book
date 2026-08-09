@@ -178,6 +178,82 @@ def test_worker_start_json_unchanged_when_not_html(client, app, fake_agent):
     assert response.get_json()["results"][0]["ok"] is True
 
 
+def test_failed_worker_lifecycle_html_reports_agent_error_without_success_flash(
+    client, monkeypatch,
+):
+    def _failed_result(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {
+            "command_id": command_id,
+            "ok": False,
+            "detail": {"error": "systemctl stop failed", "phase": "stop"},
+            "finished_at": "now",
+        }
+
+    monkeypatch.setattr(admin_app_module, "await_result", _failed_result)
+    token = _login(client)
+
+    response = client.post(
+        "/admin/workers/stop",
+        data={"pair": "btc", "csrf_token": token},
+        headers=HTML,
+    )
+
+    assert response.status_code == 502
+    body = _html(response)
+    assert "systemctl stop failed" in body
+    assert "stop" in body
+    assert "flash-error" in body
+    assert "Stop requested" not in body
+    assert "flash-success" not in body
+
+
+def test_failed_new_session_html_reports_agent_error_without_success_flash(
+    client, monkeypatch,
+):
+    def _failed_result(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {
+            "command_id": command_id,
+            "ok": False,
+            "detail": {"error": "worker restart failed", "phase": "start"},
+            "finished_at": "now",
+        }
+
+    monkeypatch.setattr(admin_app_module, "await_result", _failed_result)
+    token = _login(client)
+
+    response = client.post(
+        "/admin/session/new", data={"csrf_token": token}, headers=HTML,
+    )
+
+    assert response.status_code == 502
+    body = _html(response)
+    assert "worker restart failed" in body
+    assert "start" in body
+    assert "flash-error" in body
+    assert "New demo session created" not in body
+    assert "flash-success" not in body
+
+
+def test_failed_worker_lifecycle_json_contract_is_unchanged(client, monkeypatch):
+    def _failed_result(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {
+            "command_id": command_id,
+            "ok": False,
+            "detail": {"error": "systemctl stop failed", "phase": "stop"},
+            "finished_at": "now",
+        }
+
+    monkeypatch.setattr(admin_app_module, "await_result", _failed_result)
+    token = _login(client)
+
+    response = client.post(
+        "/admin/workers/stop", data={"pair": "btc", "csrf_token": token},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["results"][0]["ok"] is False
+
+
 # ---------- Config pages ----------
 
 @pytest.mark.parametrize("pair", ["btc", "usdt"])
