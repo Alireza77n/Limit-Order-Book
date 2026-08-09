@@ -644,6 +644,60 @@ from the pre-validation session; restoring it would make the retained new
 ledger/session evidence inconsistent. Production systemd/Nginx behavior and
 real Nobitex/MySQL paths remain outside this local Demo-only validation.
 
+## Final rebuilt E2E refresh — 2026-08-09
+
+The final live pass rebuilt and force-recreated the root stack from source
+HEAD `d85d279168d2864a9e5e37bc68645acd45a86e8d` (which includes `4464981`,
+`49f68c6`, `fe358dc`, `166b4d0`, `4d6d986`, `ab6d9e8`, `e1b054e`,
+`52821e4`, and `75b599d`). The two Compose validation commands exited zero,
+then this command rebuilt the images and reached healthy state:
+
+```bash
+docker compose config --quiet
+docker compose -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env config --quiet
+docker compose up -d --build --force-recreate --wait
+```
+
+The root agent's fresh full-suite result for this final implementation was
+`502 passed`; this live refresh intentionally did not rerun the full suite.
+Malformed desired-state Dashboard behavior, rollback without restart, and
+intentional lifecycle-command failure remained automated-test-only checks so
+the live state and healthy services were not deliberately corrupted.
+
+The effective and actual Admin container configuration passed these
+isolation assertions:
+
+- the only application environment keys were `ADMIN_USERNAME`,
+  `ADMIN_PASSWORD_HASH`, `ADMIN_SESSION_SECRET`, `LOB_STATE_DIR`,
+  `LOB_RESULTS_DIR`, `LOB_BACKUPS_DIR`, and `LOB_CONTROL_DIR`;
+- no Nobitex or Telegram credential variables were present;
+- port `8051` was bound to `127.0.0.1` only;
+- `/app/market_maker/results` was read-only, with only
+  `/app/market_maker/results/control` over-mounted read-write.
+
+The authenticated and stateful checks reused the reproducible request and
+Dashboard callback forms earlier in this report, with these final outcomes:
+
+| Check | Final result and evidence |
+|---|---|
+| Authentication/config reads | PASS — approved local `admin/admin` login returned the JSON overview with both workers running; both config GETs returned the expected pair, nine-field schema, and truthful running status. These read responses do not define an `ok` member. |
+| Config mutation truth | PASS — both config POST bodies contained top-level JSON `ok: true`. BTC and USDT produced isolated nine-key overlays with SHA-256 `50807282…` and `ef825cd4…`; worker digests were `690bad87…` and `7d0671d0…`. |
+| Hot and pending status | PASS — all six hot fields applied and all three new-session fields remained pending for each pair in session `demo-20260809T170818Z-8c42dca3cdd8`. |
+| Dashboard | PASS — both callback tables exactly matched desired/applied snapshot values and rendered `Saved; applies next session`. The initial harness expected the literal word `pending`; the corrected assertion used the product label. |
+| Post-trade immutable seed | PASS — BTC had a real paper fill (`inventory=0.00006993`, `cash=21557493.46180001`) versus immutable seed `(0, 30000000, .001)`. Both restart responses contained nested JSON `ok: true`; session stayed unchanged, snapshots continued to apply the immutable seed, and future seeds stayed pending. |
+| New session and restart | PASS — new-session result `7307c41c701f4f95bb1afb41edc44769.json` contained JSON `ok: true`; session became `demo-20260809T171203Z-5a1d7fb4e883`, both requested seeds were applied, pending became empty, and another pair-by-pair restart retained that truth. |
+| Forced recreation | PASS — `docker compose up -d --force-recreate --wait` rotated coherently to `demo-20260809T171244Z-fb7eac66dc6a`; all four long-running services were healthy and both overlay hashes, desired digests, immutable seeds, and snapshots matched. |
+| Restoration | PASS — defaults were posted with JSON `ok: true`; the restoring new-session response contained JSON `ok: true` and created `demo-20260809T171345Z-eb6fd4c7ee4d`. The four exact overlay/`.previous` files were removed to restore this task's recorded no-overlay baseline; both default snapshot digests (`98601974…`, `c5ceabd3…`) match the current session, immutable defaults are applied, and pending is empty. |
+
+The host control agent ran only inside a cleanup-owned validation shell and
+was stopped afterward. The two pre-existing queued command files
+`102385b36fa74aa79384e2bce24c32f1.json` and
+`e4aa2a25ba59467db5590a3e7e73912b.json` were quarantined before agent startup
+and restored unexecuted. The healthy stack was intentionally left running.
+Historical ledgers and audit/result evidence were retained; no runtime
+directory was broadly deleted.
+
 ## Continuation handoff for another agent
 
 This section is the durable resume point if later work is delegated to a new
