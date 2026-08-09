@@ -3,7 +3,7 @@
 # the dashboard/admin see both bots' live output. See usage.md §7 for the
 # full walkthrough.
 #
-#   cp market_maker/.env.example market_maker/.env   # fill in real values first (incl. ADMIN_USERNAME/ADMIN_PASSWORD_HASH)
+#   cp market_maker/.env.example market_maker/.env   # optional worker/Telegram settings; local Admin is fixed admin/admin
 #   docker compose up --build
 #
 # Real (--mode real) trading isn't wired up here -- it needs a reachable
