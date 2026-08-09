@@ -343,7 +343,7 @@ class RuntimeConfigSynchronizer:
             previous = read_runtime_snapshot(self.state_dir, self.pair)
         except OverlayLoadError:
             previous = None
-        if previous is None:
+        if previous is None or previous.get("session_id") != str(self.cfg.session):
             desired = {
                 field: getattr(self.cfg, field)
                 for field in editable_schema(self.pair, self.profiles)

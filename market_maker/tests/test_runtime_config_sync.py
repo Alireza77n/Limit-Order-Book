@@ -6,6 +6,7 @@ import config
 import demo_config
 import run
 from demo_config import overlay_path, write_overrides
+from session import WorkerLease
 
 
 TRADING_PROFILES = config.TRADING_PROFILES
@@ -38,16 +39,23 @@ def make_orderbook(depth=12):
     }
 
 
+def build_runtime_bot(state_dir, monkeypatch, *, session="runtime-session"):
+    state_dir = state_dir.resolve()
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(state_dir))
+    cfg = run.make_cfg("usdt", mode="demo", session_id=session)
+    cfg.output_csv = str(state_dir / "usdt-demo.csv")
+    cfg.demo_state_path = str(state_dir / "usdt-ledger.json")
+    cfg.demo_fee_state_path = str(state_dir / "fees.json")
+    cfg.demo_archive_path = str(state_dir / "usdt-archive.jsonl")
+    cfg.demo_result_db_path = str(state_dir / "usdt-results.sqlite3")
+    return run.make_bot(cfg, mode="demo")
+
+
 @pytest.fixture
 def runtime_bot(tmp_path, monkeypatch):
-    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
-    cfg = run.make_cfg("usdt", mode="demo", session_id="runtime-session")
-    cfg.output_csv = str(tmp_path / "usdt-demo.csv")
-    cfg.demo_state_path = str(tmp_path / "usdt-ledger.json")
-    cfg.demo_fee_state_path = str(tmp_path / "fees.json")
-    cfg.demo_archive_path = str(tmp_path / "usdt-archive.jsonl")
-    cfg.demo_result_db_path = str(tmp_path / "usdt-results.sqlite3")
-    bot = run.make_bot(cfg, mode="demo")
+    bot = build_runtime_bot(tmp_path, monkeypatch)
+    with WorkerLease(tmp_path / ".runtime-test.lock", identity="runtime-test"):
+        assert bot.config_sync.reload_at_round_boundary().ok
     return bot, tmp_path
 
 
@@ -276,3 +284,69 @@ def test_hot_snapshot_write_failure_rolls_back_config(runtime_bot, monkeypatch):
 
     assert not result.ok
     assert bot.cfg.order_size == before
+
+
+def test_unleased_construction_cannot_overwrite_active_worker_snapshot(
+    tmp_path, monkeypatch
+):
+    active_snapshot = {
+        "schema_version": 1,
+        "pair": "usdt",
+        "session_id": "active-session",
+        "applied": {"order_size": 7.0},
+        "pending_new_session": {},
+        "desired_digest": "active-digest",
+        "status": "applied",
+        "error": None,
+        "updated_at": "2026-08-09T12:00:00+00:00",
+    }
+    demo_config.write_runtime_snapshot(tmp_path, "usdt", active_snapshot)
+
+    duplicate = build_runtime_bot(
+        tmp_path, monkeypatch, session="duplicate-session"
+    )
+
+    assert demo_config.read_runtime_snapshot(tmp_path, "usdt") == active_snapshot
+
+    lease_path = tmp_path / ".worker_usdtirt.lock"
+    with WorkerLease(lease_path, identity="USDTIRT-demo"):
+        result = duplicate.config_sync.reload_at_round_boundary()
+
+    assert result.ok
+    assert demo_config.read_runtime_snapshot(tmp_path, "usdt")["session_id"] == (
+        "duplicate-session"
+    )
+
+
+def test_first_reload_error_rejects_stale_previous_session_snapshot(
+    tmp_path, monkeypatch
+):
+    bot = build_runtime_bot(tmp_path, monkeypatch, session="current-session")
+    stale_snapshot = {
+        "schema_version": 1,
+        "pair": "usdt",
+        "session_id": "previous-session",
+        "applied": {"order_size": 99.0, "commission_perc": 0.5},
+        "pending_new_session": {"commission_perc": 0.9},
+        "desired_digest": "stale-digest",
+        "status": "applied",
+        "error": None,
+        "updated_at": "2026-08-08T12:00:00+00:00",
+    }
+    demo_config.write_runtime_snapshot(tmp_path, "usdt", stale_snapshot)
+    overlay_path(tmp_path, "usdt").write_text('{"order_size": "invalid"}')
+
+    with WorkerLease(
+        tmp_path / ".worker_usdtirt.lock", identity="USDTIRT-demo"
+    ):
+        result = bot.config_sync.reload_at_round_boundary()
+    snapshot = demo_config.read_runtime_snapshot(tmp_path, "usdt")
+
+    assert not result.ok
+    assert snapshot["status"] == "error"
+    assert snapshot["session_id"] == "current-session"
+    assert snapshot["applied"]["order_size"] == bot.cfg.order_size
+    assert snapshot["applied"]["commission_perc"] == (
+        bot.exchange.ledger.commission_perc
+    )
+    assert snapshot["desired_digest"] != "stale-digest"

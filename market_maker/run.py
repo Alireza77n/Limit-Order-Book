@@ -186,9 +186,6 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
             state_dir=cfg.demo_config_state_dir,
             profiles=TRADING_PROFILES,
         )
-        initial_reload = bot.config_sync.reload_at_round_boundary()
-        if not initial_reload.ok:
-            bot._record_config_reload_error(initial_reload.error)
     return bot
 
 
@@ -216,6 +213,9 @@ def main():
     if args.mode == "demo":
         lease_path = os.path.join(DEMO_STATE_DIR, f".worker_{cfg.pair.lower()}.lock")
         with WorkerLease(lease_path, identity=f"{cfg.pair}-demo"):
+            initial_reload = bot.config_sync.reload_at_round_boundary()
+            if not initial_reload.ok:
+                bot._record_config_reload_error(initial_reload.error)
             bot.run()
     else:
         bot.run()
