@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Dict, Mapping, Optional, Union
 
 PathLike = Union[str, os.PathLike]
@@ -36,7 +38,7 @@ class FieldDefinition:
     help_text: str
 
 
-FIELD_DEFINITIONS = {
+FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "order_size": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Base-asset amount per order round."),
     "inv_max": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Maximum inventory the worker will hold."),
     "inv_min": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Minimum inventory the worker will hold."),
@@ -46,7 +48,7 @@ FIELD_DEFINITIONS = {
     "demo_inv_initial": FieldDefinition(float, 0, None, ApplicationMode.NEW_SESSION, "Starting inventory for a new Demo session."),
     "cash_initial": FieldDefinition(float, 0, None, ApplicationMode.NEW_SESSION, "Starting quote cash for a new Demo session."),
     "commission_perc": FieldDefinition(float, 0, 1, ApplicationMode.NEW_SESSION, "Simulated fee fraction for a new Demo session."),
-}
+})
 
 ALLOWED_FIELDS = frozenset(FIELD_DEFINITIONS)
 
@@ -94,6 +96,24 @@ def _validate_desired_values(values: Mapping[str, Any]) -> None:
         raise OverlayValidationError("order_size must be > 0")
 
 
+def _validate_field(key: str, raw_value: Any, definition: FieldDefinition) -> Any:
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        raise OverlayValidationError(f"{key} must be numeric")
+    if not math.isfinite(raw_value):
+        raise OverlayValidationError(f"{key} must be finite")
+    if definition.value_type is int:
+        if not isinstance(raw_value, int):
+            raise OverlayValidationError(f"{key} must be an integer")
+        value = raw_value
+    else:
+        value = float(raw_value)
+    if definition.minimum is not None and value < definition.minimum:
+        raise OverlayValidationError(f"{key} must be >= {definition.minimum}")
+    if definition.maximum is not None and value > definition.maximum:
+        raise OverlayValidationError(f"{key} must be <= {definition.maximum}")
+    return value
+
+
 def validate_overrides(
     overrides: Dict[str, Any], *, pair: Optional[str] = None,
     profiles: Optional[Mapping[str, Mapping[str, Any]]] = None,
@@ -110,20 +130,7 @@ def validate_overrides(
         if key not in schema:
             raise OverlayValidationError(f"unknown field: {key}")
 
-        definition = schema[key]
-        if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
-            raise OverlayValidationError(f"{key} must be numeric")
-        if definition.value_type is int:
-            if not isinstance(raw_value, int):
-                raise OverlayValidationError(f"{key} must be an integer")
-            value = raw_value
-        else:
-            value = float(raw_value)
-        if definition.minimum is not None and value < definition.minimum:
-            raise OverlayValidationError(f"{key} must be >= {definition.minimum}")
-        if definition.maximum is not None and value > definition.maximum:
-            raise OverlayValidationError(f"{key} must be <= {definition.maximum}")
-        validated[key] = value
+        validated[key] = _validate_field(key, raw_value, schema[key])
     return validated
 
 
@@ -161,6 +168,7 @@ def load_desired_config(
     schema = editable_schema(pair, profiles)
     desired = {key: profiles[pair][key] for key in schema}
     desired.update(load_overrides(overlay_path(state_dir, pair), pair=pair, profiles=profiles))
+    desired = validate_overrides(desired, pair=pair, profiles=profiles)
     _validate_desired_values(desired)
     return desired
 
@@ -175,7 +183,7 @@ def _atomic_write(path: Path, document: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     with tmp_path.open("w") as tmp_file:
-        json.dump(document, tmp_file, sort_keys=True, indent=2)
+        json.dump(document, tmp_file, sort_keys=True, indent=2, allow_nan=False)
         tmp_file.flush()
         os.fsync(tmp_file.fileno())
     os.replace(tmp_path, path)
@@ -189,12 +197,13 @@ def write_overrides(
     validated = validate_overrides(overrides, pair=pair, profiles=profiles)
     desired = {key: profiles[pair][key] for key in editable_schema(pair, profiles)}
     desired.update(validated)
+    validate_overrides(desired, pair=pair, profiles=profiles)
     _validate_desired_values(desired)
 
     overlay_file = Path(path)
     previous_file = overlay_file.with_name(overlay_file.name + ".previous")
     if overlay_file.exists():
-        _atomic_write(previous_file, _load_document(overlay_file))
+        _atomic_write(previous_file, load_overrides(overlay_file, pair=pair, profiles=profiles))
     _atomic_write(overlay_file, validated)
     return validated
 

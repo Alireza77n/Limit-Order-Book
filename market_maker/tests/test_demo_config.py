@@ -3,6 +3,7 @@ import pytest
 import config
 
 from demo_config import (
+    FIELD_DEFINITIONS,
     OverlayLoadError,
     OverlayValidationError,
     apply_overrides,
@@ -46,6 +47,10 @@ def test_obsolete_and_continuous_only_fields_are_not_editable():
     assert "max_rounds" not in editable_schema("btc", config.TRADING_PROFILES)
 
 
+def test_field_definitions_are_read_only():
+    assert not hasattr(FIELD_DEFINITIONS, "update")
+
+
 def test_validate_accepts_known_fields():
     validated = validate_overrides({"order_size": 5, "depth_max": 2}, pair="btc", profiles=PROFILES)
     assert validated == {"order_size": 5.0, "depth_max": 2}
@@ -77,6 +82,12 @@ def test_validate_rejects_out_of_range(payload):
 def test_validate_rejects_wrong_type():
     with pytest.raises(OverlayValidationError):
         validate_overrides({"order_size": "lots"}, pair="btc", profiles=PROFILES)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_validate_rejects_non_finite_numeric_values(value):
+    with pytest.raises(OverlayValidationError, match="finite"):
+        validate_overrides({"order_size": value}, pair="btc", profiles=PROFILES)
 
 
 def test_write_read_round_trip(tmp_path):
@@ -118,6 +129,12 @@ def test_load_desired_config_supports_a_profile_field_intersection(tmp_path):
     assert load_desired_config("btc", tmp_path, profiles) == {"order_size": 0.25}
 
 
+@pytest.mark.parametrize("values", [{"depth_max": 0}, {"commission_perc": 2}])
+def test_load_desired_config_validates_profile_defaults(tmp_path, values):
+    with pytest.raises(OverlayValidationError):
+        load_desired_config("btc", tmp_path, {"btc": values})
+
+
 def test_corrupt_overlay_is_an_explicit_error(tmp_path):
     overlay_path(tmp_path, "btc").write_text("{")
     with pytest.raises(OverlayLoadError, match="invalid JSON"):
@@ -143,6 +160,19 @@ def test_known_legacy_keys_are_removed_while_unknown_keys_fail_closed(tmp_path):
     path.write_text('{"not_a_real_field": 4}')
     with pytest.raises(OverlayValidationError, match="unknown field"):
         load_desired_config("btc", tmp_path, PROFILES)
+
+
+def test_write_preserves_existing_overlay_only_after_strict_pair_validation(tmp_path):
+    path = overlay_path(tmp_path, "btc")
+    previous_path = path.with_name(path.name + ".previous")
+    path.write_text('{"not_a_real_field": 4}')
+    previous_path.write_text('{"order_size": 0.1}')
+
+    with pytest.raises(OverlayValidationError, match="unknown field"):
+        write_overrides(path, {"order_size": 0.25}, pair="btc", profiles=PROFILES)
+
+    assert path.read_text() == '{"not_a_real_field": 4}'
+    assert previous_path.read_text() == '{"order_size": 0.1}'
 
 
 def test_desired_digest_is_stable_across_mapping_order():
