@@ -29,7 +29,8 @@ Three components:
    service, **not** in a container). The only component with Docker/file
    mutation authority. Polls `runtime/control/commands/`, dispatches to a
    fixed dict of handler functions, writes results.
-3. **`lob-dashboard`** — untouched, still read-only.
+3. **`lob-dashboard`** — still read-only; its effective-config panel consumes
+   the same desired resolver and worker-owned runtime acknowledgements.
 
 ## Routes (`market_maker/admin_app.py`)
 

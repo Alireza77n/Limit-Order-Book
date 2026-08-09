@@ -149,13 +149,16 @@ There are three intentionally distinct views, all produced by
 3. **Applied** — `runtime_config_<pair>.json`, atomically published by the
    worker and containing what its engine and ledger are actually using.
 
-The overlay is the only writable desired configuration. The runtime snapshot
-is not another source of defaults and is never edited by the Admin; it is a
-worker acknowledgement. Every document includes a schema version, pair,
-session id where applicable, values, update timestamp, and a deterministic
-desired-config digest.
+The overlay is the only writable desired configuration. For compatibility it
+remains a bare map containing only validated editable values; its pair identity
+comes from the fixed `demo_config_<pair>.json` path selected by trusted code.
+Admin/control-agent callers always supply the pair separately and validate the
+map against that pair before writing. Worker runtime acknowledgements are the
+self-identifying envelopes: they include schema version, pair, session id,
+values, update timestamp, and deterministic desired-config digest. A runtime
+snapshot is not another source of defaults and is never edited by the Admin.
 
-`resolve_desired_config(pair, state_dir)` is the only merge path. `run.make_cfg`,
+`load_desired_config(pair, state_dir)` is the only merge path. `run.make_cfg`,
 Admin rendering, Dashboard rendering, the control agent, and tests all call
 this shared code rather than duplicating profile/default merging.
 

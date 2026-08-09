@@ -342,14 +342,16 @@ existed, and as an honest limitations list:
 ## 6. Docker
 
 Docker Compose runs the whole operational Demo stack: one session
-initializer, continuous BTC and USDT paper workers, and the dashboard.
-All services use the root `Dockerfile` and share the results bind mount.
+initializer, continuous BTC and USDT paper workers, the read-only Dashboard,
+and the authenticated Admin panel. All services use the root `Dockerfile`.
+The web services receive the results tree read-only; Admin has one additional
+narrow writable mount for its control-command queue.
 
 ### 6.1 Requirements
 
 - Docker Desktop or Docker Engine with Compose v2.
 - Outbound access to Nobitex's public order-book endpoint.
-- Port 8050 available for the dashboard.
+- Ports 8050 and 8051 available for the Dashboard and Admin panel.
 - No Nobitex order token or MySQL server is required for Demo mode.
 
 Run every command below from the repository root:
@@ -358,11 +360,11 @@ Run every command below from the repository root:
 cd /Users/parsaoryani/Documents/Limit-Order-Book
 ```
 
-`market_maker/.env` is optional. Create it only when you want Telegram
-notifications or need to override documented environment settings:
+Create `market_maker/.env` from the example so the Admin login is configured:
 
 ```sh
 cp market_maker/.env.example market_maker/.env
+# The local example login is admin/admin; replace it outside local development.
 # Edit TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID if notifications are wanted.
 # Do not add a real Nobitex order token for a Demo-only deployment.
 ```
@@ -393,6 +395,7 @@ Expected services:
 | `btc-demo` | `run.py --profile btc --mode demo --continuous` | healthy | none |
 | `usdt-demo` | `run.py --profile usdt --mode demo --continuous` | healthy | none |
 | `dashboard` | `dashboard.py` | healthy | 8050 |
+| `admin` | `admin_app.py` | healthy | 8051 |
 
 Check them:
 
@@ -400,14 +403,17 @@ Check them:
 docker compose ps -a
 ```
 
-Open the dashboard at <http://localhost:8050>.
+Open the Dashboard at <http://localhost:8050> and Admin at
+<http://localhost:8051/admin/>. Browser lifecycle actions require the separate
+host process `python3 deploy/control_agent.py --mode local`; neither web
+container receives the Docker socket.
 
 ### 6.3 Monitor the running stack
 
 Follow all application logs:
 
 ```sh
-docker compose logs -f btc-demo usdt-demo dashboard
+docker compose logs -f btc-demo usdt-demo dashboard admin
 ```
 
 Follow one worker or show its last 200 lines:
@@ -578,8 +584,45 @@ as USDT or BTC.
 Everything below is Docker Compose. §1/§1b cover running `run.py`/
 `dashboard.py` natively (no Docker) if you want that instead.
 
-**Local** uses the root `docker-compose.yml` — 5 services: `session-init`,
-`btc-demo`, `usdt-demo`, `dashboard`, and `admin`.
+### Quick start: everything, one shot
+
+Both local and server now run all **5** services — `session-init`,
+`btc-demo`, `usdt-demo`, `dashboard`, **and `admin`** — via a single Docker
+Compose command. `admin` (`market_maker/admin_app.py`) is a real service in
+the root `docker-compose.yml` now, the same way it already was in
+`deploy/docker-compose.production.yml` — no more "run it natively" split.
+
+**One-time setup (both local and server): admin credentials.** The admin
+container fails every login attempt until `ADMIN_USERNAME`/
+`ADMIN_PASSWORD_HASH` are set — see the `market_maker/.env.example` entries
+for the exact `generate_password_hash` one-liner. Locally, put them in
+`market_maker/.env` (already loaded by every service via `env_file`); on
+the server, they belong in `deploy/admin.env` (already the case, no change
+there).
+
+**Local:**
+
+```sh
+cp market_maker/.env.example market_maker/.env   # first time only, then fill in ADMIN_USERNAME/ADMIN_PASSWORD_HASH
+docker compose up -d --build --wait
+```
+
+`http://localhost:8050` for the dashboard, `http://localhost:8051/admin/`
+for the admin panel.
+
+**Server:**
+
+```sh
+ssh ubuntu@185.206.95.141
+cd /home/ubuntu/limit-order-book
+docker compose -p limit-order-book -f deploy/docker-compose.production.yml \
+  --env-file deploy/demo.env up -d --build --wait
+```
+
+Behind Nginx at `https://dashboard.185-206-95-141.nip.io/` (`/admin/` for
+the admin panel). The rest of this section is the detailed reference:
+per-service commands, what each verb does, and server-only extras (control
+agent, rollback).
 
 **Local Admin mutations:** the Admin container never receives the Docker
 socket. Run the allow-listed host control agent in a second terminal while
@@ -610,9 +653,13 @@ running worker/boundary; **Saved; applies next session** needs **New session**;
 mean start the worker, verify session/snapshot ownership, or inspect the
 recorded worker error respectively.
 
+**Local** uses the root `docker-compose.yml` — 5 services: `session-init`,
+`btc-demo`, `usdt-demo`, `dashboard`, `admin`.
+
 **Server** (`ssh ubuntu@185.206.95.141`, `/home/ubuntu/limit-order-book`)
-uses `deploy/docker-compose.production.yml` — the same 4 services plus a
-5th, `admin`, and a host-level systemd unit (`lob-control-agent`) that
+uses `deploy/docker-compose.production.yml` — the same 5 services (built
+with production hardening: read-only root filesystem, non-root user,
+resource limits) plus a host-level systemd unit (`lob-control-agent`) that
 isn't a Docker container at all. Every server command below assumes you're
 already `cd`'d into `/home/ubuntu/limit-order-book`.
 
