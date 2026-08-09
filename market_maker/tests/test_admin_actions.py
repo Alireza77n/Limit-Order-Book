@@ -294,6 +294,22 @@ def test_config_status_treats_missing_stale_or_mismatched_snapshot_as_stale(snap
     assert view["fields"]["order_size"]["state"] == "stale"
 
 
+@pytest.mark.parametrize(("status", "error"), [
+    ("applied", "unexpected worker error"),
+    ("error", None),
+    ("error", ""),
+])
+def test_config_status_rejects_inconsistent_snapshot_status_and_error(status, error):
+    desired = {"order_size": 1.0}
+    snapshot = _runtime_snapshot(desired, status=status, error=error)
+
+    view = config_status("btc", desired, snapshot, True)
+
+    assert view["state"] == "stale"
+    assert view["label"] == "Runtime status unknown/stale"
+    assert view["error"] is None
+
+
 def test_config_status_rejects_snapshot_from_another_stack_session():
     desired = {"order_size": 1.0}
     snapshot = _runtime_snapshot(desired, session_id="old-session")
@@ -363,6 +379,25 @@ def test_config_json_reports_malformed_runtime_snapshot_as_stale(client, app):
     body = response.get_json()
     assert body["status"]["state"] == "stale"
     assert "invalid JSON" in body["runtime_error"]
+
+
+@pytest.mark.parametrize(("status", "error"), [
+    ("applied", "unexpected worker error"),
+    ("error", None),
+])
+def test_config_json_reports_inconsistent_snapshot_status_and_error_as_stale(
+    client, app, status, error,
+):
+    state_dir = Path(app.config["STATE_DIR"])
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    snapshot = _runtime_snapshot(desired, status=status, error=error)
+    (state_dir / "runtime_config_btc.json").write_text(json.dumps(snapshot))
+    _login(client)
+
+    body = client.get("/admin/config/btc").get_json()
+
+    assert body["status"]["state"] == "stale"
+    assert body["status"]["error"] is None
 
 
 def test_config_json_reports_corrupt_desired_overlay_explicitly(client, app):

@@ -321,6 +321,35 @@ def test_config_page_shows_old_digest_worker_error_as_failed(
     assert "OSError: snapshot publish failed" in body
 
 
+@pytest.mark.parametrize(("status", "error"), [
+    ("applied", "unexpected worker error"),
+    ("error", None),
+])
+def test_config_page_shows_inconsistent_snapshot_status_and_error_as_stale(
+    client, app, status, error,
+):
+    state_dir = Path(app.config["STATE_DIR"])
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    snapshot = {
+        "schema_version": 1,
+        "pair": "btc",
+        "session_id": "session-1",
+        "applied": dict(desired),
+        "pending_new_session": {},
+        "desired_digest": desired_digest(desired),
+        "status": status,
+        "error": error,
+        "updated_at": "2026-08-09T12:00:00+00:00",
+    }
+    write_runtime_snapshot(state_dir, "btc", snapshot)
+    _login(client)
+
+    body = _html(client.get("/admin/config/btc", headers=HTML))
+
+    assert 'data-config-status="stale"' in body
+    assert "unexpected worker error" not in body
+
+
 def test_failed_config_command_reports_agent_error_without_success_flash(
     client, app, monkeypatch,
 ):

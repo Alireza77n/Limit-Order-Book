@@ -233,7 +233,9 @@ def _snapshot_is_current_shape(
     except ValueError:
         return False
     error = snapshot.get("error")
-    return error is None or isinstance(error, str)
+    if snapshot["status"] == "applied":
+        return error is None
+    return isinstance(error, str) and bool(error.strip())
 
 
 def config_status(
