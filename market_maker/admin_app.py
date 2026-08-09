@@ -963,6 +963,16 @@ def _register_routes(app: Flask) -> None:
 @csrf_protected
 def _admin_config_post(app: Flask, pair: str, path):
     wants_html = _wants_html()
+    schema = editable_schema(pair, TRADING_PROFILES)
+    control_fields = {"csrf_token", "action"}
+    unknown_fields = sorted(set(request.form) - set(schema) - control_fields)
+    if unknown_fields:
+        message = f"unknown field: {unknown_fields[0]}"
+        if wants_html:
+            return render_template(
+                "admin/config.html", **_config_page_context(app, pair, path, error=message),
+            ), 400
+        return (message, 400)
 
     if request.form.get("action") == "revert":
         try:
@@ -992,17 +1002,6 @@ def _admin_config_post(app: Flask, pair: str, path):
 
     if request.form.get("action"):
         message = "unknown configuration action"
-        if wants_html:
-            return render_template(
-                "admin/config.html", **_config_page_context(app, pair, path, error=message),
-            ), 400
-        return (message, 400)
-
-    schema = editable_schema(pair, TRADING_PROFILES)
-    control_fields = {"csrf_token", "action"}
-    unknown_fields = sorted(set(request.form) - set(schema) - control_fields)
-    if unknown_fields:
-        message = f"unknown field: {unknown_fields[0]}"
         if wants_html:
             return render_template(
                 "admin/config.html", **_config_page_context(app, pair, path, error=message),

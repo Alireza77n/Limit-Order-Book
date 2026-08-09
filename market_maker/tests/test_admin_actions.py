@@ -125,6 +125,22 @@ def test_config_apply_validates_before_enqueueing(client, app, fake_agent):
     assert _commands_written(app) == []
 
 
+def test_config_apply_rejects_equal_inventory_bounds_without_enqueueing(
+    client, app, fake_agent,
+):
+    token = _login(client)
+
+    response = client.post("/admin/config/btc", data={
+        "inv_min": "2.0",
+        "inv_max": "2.0",
+        "csrf_token": token,
+    })
+
+    assert response.status_code == 400
+    assert b"inv_min must be < inv_max" in response.data
+    assert _commands_written(app) == []
+
+
 def test_config_apply_valid_enqueues_apply_config(client, app, fake_agent):
     token = _login(client)
     response = client.post("/admin/config/btc", data={
@@ -161,6 +177,21 @@ def test_config_submission_outside_pair_schema_is_rejected_without_enqueue(
     response = client.post(
         "/admin/config/btc", data={field: "1", "csrf_token": token},
     )
+
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+
+
+def test_config_revert_with_outside_schema_field_is_rejected_without_enqueue(
+    client, app, fake_agent,
+):
+    token = _login(client)
+
+    response = client.post("/admin/config/btc", data={
+        "action": "revert",
+        "no_quote_recovery_alert": "true",
+        "csrf_token": token,
+    })
 
     assert response.status_code == 400
     assert _commands_written(app) == []
@@ -287,6 +318,23 @@ def test_config_status_reports_worker_snapshot_error_as_failed():
     assert view["state"] == "failed"
     assert view["label"] == "Failed to apply"
     assert view["error"] == "OverlayLoadError: invalid JSON"
+
+
+def test_config_status_reports_preserved_old_digest_error_as_failed():
+    desired = {"order_size": 2.0}
+    snapshot = _runtime_snapshot(
+        {"order_size": 1.0},
+        applied={"order_size": 1.0},
+        status="error",
+        error="OSError: snapshot publish failed",
+    )
+
+    view = config_status("btc", desired, snapshot, True)
+
+    assert view["state"] == "failed"
+    assert view["label"] == "Failed to apply"
+    assert view["error"] == "OSError: snapshot publish failed"
+    assert view["fields"]["order_size"]["state"] == "failed"
 
 
 def test_config_json_separates_desired_applied_and_status(client, app, monkeypatch):

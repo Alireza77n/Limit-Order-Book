@@ -18,6 +18,9 @@
     {% if runtime_error %}
       <div class="flash flash-error">Runtime snapshot unavailable: {{ runtime_error }}</div>
     {% endif %}
+    {% if status.error and status.error != error %}
+      <div class="flash flash-error">{{ status.error }}</div>
+    {% endif %}
 
     <p>
       Runtime status:

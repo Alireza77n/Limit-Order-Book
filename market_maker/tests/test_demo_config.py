@@ -155,6 +155,27 @@ def test_cross_field_validation_rejects_invalid_desired_config(tmp_path, values)
         write_overrides(overlay_path(tmp_path, "btc"), values, pair="btc", profiles=PROFILES)
 
 
+def test_load_desired_config_rejects_equal_inventory_bounds(tmp_path):
+    profiles = {"btc": {"inv_min": 2.0, "inv_max": 2.0}}
+
+    with pytest.raises(OverlayValidationError, match="inv_min must be < inv_max"):
+        load_desired_config("btc", tmp_path, profiles)
+
+
+def test_write_overrides_rejects_equal_inventory_bounds_without_persisting(tmp_path):
+    path = overlay_path(tmp_path, "btc")
+
+    with pytest.raises(OverlayValidationError, match="inv_min must be < inv_max"):
+        write_overrides(
+            path,
+            {"inv_min": 2.0, "inv_max": 2.0},
+            pair="btc",
+            profiles=PROFILES,
+        )
+
+    assert not path.exists()
+
+
 def test_known_legacy_keys_are_removed_while_unknown_keys_fail_closed(tmp_path):
     path = overlay_path(tmp_path, "btc")
     path.write_text('{"order_size": 0.25, "max_rounds": 4}')

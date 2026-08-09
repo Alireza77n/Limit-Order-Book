@@ -99,8 +99,8 @@ def _schema_for(
 
 
 def _validate_desired_values(values: Mapping[str, Any]) -> None:
-    if {"inv_min", "inv_max"} <= values.keys() and values["inv_min"] > values["inv_max"]:
-        raise OverlayValidationError("inv_min must be <= inv_max")
+    if {"inv_min", "inv_max"} <= values.keys() and values["inv_min"] >= values["inv_max"]:
+        raise OverlayValidationError("inv_min must be < inv_max")
     if "order_size" in values and values["order_size"] <= 0:
         raise OverlayValidationError("order_size must be > 0")
 
@@ -300,7 +300,7 @@ def config_status(
         and desired_values[field] != applied[field]
     }
 
-    if snapshot["status"] == "error" and digest_matches:
+    if snapshot["status"] == "error":
         failed_fields = {
             field: dict(row, applied=applied.get(field), state="failed",
                         label=CONFIG_STATUS_LABELS["failed"])

@@ -293,6 +293,34 @@ def test_config_page_shows_modes_statuses_and_separate_json_views(
     assert 'data-mode="new_session"' in body
 
 
+def test_config_page_shows_old_digest_worker_error_as_failed(
+    client, app, monkeypatch,
+):
+    state_dir = Path(app.config["STATE_DIR"])
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    old_desired = dict(desired, order_size=desired["order_size"] * 2)
+    snapshot = {
+        "schema_version": 1,
+        "pair": "btc",
+        "session_id": "session-1",
+        "applied": dict(old_desired),
+        "pending_new_session": {},
+        "desired_digest": desired_digest(old_desired),
+        "status": "error",
+        "error": "OSError: snapshot publish failed",
+        "updated_at": "2026-08-09T12:00:00+00:00",
+    }
+    write_runtime_snapshot(state_dir, "btc", snapshot)
+    monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
+    _login(client)
+
+    body = _html(client.get("/admin/config/btc", headers=HTML))
+
+    assert 'data-config-status="failed"' in body
+    assert "Failed to apply" in body
+    assert "OSError: snapshot publish failed" in body
+
+
 def test_failed_config_command_reports_agent_error_without_success_flash(
     client, app, monkeypatch,
 ):
