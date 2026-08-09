@@ -190,6 +190,7 @@ services:
       - "127.0.0.1:8652:8050"
     volumes:
       - ../runtime/results:/app/runtime/results:ro
+      - ../runtime/state:/app/runtime/state:ro
     restart: unless-stopped
     stop_grace_period: 20s
     pids_limit: 128

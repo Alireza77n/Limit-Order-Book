@@ -1,10 +1,14 @@
 """Unit tests for dashboard.py's pure data-handling functions -- no Dash
 server involved, just CSV-in/DataFrame-out logic."""
 
+import json
+
 import pandas as pd
 import pytest
 
 from dashboard import activity_records, filter_session, load_track, session_ids, with_derived_spreads
+from config import TRADING_PROFILES
+from demo_config import desired_digest, load_desired_config
 from result_store import DemoResultStore
 
 COLUMNS = [
@@ -252,3 +256,109 @@ def test_no_quote_summary_tolerates_legacy_csv_without_the_column(tmp_path):
     from dashboard import no_quote_summary
 
     assert no_quote_summary(pd.DataFrame([{"Portfolio Wealth": 1.0}])) == ""
+
+
+# ---------- Effective Demo configuration ----------
+
+def _configure_dashboard_state(monkeypatch, tmp_path, session_id="session-current"):
+    import dashboard
+
+    monkeypatch.setattr(dashboard, "DEMO_STATE_DIR", str(tmp_path))
+    (tmp_path / "stack_session.json").write_text(json.dumps({"session_id": session_id}))
+
+
+def _save_desired(tmp_path, pair, **overrides):
+    (tmp_path / f"demo_config_{pair}.json").write_text(json.dumps(overrides))
+    return load_desired_config(pair, tmp_path, TRADING_PROFILES)
+
+
+def _write_runtime_snapshot(
+    tmp_path, pair, desired, *, applied=None, session_id="session-current",
+):
+    document = {
+        "schema_version": 1,
+        "pair": pair,
+        "session_id": session_id,
+        "applied": dict(desired if applied is None else applied),
+        "pending_new_session": {
+            field: desired[field]
+            for field in ("demo_inv_initial", "cash_initial", "commission_perc")
+            if field in desired and desired[field] != (applied or desired).get(field)
+        },
+        "desired_digest": desired_digest(desired),
+        "status": "applied",
+        "error": None,
+        "updated_at": "2026-08-09T12:00:00+00:00",
+    }
+    (tmp_path / f"runtime_config_{pair}.json").write_text(json.dumps(document))
+
+
+def test_dashboard_config_uses_selected_pair_and_reports_pending(tmp_path, monkeypatch):
+    import dashboard
+
+    _configure_dashboard_state(monkeypatch, tmp_path)
+    desired = _save_desired(tmp_path, "btc", order_size=0.2, commission_perc=0.02)
+    applied = dict(desired, commission_perc=0.001)
+    _write_runtime_snapshot(tmp_path, "btc", desired, applied=applied)
+
+    view = dashboard.load_effective_demo_config("btc_demo")
+
+    assert view["pair"] == "btc"
+    assert view["desired"]["commission_perc"] == pytest.approx(0.02)
+    assert view["applied"]["order_size"] == pytest.approx(0.2)
+    assert view["pending_new_session"]["commission_perc"] == pytest.approx(0.02)
+    assert view["status"]["fields"]["commission_perc"]["label"] == (
+        "Saved; applies next session"
+    )
+
+
+def test_dashboard_config_rejects_snapshot_from_another_stack_session(
+    tmp_path, monkeypatch,
+):
+    import dashboard
+
+    _configure_dashboard_state(monkeypatch, tmp_path, session_id="session-current")
+    desired = _save_desired(tmp_path, "usdt", order_size=2.0)
+    _write_runtime_snapshot(
+        tmp_path, "usdt", desired, session_id="session-previous",
+    )
+
+    view = dashboard.load_effective_demo_config("usdt_demo")
+
+    assert view["status"]["state"] == "stale"
+    assert view["applied"] == {}
+
+
+def test_real_track_has_no_demo_config_panel():
+    import dashboard
+
+    assert dashboard.load_effective_demo_config("btc_real") is None
+
+
+def test_effective_config_panel_uses_shared_field_rows(tmp_path, monkeypatch):
+    import dashboard
+
+    _configure_dashboard_state(monkeypatch, tmp_path)
+    desired = _save_desired(tmp_path, "btc", commission_perc=0.02)
+    _write_runtime_snapshot(
+        tmp_path, "btc", desired, applied=dict(desired, commission_perc=0.001),
+    )
+
+    style, summary, rows = dashboard.refresh_effective_config_panel("btc_demo", 4)
+
+    commission = next(row for row in rows if row["Field"] == "commission_perc")
+    assert style == {}
+    assert summary == "BTC Demo configuration — Worker stopped; applies when started"
+    assert commission == {
+        "Field": "commission_perc",
+        "Desired": 0.02,
+        "Applied": 0.001,
+        "Mode": "new_session",
+        "Status": "Saved; applies next session",
+    }
+    hidden_style, hidden_summary, hidden_rows = (
+        dashboard.refresh_effective_config_panel("btc_real", 5)
+    )
+    assert hidden_style == {"display": "none"}
+    assert hidden_summary == ""
+    assert hidden_rows == []

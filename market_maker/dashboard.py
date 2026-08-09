@@ -20,6 +20,7 @@ and price spreads, so each gets its own single-axis chart rather than
 being crammed onto one dual-scale plot.
 """
 
+import fcntl
 from pathlib import Path
 from typing import List, Optional
 
@@ -28,8 +29,15 @@ import plotly.graph_objects as go
 from dash import Dash, dash_table, dcc, html
 from dash.dependencies import Input, Output
 
-from config import TRADING_PROFILES, demo_csv_path
+from config import DEMO_STATE_DIR, TRADING_PROFILES, demo_csv_path
+from demo_config import (
+    OverlayLoadError,
+    config_status,
+    load_desired_config,
+    read_runtime_snapshot,
+)
 from result_store import DemoResultStore
+from session import SessionError, load_stack_session
 
 # Every track this project can produce, explicitly labeled real vs demo so
 # they're never confused with each other in the UI. Sourced directly from
@@ -179,6 +187,61 @@ def filter_session(df: pd.DataFrame, session_id) -> pd.DataFrame:
     return df[df["Session_id"] == session_id]
 
 
+def _demo_worker_running(pair: str) -> bool:
+    """Read the pair worker's lease without mutating Dashboard state."""
+    symbol = str(TRADING_PROFILES[pair]["pair"]).lower()
+    lock_path = Path(DEMO_STATE_DIR) / f".worker_{symbol}.lock"
+    if not lock_path.exists():
+        return False
+    try:
+        with lock_path.open("r") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        return False
+    return False
+
+
+def load_effective_demo_config(track_key: str) -> Optional[dict]:
+    """Resolve desired and current-session runtime config for a Demo track."""
+    track = TRACKS.get(track_key)
+    pair = track_key.removesuffix("_demo")
+    if not track or track["status"] != "demo" or pair not in TRADING_PROFILES:
+        return None
+
+    state_dir = Path(DEMO_STATE_DIR)
+    desired = load_desired_config(pair, state_dir, TRADING_PROFILES)
+    runtime_error = None
+    try:
+        snapshot = read_runtime_snapshot(state_dir, pair)
+    except OverlayLoadError as error:
+        snapshot = None
+        runtime_error = str(error)
+    try:
+        current_session_id = load_stack_session(state_dir / "stack_session.json")
+    except SessionError:
+        current_session_id = None
+
+    status = config_status(
+        pair,
+        desired,
+        snapshot if current_session_id is not None else None,
+        _demo_worker_running(pair),
+        current_session_id=current_session_id,
+    )
+    return {
+        "pair": pair,
+        "desired": desired,
+        "applied": status["applied"],
+        "pending_new_session": status["pending_new_session"],
+        "status": status,
+        "runtime_error": runtime_error,
+    }
+
+
 # ---------- Chart helpers ----------
 
 def _empty_fig(message: str) -> go.Figure:
@@ -286,6 +349,40 @@ app.layout = html.Div([
         }),
     ),
 
+    html.Div(
+        _card(
+            html.H3("Effective Demo configuration", style={
+                "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY,
+                "fontSize": "1.1rem", "marginTop": 0,
+            }),
+            html.Div(id="effective-config-summary", style={
+                "color": MUTED, "fontFamily": FONT_FAMILY,
+                "fontSize": "0.85rem", "marginBottom": "0.75rem",
+            }),
+            dash_table.DataTable(
+                id="effective-config-table",
+                columns=[{"name": field, "id": field} for field in (
+                    "Field", "Desired", "Applied", "Mode", "Status",
+                )],
+                style_table={"overflowX": "auto"},
+                style_header={
+                    "backgroundColor": PAGE, "fontWeight": 600,
+                    "color": TEXT_PRIMARY, "fontFamily": FONT_FAMILY,
+                    "border": f"1px solid {GRIDLINE}",
+                },
+                style_cell={
+                    "fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY,
+                    "fontSize": "0.85rem", "border": f"1px solid {GRIDLINE}",
+                    "padding": "0.5rem", "textAlign": "left",
+                },
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": PAGE},
+                ],
+            ),
+        ),
+        id="effective-config-panel",
+    ),
+
     _card(dcc.Graph(id="wealth-chart", config={"displaylogo": False})),
 
     html.Div([
@@ -350,6 +447,35 @@ def refresh_session_options(track_key, _):
 @app.callback(Output("status-badge", "children"), Input("track", "value"))
 def refresh_status_badge(track_key):
     return _status_badge(TRACKS[track_key]["status"])
+
+
+@app.callback(
+    Output("effective-config-panel", "style"),
+    Output("effective-config-summary", "children"),
+    Output("effective-config-table", "data"),
+    Input("track", "value"),
+    Input("tick", "n_intervals"),
+)
+def refresh_effective_config_panel(track_key, _):
+    view = load_effective_demo_config(track_key)
+    if view is None:
+        return {"display": "none"}, "", []
+
+    status = view["status"]
+    summary = f"{view['pair'].upper()} Demo configuration — {status['label']}"
+    if view["runtime_error"]:
+        summary += f" ({view['runtime_error']})"
+    rows = [
+        {
+            "Field": field,
+            "Desired": row["desired"],
+            "Applied": row["applied"],
+            "Mode": row["mode"],
+            "Status": row["label"],
+        }
+        for field, row in status["fields"].items()
+    ]
+    return {}, summary, rows
 
 
 @app.callback(

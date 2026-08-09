@@ -13,6 +13,7 @@ from demo_entrypoint import SENSITIVE_ENV
 
 ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = ROOT / "deploy/docker-compose.production.yml"
+LOCAL_COMPOSE_PATH = ROOT / "docker-compose.yml"
 DOCKERFILE_PATH = ROOT / "Dockerfile"
 ENV_PATH = ROOT / "deploy/demo.env"
 SERVICES = ("session-init", "btc-demo", "usdt-demo", "dashboard", "admin")
@@ -44,7 +45,9 @@ COMMANDS = {
 
 
 def _service_blocks(text: str) -> dict[str, str]:
-    services_text = text.split("\nservices:\n", 1)[1].split("\nnetworks:\n", 1)[0]
+    services_text = text.split("\nservices:\n", 1)[1]
+    if "\nnetworks:\n" in services_text:
+        services_text = services_text.split("\nnetworks:\n", 1)[0]
     starts = list(re.finditer(r"(?m)^  ([a-z0-9-]+):\n", services_text))
     return {
         match.group(1): services_text[match.start(): starts[index + 1].start()]
@@ -253,7 +256,8 @@ def test_mounts_are_limited_to_separate_results_and_state_roots():
         ]
         assert "/app/runtime/state/stack_session.json" in blocks[name]
     assert _list(blocks["dashboard"], "    volumes:") == [
-        "../runtime/results:/app/runtime/results:ro"
+        "../runtime/results:/app/runtime/results:ro",
+        "../runtime/state:/app/runtime/state:ro",
     ]
     assert _list(blocks["admin"], "    volumes:") == [
         "../runtime/state:/app/runtime/state:ro",
@@ -261,6 +265,15 @@ def test_mounts_are_limited_to_separate_results_and_state_roots():
         "../runtime/backups:/app/runtime/backups:ro",
         "../runtime/control:/app/runtime/control",
     ]
+
+    local_blocks = _service_blocks(LOCAL_COMPOSE_PATH.read_text())
+    assert _list(local_blocks["dashboard"], "    volumes:") == [
+        "./market_maker/results:/app/market_maker/results"
+    ]
+    for web_service in ("dashboard", "admin"):
+        assert "/var/run/docker.sock" not in blocks[web_service]
+        if web_service in local_blocks:
+            assert "/var/run/docker.sock" not in local_blocks[web_service]
 
 
 def test_healthchecks_are_guarded_and_worker_health_requires_an_active_lock():
@@ -351,6 +364,7 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
         ],
         "dashboard": [
             (ROOT / "runtime/results", "/app/runtime/results", True),
+            (ROOT / "runtime/state", "/app/runtime/state", True),
         ],
         "admin": [
             (ROOT / "runtime/state", "/app/runtime/state", True),
