@@ -104,6 +104,12 @@ BACKUP_GLOBS = (
     "stack_session.json", "*_demo.csv", "*_demo.sqlite3",
 )
 
+WORKER_STATUS_QUERY_TIMEOUT_SECONDS = 2.0
+WORKER_VERIFY_TIMEOUT_SECONDS = 5.0
+WORKER_VERIFY_INTERVAL_SECONDS = 0.25
+_monotonic = time.monotonic
+_sleep = time.sleep
+
 
 class AgentPaths:
     def __init__(self, app_root, state_dir, results_dir, backups_dir, control_dir, mode="production"):
@@ -171,7 +177,8 @@ def is_worker_running(
         argv = list(LOCAL_WORKER_STATUS_ARGV[pair])
         try:
             completed = run_argv(
-                argv, cwd=str(paths.app_root), capture_output=True, text=True
+                argv, cwd=str(paths.app_root), capture_output=True, text=True,
+                timeout=WORKER_STATUS_QUERY_TIMEOUT_SECONDS,
             )
         except Exception as exc:  # noqa: BLE001 -- fail closed at authority boundary
             raise WorkerStatusError(
@@ -203,6 +210,25 @@ def worker_statuses(paths: AgentPaths, pairs, run_argv: Callable = None) -> dict
 
 def liveness_failure(exc: WorkerStatusError) -> AgentResult:
     return AgentResult(False, {"phase": "liveness", "error": str(exc)})
+
+
+def _wait_for_worker_running(paths, pair, run_argv):
+    """Poll fixed worker liveness until startup is visible or time expires."""
+    deadline = _monotonic() + WORKER_VERIFY_TIMEOUT_SECONDS
+    observed = None
+    last_error = None
+    while True:
+        try:
+            observed = is_worker_running(paths, pair, run_argv)
+            if observed:
+                return True, None
+        except WorkerStatusError as exc:
+            observed = None
+            last_error = str(exc)
+        remaining = deadline - _monotonic()
+        if remaining <= 0:
+            return observed, last_error
+        _sleep(min(WORKER_VERIFY_INTERVAL_SECONDS, remaining))
 
 
 def _lifecycle_command(paths, action, pair, run_argv) -> AgentResult:
@@ -364,10 +390,6 @@ def handle_apply_config(paths, pair, payload, run_argv):
 
 def handle_rollback_config(paths, pair, payload, run_argv):
     try:
-        worker_running = worker_statuses(paths, (pair,), run_argv)[pair]
-    except WorkerStatusError as exc:
-        return liveness_failure(exc)
-    try:
         restored = rollback_overrides(
             overlay_path(paths.state_dir, pair),
             pair=pair,
@@ -382,27 +404,11 @@ def handle_rollback_config(paths, pair, payload, run_argv):
         desired, pair=pair, profiles=TRADING_PROFILES,
     )
     modes = {field: schema[field].mode.value for field in restored}
-    field_status = {
-        field: (
-            "pending_new_session"
-            if schema[field].mode.value == "new_session"
-            else "waiting" if worker_running else "stopped"
-        )
-        for field in restored
-    }
-    status = (
-        "stopped" if not worker_running
-        else "pending_new_session"
-        if "pending_new_session" in field_status.values()
-        else "waiting"
-    )
     return AgentResult(True, {
         "restored": restored,
         "desired_digest": desired_digest(desired),
         "modes": modes,
-        "status": status,
-        "field_status": field_status,
-        "worker_running": worker_running,
+        "status": "saved",
     })
 
 
@@ -484,12 +490,17 @@ def handle_cancel_orders(paths, pair, payload, run_argv):
         return AgentResult(False, detail)
 
     start = _lifecycle_command(paths, "start_worker", pair, run_argv)
-    try:
-        now_running = worker_statuses(paths, (pair,), run_argv)[pair]
-        status_error = None
-    except WorkerStatusError as exc:
-        now_running = None
-        status_error = str(exc)
+    if start.ok:
+        now_running, status_error = _wait_for_worker_running(
+            paths, pair, run_argv,
+        )
+    else:
+        try:
+            now_running = is_worker_running(paths, pair, run_argv)
+            status_error = None
+        except WorkerStatusError as exc:
+            now_running = None
+            status_error = str(exc)
     ok = start.ok and now_running is True
     detail = {
         "pair": pair, "was_running": True, "now_running": now_running,

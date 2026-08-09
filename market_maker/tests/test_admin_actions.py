@@ -197,6 +197,44 @@ def test_config_revert_with_outside_schema_field_is_rejected_without_enqueue(
     assert _commands_written(app) == []
 
 
+def test_config_revert_html_derives_status_from_shared_runtime_snapshot(
+    client, app, monkeypatch,
+):
+    from demo_config import overlay_path, rollback_overrides, write_overrides
+
+    token = _login(client)
+    state_dir = Path(app.config["STATE_DIR"])
+    path = overlay_path(state_dir, "btc")
+    previous = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    previous["order_size"] = 1.0
+    current = dict(previous, order_size=2.0)
+    write_overrides(path, previous, pair="btc", profiles=TRADING_PROFILES)
+    write_overrides(path, current, pair="btc", profiles=TRADING_PROFILES)
+    (state_dir / "runtime_config_btc.json").write_text(
+        json.dumps(_runtime_snapshot(current))
+    )
+    (state_dir / "stack_session.json").write_text(
+        json.dumps({"session_id": "session-1"})
+    )
+    monkeypatch.setattr(admin_app_module, "_worker_running", lambda *_args: True)
+
+    def execute_rollback(_app, action, pair, payload=None):
+        assert action == "rollback_config"
+        rollback_overrides(path, pair=pair, profiles=TRADING_PROFILES)
+        return {"ok": True, "detail": {"status": "saved"}}
+
+    monkeypatch.setattr(admin_app_module, "enqueue_and_wait", execute_rollback)
+
+    response = client.post(
+        "/admin/config/btc",
+        data={"action": "revert", "csrf_token": token},
+        headers={"Accept": "text/html"},
+    )
+
+    assert response.status_code == 200
+    assert b"Saved; waiting for running worker" in response.data
+
+
 def test_config_status_reports_applied_digest_match():
     desired = {"order_size": 1.0, "commission_perc": 0.001}
 

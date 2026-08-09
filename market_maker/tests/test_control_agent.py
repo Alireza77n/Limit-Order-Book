@@ -278,8 +278,8 @@ def test_cancel_orders_aborts_restart_when_stop_fails(tmp_path, monkeypatch):
 
 def test_cancel_orders_reports_start_failure_and_final_state(tmp_path, monkeypatch):
     paths = make_paths(tmp_path)
-    statuses = iter(({"btc": True}, {"btc": False}))
-    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: next(statuses))
+    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: {"btc": True})
+    monkeypatch.setattr(ca, "is_worker_running", lambda *_args: False)
     calls = 0
 
     def fail_start(argv, **kwargs):
@@ -293,6 +293,76 @@ def test_cancel_orders_reports_start_failure_and_final_state(tmp_path, monkeypat
     assert result.detail["phase"] == "start"
     assert result.detail["now_running"] is False
     assert result.detail["start"]["returncode"] == 1
+
+
+def test_cancel_orders_waits_for_worker_lease_after_successful_start(
+    tmp_path, monkeypatch,
+):
+    paths = make_paths(tmp_path)
+    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: {"btc": True})
+    observed = iter((False, False, True))
+    monkeypatch.setattr(ca, "is_worker_running", lambda *_args: next(observed))
+    now = [0.0]
+    sleeps = []
+    monkeypatch.setattr(ca, "_monotonic", lambda: now[0])
+
+    def advance(seconds):
+        sleeps.append(seconds)
+        now[0] += seconds
+
+    monkeypatch.setattr(ca, "_sleep", advance)
+
+    result = ca.handle_cancel_orders(paths, "btc", None, RecordingRunner())
+
+    assert result.ok is True
+    assert result.detail["now_running"] is True
+    assert sleeps == [ca.WORKER_VERIFY_INTERVAL_SECONDS] * 2
+
+
+def test_cancel_orders_start_verification_times_out_boundedly(
+    tmp_path, monkeypatch,
+):
+    paths = make_paths(tmp_path)
+    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: {"btc": True})
+    attempts = []
+    monkeypatch.setattr(
+        ca, "is_worker_running", lambda *_args: attempts.append(True) or False,
+    )
+    now = [0.0]
+    monkeypatch.setattr(ca, "_monotonic", lambda: now[0])
+    monkeypatch.setattr(ca, "_sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+
+    result = ca.handle_cancel_orders(paths, "btc", None, RecordingRunner())
+
+    assert result.ok is False
+    assert result.detail["phase"] == "verify"
+    assert result.detail["now_running"] is False
+    assert now[0] == ca.WORKER_VERIFY_TIMEOUT_SECONDS
+    assert len(attempts) <= (
+        ca.WORKER_VERIFY_TIMEOUT_SECONDS / ca.WORKER_VERIFY_INTERVAL_SECONDS
+    ) + 2
+
+
+def test_cancel_orders_start_verification_reports_liveness_exception(
+    tmp_path, monkeypatch,
+):
+    paths = make_paths(tmp_path)
+    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: {"btc": True})
+    monkeypatch.setattr(
+        ca,
+        "is_worker_running",
+        lambda *_args: (_ for _ in ()).throw(ca.WorkerStatusError("lease unavailable")),
+    )
+    now = [0.0]
+    monkeypatch.setattr(ca, "_monotonic", lambda: now[0])
+    monkeypatch.setattr(ca, "_sleep", lambda seconds: now.__setitem__(0, now[0] + seconds))
+
+    result = ca.handle_cancel_orders(paths, "btc", None, RecordingRunner())
+
+    assert result.ok is False
+    assert result.detail["phase"] == "verify"
+    assert result.detail["now_running"] is None
+    assert result.detail["status_error"] == "lease unavailable"
 
 
 def test_new_session_aborts_if_a_running_worker_cannot_stop(tmp_path):
@@ -461,16 +531,15 @@ def test_rollback_config_restores_previous(tmp_path):
     assert runner.calls == []
     assert result.detail["restored"] == {"order_size": 1.0}
     assert result.detail["modes"] == {"order_size": "hot"}
-    assert result.detail["status"] == "stopped"
-    assert result.detail["worker_running"] is False
+    assert result.detail["status"] == "saved"
+    assert "worker_running" not in result.detail
+    assert "field_status" not in result.detail
     assert result.detail["desired_digest"] == desired_digest(
         load_desired_config("btc", paths.state_dir, config.TRADING_PROFILES)
     )
 
 
-def test_rollback_running_worker_reports_hot_reload_without_restart(
-    tmp_path, monkeypatch,
-):
+def test_rollback_does_not_probe_or_restart_worker(tmp_path):
     paths = make_paths(tmp_path)
     path = overlay_path(paths.state_dir, "btc")
     write_overrides(
@@ -479,36 +548,38 @@ def test_rollback_running_worker_reports_hot_reload_without_restart(
     write_overrides(
         path, {"order_size": 2}, pair="btc", profiles=config.TRADING_PROFILES,
     )
-    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: {"btc": True})
     runner = RecordingRunner()
 
     result = ca.handle_rollback_config(paths, "btc", None, runner)
 
     assert result.ok is True
-    assert result.detail["status"] == "waiting"
-    assert result.detail["worker_running"] is True
+    assert result.detail["status"] == "saved"
     assert runner.calls == []
 
 
-def test_rollback_reports_new_session_values_as_pending(tmp_path):
+def test_rollback_normal_full_overlay_does_not_fabricate_application_status(tmp_path):
     paths = make_paths(tmp_path)
     path = overlay_path(paths.state_dir, "btc")
+    first = load_desired_config("btc", paths.state_dir, config.TRADING_PROFILES)
+    first["order_size"] = 0.1
+    first["commission_perc"] = 0.01
+    second = dict(first, order_size=0.2, commission_perc=0.02)
     write_overrides(
-        path, {"commission_perc": 0.01},
+        path, first,
         pair="btc", profiles=config.TRADING_PROFILES,
     )
     write_overrides(
-        path, {"commission_perc": 0.02},
+        path, second,
         pair="btc", profiles=config.TRADING_PROFILES,
     )
 
     result = ca.handle_rollback_config(paths, "btc", None, RecordingRunner())
 
     assert result.ok is True
-    assert result.detail["status"] == "stopped"
-    assert result.detail["field_status"] == {
-        "commission_perc": "pending_new_session",
-    }
+    assert result.detail["status"] == "saved"
+    assert set(result.detail["modes"]) == set(first)
+    assert not ({"applied", "pending_new_session", "waiting", "field_status"}
+                & set(result.detail))
 
 
 def test_rollback_rejects_invalid_previous_without_changing_overlay(tmp_path):
