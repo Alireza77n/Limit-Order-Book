@@ -659,11 +659,16 @@ docker compose -f deploy/docker-compose.production.yml \
 docker compose up -d --build --force-recreate --wait
 ```
 
-The root agent's fresh full-suite result for this final implementation was
-`502 passed`; this live refresh intentionally did not rerun the full suite.
-Malformed desired-state Dashboard behavior, rollback without restart, and
-intentional lifecycle-command failure remained automated-test-only checks so
-the live state and healthy services were not deliberately corrupted.
+The root agent reran the full suite after the live refresh and all final
+follow-up commits: `522 passed, 2 warnings` in 119.62 seconds with
+`LOB_TELEGRAM_DISABLED=0`. Because deterministic tests intentionally replace
+runtime snapshot fixtures, both Demo workers were then restarted without a
+session rotation. They republished current-session, default-digest snapshots
+for `demo-20260809T171345Z-eb6fd4c7ee4d` with empty pending values and no
+overlays. Malformed desired-state Dashboard behavior, rollback without
+restart, and intentional lifecycle-command failure remained automated-test-
+only checks so the live state and healthy services were not deliberately
+corrupted.
 
 The effective and actual Admin container configuration passed these
 isolation assertions:
