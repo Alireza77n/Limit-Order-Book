@@ -59,14 +59,6 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "commission_perc": FieldDefinition(float, 0, 1, ApplicationMode.NEW_SESSION, "Simulated fee fraction for a new Demo session."),
 })
 
-# Deprecated compatibility view for Admin. Remove when Task 5 migrates Admin
-# from the old tuple metadata contract to FIELD_DEFINITIONS.
-FIELD_SPECS: Mapping[str, tuple] = MappingProxyType({
-    key: ((definition.value_type,) if definition.value_type is bool else
-          (definition.value_type, definition.minimum, definition.maximum))
-    for key, definition in FIELD_DEFINITIONS.items()
-})
-
 ALLOWED_FIELDS = frozenset(FIELD_DEFINITIONS)
 
 # Old overlays may contain these fields from prior Demo releases. They are
@@ -148,6 +140,7 @@ def validate_overrides(
             raise OverlayValidationError(f"unknown field: {key}")
 
         validated[key] = _validate_field(key, raw_value, schema[key])
+    _validate_desired_values(validated)
     return validated
 
 
@@ -198,6 +191,199 @@ def desired_digest(values: Mapping[str, Any]) -> str:
     """Return a stable digest for a resolved desired configuration."""
     encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
     return hashlib.sha256(encoded).hexdigest()
+
+
+CONFIG_STATUS_LABELS: Mapping[str, str] = MappingProxyType({
+    "applied": "Applied now",
+    "waiting": "Saved; waiting for running worker",
+    "pending_new_session": "Saved; applies next session",
+    "stopped": "Worker stopped; applies when started",
+    "stale": "Runtime status unknown/stale",
+    "failed": "Failed to apply",
+})
+
+
+def _snapshot_is_current_shape(
+    pair: str, snapshot: Any, current_session_id: Optional[str],
+) -> bool:
+    if not isinstance(snapshot, Mapping):
+        return False
+    if snapshot.get("schema_version") != 1 or snapshot.get("pair") != pair:
+        return False
+    if snapshot.get("status") not in {"applied", "error"}:
+        return False
+    if not isinstance(snapshot.get("applied"), Mapping):
+        return False
+    if not isinstance(snapshot.get("pending_new_session"), Mapping):
+        return False
+    if not isinstance(snapshot.get("desired_digest"), str):
+        return False
+    if not isinstance(snapshot.get("session_id"), str):
+        return False
+    if (
+        current_session_id is not None
+        and snapshot.get("session_id") != str(current_session_id)
+    ):
+        return False
+    updated_at = snapshot.get("updated_at")
+    if not isinstance(updated_at, str):
+        return False
+    try:
+        datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    error = snapshot.get("error")
+    return error is None or isinstance(error, str)
+
+
+def config_status(
+    pair: str,
+    desired: Mapping[str, Any],
+    snapshot: Optional[Mapping[str, Any]],
+    worker_running: bool,
+    *,
+    current_session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Describe desired versus worker-owned runtime state without Flask I/O.
+
+    The result is JSON-safe and intentionally contains both machine states and
+    operator labels so Admin and Dashboard can render the same truth. A
+    missing, old-schema, malformed, or wrong-pair snapshot is never used as
+    evidence that desired values are applied.
+    """
+    desired_values = dict(desired)
+    base_fields = {
+        field: {
+            "desired": value,
+            "applied": None,
+            "mode": FIELD_DEFINITIONS[field].mode.value,
+            "state": "stale",
+            "label": CONFIG_STATUS_LABELS["stale"],
+        }
+        for field, value in desired_values.items()
+        if field in FIELD_DEFINITIONS
+    }
+    desired_config_digest = desired_digest(desired_values)
+
+    if not _snapshot_is_current_shape(pair, snapshot, current_session_id):
+        return {
+            "pair": pair,
+            "state": "stale",
+            "label": CONFIG_STATUS_LABELS["stale"],
+            "worker_running": bool(worker_running),
+            "session_id": None,
+            "desired_digest": desired_config_digest,
+            "snapshot_digest": None,
+            "applied": {},
+            "pending_new_session": {},
+            "error": None,
+            "fields": base_fields,
+        }
+
+    assert snapshot is not None  # narrowed by _snapshot_is_current_shape
+    applied = dict(snapshot["applied"])
+    pending = dict(snapshot["pending_new_session"])
+    snapshot_digest = snapshot["desired_digest"]
+    digest_matches = snapshot_digest == desired_config_digest
+
+    if not set(desired_values) <= set(applied):
+        return config_status(
+            pair, desired_values, None, worker_running,
+            current_session_id=current_session_id,
+        )
+
+    effective_pending = {
+        field: desired_values[field]
+        for field in desired_values
+        if field in FIELD_DEFINITIONS
+        and FIELD_DEFINITIONS[field].mode is ApplicationMode.NEW_SESSION
+        and desired_values[field] != applied[field]
+    }
+
+    if snapshot["status"] == "error" and digest_matches:
+        failed_fields = {
+            field: dict(row, applied=applied.get(field), state="failed",
+                        label=CONFIG_STATUS_LABELS["failed"])
+            for field, row in base_fields.items()
+        }
+        return {
+            "pair": pair,
+            "state": "failed",
+            "label": CONFIG_STATUS_LABELS["failed"],
+            "worker_running": bool(worker_running),
+            "session_id": snapshot["session_id"],
+            "desired_digest": desired_config_digest,
+            "snapshot_digest": snapshot_digest,
+            "applied": applied,
+            "pending_new_session": effective_pending,
+            "error": snapshot.get("error"),
+            "fields": failed_fields,
+        }
+
+    if digest_matches and snapshot["status"] == "applied":
+        hot_mismatches = {
+            field for field in desired_values
+            if field in FIELD_DEFINITIONS
+            and FIELD_DEFINITIONS[field].mode is ApplicationMode.HOT
+            and desired_values[field] != applied[field]
+        }
+        if pending != effective_pending or hot_mismatches:
+            return config_status(
+                pair, desired_values, None, worker_running,
+                current_session_id=current_session_id,
+            )
+
+    fields: Dict[str, Dict[str, Any]] = {}
+    for field, row in base_fields.items():
+        applied_value = applied[field]
+        definition = FIELD_DEFINITIONS[field]
+        if not worker_running:
+            state = (
+                "pending_new_session"
+                if definition.mode is ApplicationMode.NEW_SESSION
+                and applied_value != row["desired"]
+                else "stopped"
+            )
+        elif definition.mode is ApplicationMode.NEW_SESSION:
+            if applied_value != row["desired"]:
+                state = "pending_new_session"
+            else:
+                state = "applied" if digest_matches else "waiting"
+        elif not digest_matches:
+            state = "waiting"
+        elif applied_value == row["desired"]:
+            state = "applied"
+        else:
+            state = "waiting"
+        fields[field] = dict(
+            row,
+            applied=applied_value,
+            state=state,
+            label=CONFIG_STATUS_LABELS[state],
+        )
+
+    field_states = {row["state"] for row in fields.values()}
+    if not worker_running:
+        overall_state = "stopped"
+    elif "waiting" in field_states:
+        overall_state = "waiting"
+    elif "pending_new_session" in field_states:
+        overall_state = "pending_new_session"
+    else:
+        overall_state = "applied"
+    return {
+        "pair": pair,
+        "state": overall_state,
+        "label": CONFIG_STATUS_LABELS[overall_state],
+        "worker_running": bool(worker_running),
+        "session_id": snapshot["session_id"],
+        "desired_digest": desired_config_digest,
+        "snapshot_digest": snapshot_digest,
+        "applied": applied,
+        "pending_new_session": effective_pending,
+        "error": snapshot.get("error"),
+        "fields": fields,
+    }
 
 
 def _atomic_write(path: Path, document: Dict[str, Any]) -> None:

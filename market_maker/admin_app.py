@@ -32,44 +32,22 @@ from werkzeug.security import check_password_hash
 from control_queue import ControlLock, OperationInProgress, await_result, submit_command
 import control_queue
 from demo_config import (
-    FIELD_SPECS,
+    OverlayLoadError,
     OverlayValidationError,
-    apply_overrides,
+    config_status,
+    editable_schema,
     has_previous,
-    load_overrides,
+    load_desired_config,
     overlay_path,
+    read_runtime_snapshot,
     validate_overrides,
 )
-from config import MMConfig, TRADING_PROFILES, demo_csv_path
+from config import TRADING_PROFILES, demo_csv_path
 from dashboard import activity_records, load_track
 
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
 PAIRS = ("btc", "usdt")
 PAIR_LOCK_SUFFIX = {"btc": "btcirt", "usdt": "usdtirt"}
-
-# One-line help text shown next to each editable Demo config field --
-# keys must exactly match demo_config.FIELD_SPECS.
-FIELD_HELP = {
-    "order_size": "Base-asset amount per order round.",
-    "inv_max": "Maximum inventory (base asset) the worker will hold.",
-    "inv_min": "Minimum inventory (base asset) the worker will hold.",
-    "demo_inv_initial": "Starting inventory when a new demo session begins.",
-    "cash_initial": "Starting cash (quote currency) when a new demo session begins.",
-    "commission_perc": "Simulated trading fee, as a fraction of notional (0-1).",
-    "cancel_after_minutes": "Cancel resting paper orders older than this many minutes.",
-    "depth_max": "Maximum order-book depth level the strategy will quote into.",
-    "time_step": "Seconds between quoting rounds.",
-    "max_rounds": "Stop the worker after this many rounds.",
-    "demo_level1_fast_fill_enabled": "Simulate near-instant fills at the top of book.",
-    "demo_level1_fill_delay_seconds": "Delay (seconds) before a level-1 fast fill is applied.",
-    "demo_level1_fill_fraction": "Fraction of the order filled per level-1 fast-fill tick.",
-    "demo_queue_enabled": "Simulate queue position instead of instant fills.",
-    "no_quote_alert_rounds": "Consecutive no-quote rounds before an alert fires.",
-    "no_quote_alert_seconds": "Elapsed no-quote seconds before an alert fires.",
-    "no_quote_alert_cooldown_seconds": "Minimum seconds between repeated no-quote alerts.",
-    "no_quote_recovery_alert": "Send an alert when quoting recovers after a no-quote episode.",
-    "algo1_diagnostics_enabled": "Log extra Algorithm 1 decision diagnostics.",
-}
 
 
 def create_app(config: Optional[dict] = None) -> Flask:
@@ -507,35 +485,86 @@ def _recover_diagnostics(app: Flask):
 
 
 def _effective_config_values(pair: str, path) -> dict:
-    """Current effective value of every editable field for `pair`: the
-    profile's own defaults (config.TRADING_PROFILES / MMConfig), with the
-    Demo admin overlay layered on top if one exists -- exactly what a real
-    demo worker would run with (see run.py:make_cfg). Unlike
-    demo_config.load_overrides(), this never comes back sparse/blank for
-    fields nobody has overridden yet."""
-    cfg = MMConfig(session=0, mode="demo", **TRADING_PROFILES[pair])
-    overrides = load_overrides(path)
-    if overrides:
-        apply_overrides(cfg, overrides)
-    return {key: getattr(cfg, key) for key in FIELD_SPECS}
+    """Resolve the selected pair through the worker's desired-config seam."""
+    return load_desired_config(pair, Path(path).parent, TRADING_PROFILES)
 
 
-def _config_page_context(app: Flask, pair: str, path, *, error=None, success=None, attempted=None) -> dict:
-    values = _effective_config_values(pair, path)
+def _serialized_schema(pair: str) -> dict:
+    return {
+        field: {
+            "type": definition.value_type.__name__,
+            "minimum": definition.minimum,
+            "maximum": definition.maximum,
+            "mode": definition.mode.value,
+            "help_text": definition.help_text,
+        }
+        for field, definition in editable_schema(pair, TRADING_PROFILES).items()
+    }
+
+
+def _config_view(app: Flask, pair: str, path) -> dict:
+    desired = _effective_config_values(pair, path)
+    runtime_error = None
+    try:
+        snapshot = read_runtime_snapshot(app.config["STATE_DIR"], pair)
+    except OverlayLoadError as exc:
+        snapshot = None
+        runtime_error = str(exc)
+    status = config_status(
+        pair,
+        desired,
+        snapshot,
+        _worker_running(app, pair),
+        current_session_id=_session_id(app),
+    )
+    return {
+        "pair": pair,
+        "desired": desired,
+        "applied": status["applied"],
+        "pending_new_session": status["pending_new_session"],
+        "status": status,
+        "runtime_error": runtime_error,
+        "snapshot": snapshot,
+    }
+
+
+def _config_page_context(
+    app: Flask, pair: str, path, *, error=None, success=None, attempted=None,
+    command_error=None,
+) -> dict:
+    view = _config_view(app, pair, path)
+    if command_error:
+        view["status"] = {
+            **view["status"],
+            "state": "failed",
+            "label": "Failed to apply",
+            "error": command_error,
+            "fields": {
+                field: {
+                    **row,
+                    "state": "failed",
+                    "label": "Failed to apply",
+                }
+                for field, row in view["status"]["fields"].items()
+            },
+        }
+    values = view["desired"]
     if attempted:
         values = dict(values, **attempted)
     return {
-        "pair": pair,
-        "overrides": values,
+        **view,
+        "values": values,
         "has_previous": has_previous(path),
-        "field_order": sorted(FIELD_SPECS),
-        "FIELD_SPECS": FIELD_SPECS,
-        "field_help": FIELD_HELP,
+        "schema": editable_schema(pair, TRADING_PROFILES),
         "csrf_token": get_csrf_token(),
         "session_id": _session_id(app),
         "error": error,
         "success": success,
     }
+
+
+def _command_failure_message(result: dict) -> str:
+    return json.dumps(result, sort_keys=True, default=str)
 
 
 def _workers_html_response(app: Flask, result):
@@ -586,15 +615,25 @@ def _register_routes(app: Flask) -> None:
             return ("unknown pair", 404)
         path = overlay_path(app.config["STATE_DIR"], pair)
         if request.method == "GET":
-            if _wants_html():
-                return render_template(
-                    "admin/config.html", **_config_page_context(app, pair, path),
-                )
+            try:
+                if _wants_html():
+                    return render_template(
+                        "admin/config.html", **_config_page_context(app, pair, path),
+                    )
+                view = _config_view(app, pair, path)
+            except (OverlayLoadError, OverlayValidationError, KeyError, OSError) as exc:
+                if _wants_html():
+                    return _error_page(500, str(exc))
+                return jsonify({"error": str(exc)}), 500
             return jsonify({
                 "pair": pair,
-                "overrides": load_overrides(path),
+                "desired": view["desired"],
+                "applied": view["applied"],
+                "pending_new_session": view["pending_new_session"],
+                "status": view["status"],
+                "runtime_error": view["runtime_error"],
                 "has_previous": has_previous(path),
-                "fields": sorted(FIELD_SPECS),
+                "schema": _serialized_schema(pair),
                 "csrf_token": get_csrf_token(),
             })
         return _admin_config_post(app, pair, path)
@@ -934,22 +973,61 @@ def _admin_config_post(app: Flask, pair: str, path):
                     "admin/config.html", **_config_page_context(app, pair, path, error=str(exc)),
                 ), 409
             return (str(exc), 409)
+        if not result.get("ok"):
+            message = _command_failure_message(result)
+            if wants_html:
+                return render_template(
+                    "admin/config.html",
+                    **_config_page_context(
+                        app, pair, path, error=message, command_error=message,
+                    ),
+                ), 502
+            return jsonify(result), 502
         if wants_html:
             return render_template(
                 "admin/config.html",
-                **_config_page_context(app, pair, path, success="Reverted to previous configuration."),
+                **_config_page_context(app, pair, path, success="Previous configuration saved."),
             )
         return jsonify(result)
 
-    raw = {k: v for k, v in request.form.items() if k in FIELD_SPECS}
-    overrides = {}
-    for key, value in raw.items():
-        expected_type = FIELD_SPECS[key][0]
+    if request.form.get("action"):
+        message = "unknown configuration action"
+        if wants_html:
+            return render_template(
+                "admin/config.html", **_config_page_context(app, pair, path, error=message),
+            ), 400
+        return (message, 400)
+
+    schema = editable_schema(pair, TRADING_PROFILES)
+    control_fields = {"csrf_token", "action"}
+    unknown_fields = sorted(set(request.form) - set(schema) - control_fields)
+    if unknown_fields:
+        message = f"unknown field: {unknown_fields[0]}"
+        if wants_html:
+            return render_template(
+                "admin/config.html", **_config_page_context(app, pair, path, error=message),
+            ), 400
+        return (message, 400)
+
+    try:
+        desired = load_desired_config(pair, app.config["STATE_DIR"], TRADING_PROFILES)
+    except (OverlayLoadError, OverlayValidationError, KeyError, OSError) as exc:
+        if wants_html:
+            return _error_page(400, str(exc))
+        return (str(exc), 400)
+
+    submitted = {}
+    for key, definition in schema.items():
+        if key not in request.form:
+            continue
+        values = request.form.getlist(key)
+        value = values[-1]
+        expected_type = definition.value_type
         if expected_type is bool:
-            overrides[key] = value in ("true", "on", "1", "True")
+            submitted[key] = any(item in ("true", "on", "1", "True") for item in values)
             continue
         try:
-            overrides[key] = float(value)
+            submitted[key] = int(value) if expected_type is int else float(value)
         except ValueError:
             message = f"invalid value for {key}"
             if wants_html:
@@ -957,15 +1035,16 @@ def _admin_config_post(app: Flask, pair: str, path):
                     "admin/config.html", **_config_page_context(app, pair, path, error=message),
                 ), 400
             return (message, 400)
+    desired.update(submitted)
     try:
-        validated = validate_overrides(overrides)
+        validated = validate_overrides(desired, pair=pair, profiles=TRADING_PROFILES)
     except OverlayValidationError as exc:
         # Rejected before enqueueing -- nothing submitted. Re-render with the
         # attempted (unsaved) values so the admin doesn't lose their edits.
         if wants_html:
             return render_template(
                 "admin/config.html",
-                **_config_page_context(app, pair, path, error=str(exc), attempted=overrides),
+                **_config_page_context(app, pair, path, error=str(exc), attempted=submitted),
             ), 400
         return (str(exc), 400)
 
@@ -977,10 +1056,23 @@ def _admin_config_post(app: Flask, pair: str, path):
                 "admin/config.html", **_config_page_context(app, pair, path, error=str(exc)),
             ), 409
         return (str(exc), 409)
+    if not result.get("ok"):
+        message = _command_failure_message(result)
+        if wants_html:
+            return render_template(
+                "admin/config.html",
+                **_config_page_context(
+                    app, pair, path, error=message, attempted=validated,
+                    command_error=message,
+                ),
+            ), 502
+        return jsonify(result), 502
     if wants_html:
         return render_template(
             "admin/config.html",
-            **_config_page_context(app, pair, path, success="Configuration applied."),
+            **_config_page_context(
+                app, pair, path, success="Configuration saved.", attempted=validated,
+            ),
         )
     return jsonify(result)
 

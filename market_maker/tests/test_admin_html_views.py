@@ -22,8 +22,22 @@ from werkzeug.security import generate_password_hash
 import admin_app as admin_app_module
 from admin_app import create_app
 from config import TRADING_PROFILES, demo_csv_path
+from demo_config import desired_digest, load_desired_config, write_runtime_snapshot
 
 HTML = {"Accept": "text/html"}
+
+EXPECTED_CONFIG_FIELDS = {
+    "order_size", "inv_max", "inv_min", "cancel_after_minutes",
+    "depth_max", "time_step", "demo_inv_initial", "cash_initial",
+    "commission_perc",
+}
+REMOVED_CONFIG_FIELDS = {
+    "max_rounds", "demo_level1_fast_fill_enabled",
+    "demo_level1_fill_delay_seconds", "demo_level1_fill_fraction",
+    "demo_queue_enabled", "no_quote_alert_rounds", "no_quote_alert_seconds",
+    "no_quote_alert_cooldown_seconds", "no_quote_recovery_alert",
+    "algo1_diagnostics_enabled",
+}
 
 
 @pytest.fixture
@@ -166,13 +180,16 @@ def test_worker_start_json_unchanged_when_not_html(client, app, fake_agent):
 
 # ---------- Config pages ----------
 
-def test_config_page_renders_known_fields(client):
+@pytest.mark.parametrize("pair", ["btc", "usdt"])
+def test_config_page_renders_exact_pair_schema(client, pair):
     _login(client)
-    response = client.get("/admin/config/btc", headers=HTML)
+    response = client.get(f"/admin/config/{pair}", headers=HTML)
     assert response.status_code == 200
     body = _html(response)
-    for field in ("order_size", "commission_perc", "demo_level1_fast_fill_enabled"):
+    for field in EXPECTED_CONFIG_FIELDS:
         assert f'name="{field}"' in body
+    for field in REMOVED_CONFIG_FIELDS:
+        assert f'name="{field}"' not in body
     assert 'name="csrf_token"' in body
 
 
@@ -197,7 +214,7 @@ def test_config_page_renders_zero_defaults_instead_of_blank(client):
     response = client.get("/admin/config/btc", headers=HTML)
     body = _html(response)
 
-    for field in ("demo_inv_initial", "demo_level1_fill_delay_seconds", "inv_min"):
+    for field in ("demo_inv_initial", "inv_min"):
         match = re.search(rf'name="{field}"[^>]*value="([^"]*)"', body)
         assert match and match.group(1) != ""
         assert float(match.group(1)) == pytest.approx(0.0)
@@ -208,7 +225,9 @@ def test_config_page_layers_override_on_top_of_profile_default(client, app):
     field still shows its profile default, not blank."""
     from demo_config import overlay_path, write_overrides
     path = overlay_path(app.config["STATE_DIR"], "btc")
-    write_overrides(path, {"order_size": 0.0002})
+    write_overrides(
+        path, {"order_size": 0.0002}, pair="btc", profiles=TRADING_PROFILES,
+    )
     _login(client)
     response = client.get("/admin/config/btc", headers=HTML)
     body = _html(response)
@@ -225,10 +244,12 @@ def test_config_apply_html_success_rerenders_with_success_message(client, app, f
     }, headers=HTML)
     assert response.status_code == 200
     body = _html(response)
-    assert "applied" in body.lower() or "success" in body.lower()
+    assert "Configuration saved." in body
+    assert "flash-success" in body
     written = _commands_written(app)
     assert written[0]["action"] == "apply_config"
-    assert written[0]["payload"]["overrides"] == {"order_size": 3.5}
+    assert set(written[0]["payload"]["overrides"]) == EXPECTED_CONFIG_FIELDS
+    assert written[0]["payload"]["overrides"]["order_size"] == 3.5
 
 
 def test_config_apply_html_validation_error_rerenders_with_error(client, app, fake_agent):
@@ -241,6 +262,70 @@ def test_config_apply_html_validation_error_rerenders_with_error(client, app, fa
     body = _html(response)
     assert "commission_perc" in body
     assert _commands_written(app) == []
+
+
+def test_config_page_shows_modes_statuses_and_separate_json_views(
+    client, app, monkeypatch,
+):
+    state_dir = Path(app.config["STATE_DIR"])
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    snapshot = {
+        "schema_version": 1,
+        "pair": "btc",
+        "session_id": "session-1",
+        "applied": dict(desired),
+        "pending_new_session": {},
+        "desired_digest": desired_digest(desired),
+        "status": "applied",
+        "error": None,
+        "updated_at": "2026-08-09T12:00:00+00:00",
+    }
+    write_runtime_snapshot(state_dir, "btc", snapshot)
+    monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
+    _login(client)
+
+    body = _html(client.get("/admin/config/btc", headers=HTML))
+
+    assert "Desired configuration" in body
+    assert "Applied runtime configuration" in body
+    assert "Applied now" in body
+    assert 'data-mode="hot"' in body
+    assert 'data-mode="new_session"' in body
+
+
+def test_failed_config_command_reports_agent_error_without_success_flash(
+    client, app, monkeypatch,
+):
+    def _failed_result(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {
+            "command_id": command_id,
+            "ok": False,
+            "detail": {
+                "error": "overlay write failed: disk full",
+                "pair": "btc",
+                "phase": "persist",
+            },
+            "finished_at": "now",
+        }
+
+    monkeypatch.setattr(admin_app_module, "await_result", _failed_result)
+    token = _login(client)
+
+    response = client.post(
+        "/admin/config/btc",
+        data={"order_size": "3.5", "csrf_token": token},
+        headers=HTML,
+    )
+
+    assert response.status_code >= 400
+    body = _html(response)
+    assert "overlay write failed: disk full" in body
+    assert "persist" in body
+    assert 'data-config-status="failed"' in body
+    assert "Failed to apply" in body
+    assert "Configuration applied" not in body
+    assert "Configuration saved" not in body
+    assert "flash-success" not in body
 
 
 # ---------- Orders: server-side filtering the template relies on ----------

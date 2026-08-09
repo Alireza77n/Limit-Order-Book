@@ -15,17 +15,26 @@
     {% if success %}
       <div class="flash flash-success">{{ success }}</div>
     {% endif %}
+    {% if runtime_error %}
+      <div class="flash flash-error">Runtime snapshot unavailable: {{ runtime_error }}</div>
+    {% endif %}
+
+    <p>
+      Runtime status:
+      <span class="status-badge {% if status.state in ('failed', 'stale') %}status-warning{% elif status.state == 'applied' %}status-running{% else %}status-stopped{% endif %}"
+            data-config-status="{{ status.state }}">{{ status.label }}</span>
+    </p>
 
     <form method="post" class="config-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
       <div class="grid grid-2">
-        {% for field_name in field_order %}
-          {% set spec = FIELD_SPECS[field_name] %}
-          {% set current_value = overrides.get(field_name) %}
-          {% set field_type = spec[0] %}
-          {% set min_val = spec[1] if spec|length > 1 else None %}
-          {% set max_val = spec[2] if spec|length > 2 else None %}
+        {% for field_name, definition in schema.items() %}
+          {% set current_value = values.get(field_name) %}
+          {% set field_type = definition.value_type %}
+          {% set min_val = definition.minimum %}
+          {% set max_val = definition.maximum %}
+          {% set field_status = status.fields[field_name] %}
           <div class="form-group">
             <label for="{{ field_name }}" class="form-label">
               {{ field_name.replace('_', ' ').title() }}
@@ -35,6 +44,13 @@
                 </span>
               {% endif %}
             </label>
+            <div class="mb-sm">
+              <span class="status-badge" data-mode="{{ definition.mode.value }}">
+                {{ definition.mode.value.replace('_', ' ').title() }}
+              </span>
+              <span class="status-badge {% if field_status.state in ('failed', 'stale') %}status-warning{% elif field_status.state == 'applied' %}status-running{% else %}status-stopped{% endif %}"
+                    data-field-status="{{ field_status.state }}">{{ field_status.label }}</span>
+            </div>
             {% if field_type.__name__ == 'bool' %}
               <div class="form-check">
                 <input type="checkbox" id="{{ field_name }}" name="{{ field_name }}" class="form-check-input" value="true" {% if current_value %}checked{% endif %}>
@@ -46,7 +62,7 @@
             {% else %}
               <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value if current_value is not none else '' }}" step="any" {% if min_val is not none %}min="{{ min_val }}"{% endif %} {% if max_val is not none %}max="{{ max_val }}"{% endif %}>
             {% endif %}
-            <div class="form-help">{{ field_help.get(field_name, '') }}</div>
+            <div class="form-help">{{ definition.help_text }}</div>
           </div>
         {% endfor %}
       </div>
@@ -63,10 +79,23 @@
 
 <div class="card">
   <div class="card-header">
-    <h2>Current Effective Configuration (JSON)</h2>
+    <h2>Desired configuration (JSON)</h2>
   </div>
   <div class="card-body">
-    <pre class="mono" style="white-space: pre-wrap; background: var(--color-bg); padding: var(--spacing-md); border-radius: var(--radius-md);">{{ overrides|tojson(indent=2) }}</pre>
+    <pre class="mono" style="white-space: pre-wrap; background: var(--color-bg); padding: var(--spacing-md); border-radius: var(--radius-md);">{{ desired|tojson(indent=2) }}</pre>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Applied runtime configuration (JSON)</h2>
+  </div>
+  <div class="card-body">
+    <pre class="mono" style="white-space: pre-wrap; background: var(--color-bg); padding: var(--spacing-md); border-radius: var(--radius-md);">{{ applied|tojson(indent=2) }}</pre>
+    {% if pending_new_session %}
+      <h3 class="mt-md">Pending new session</h3>
+      <pre class="mono" style="white-space: pre-wrap; background: var(--color-bg); padding: var(--spacing-md); border-radius: var(--radius-md);">{{ pending_new_session|tojson(indent=2) }}</pre>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
