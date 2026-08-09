@@ -137,6 +137,7 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
             ledger = PaperLedger.load(cfg.demo_state_path)
             if ledger.session_id != str(cfg.session) or ledger.symbol != cfg.pair.upper():
                 raise RuntimeError("Demo Mode state file does not match configured session and symbol")
+            cfg.commission_perc = ledger.commission_perc
             ledger.hot_terminal_order_limit = cfg.demo_hot_terminal_order_limit
             ledger.archive_max_bytes = cfg.demo_archive_max_bytes
             # Apply the CURRENT fill-realism config to a resumed ledger too,
@@ -150,7 +151,7 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
             ledger = PaperLedger(
                 session_id=str(cfg.session),
                 symbol=cfg.pair,
-                initial_inventory=cfg.inv_initial,
+                initial_inventory=cfg.demo_inv_initial,
                 initial_cash=cfg.cash_initial,
                 commission_perc=cfg.commission_perc,
                 valuation_price=0.0,

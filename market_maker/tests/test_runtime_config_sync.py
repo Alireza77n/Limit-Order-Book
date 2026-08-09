@@ -51,6 +51,15 @@ def build_runtime_bot(state_dir, monkeypatch, *, session="runtime-session"):
     return run.make_bot(cfg, mode="demo")
 
 
+def make_runtime_bot(state_dir, monkeypatch, *, session="runtime-session"):
+    bot = build_runtime_bot(state_dir, monkeypatch, session=session)
+    with WorkerLease(
+        state_dir / ".worker_usdtirt.lock", identity="USDTIRT-demo"
+    ):
+        assert bot.config_sync.reload_at_round_boundary().ok
+    return bot
+
+
 @pytest.fixture
 def runtime_bot(tmp_path, monkeypatch):
     bot = build_runtime_bot(tmp_path, monkeypatch)
@@ -213,6 +222,43 @@ def test_runtime_snapshot_reports_applied_and_pending_values(runtime_bot):
     assert snapshot["session_id"] == str(bot.session)
     assert snapshot["pair"] == "usdt"
     assert snapshot["status"] == "applied"
+
+
+def test_same_session_restart_keeps_commission_pending(tmp_path, monkeypatch):
+    first = make_runtime_bot(tmp_path, monkeypatch, session="s1")
+    first.exchange.ledger._persist()
+    save_desired(tmp_path, commission_perc=0.02)
+
+    restarted = make_runtime_bot(tmp_path, monkeypatch, session="s1")
+
+    assert restarted.cfg.commission_perc == 0.001
+    assert restarted.exchange.ledger.commission_perc == 0.001
+    assert demo_config.read_runtime_snapshot(tmp_path, "usdt")[
+        "pending_new_session"
+    ]["commission_perc"] == 0.02
+
+
+def test_new_session_consumes_pending_inventory_cash_and_commission(
+    tmp_path, monkeypatch
+):
+    save_desired(
+        tmp_path,
+        demo_inv_initial=7,
+        cash_initial=900,
+        commission_perc=0.02,
+    )
+
+    bot = make_runtime_bot(tmp_path, monkeypatch, session="s2")
+
+    ledger = bot.exchange.ledger
+    assert (ledger.inventory, ledger.cash, ledger.commission_perc) == (
+        7,
+        900,
+        0.02,
+    )
+    assert demo_config.read_runtime_snapshot(tmp_path, "usdt")[
+        "pending_new_session"
+    ] == {}
 
 
 def test_runtime_snapshot_helpers_atomically_round_trip(tmp_path):
