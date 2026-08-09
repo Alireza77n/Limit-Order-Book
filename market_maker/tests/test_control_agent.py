@@ -262,6 +262,39 @@ def test_cancel_orders_stops_and_restarts_when_running(tmp_path):
     ]
 
 
+def test_cancel_orders_aborts_restart_when_stop_fails(tmp_path, monkeypatch):
+    paths = make_paths(tmp_path)
+    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: {"btc": True})
+    runner = RecordingRunner(returncode=1)
+
+    result = ca.handle_cancel_orders(paths, "btc", None, runner)
+
+    assert result.ok is False
+    assert result.detail["phase"] == "stop"
+    assert result.detail["now_running"] is True
+    assert len(runner.calls) == 1
+    assert runner.calls[0][0][-2:] == ["stop", "btc-demo"]
+
+
+def test_cancel_orders_reports_start_failure_and_final_state(tmp_path, monkeypatch):
+    paths = make_paths(tmp_path)
+    statuses = iter(({"btc": True}, {"btc": False}))
+    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: next(statuses))
+    calls = 0
+
+    def fail_start(argv, **kwargs):
+        nonlocal calls
+        calls += 1
+        return FakeCompleted(0 if calls == 1 else 1)
+
+    result = ca.handle_cancel_orders(paths, "btc", None, fail_start)
+
+    assert result.ok is False
+    assert result.detail["phase"] == "start"
+    assert result.detail["now_running"] is False
+    assert result.detail["start"]["returncode"] == 1
+
+
 def test_new_session_aborts_if_a_running_worker_cannot_stop(tmp_path):
     import fcntl
 
@@ -425,6 +458,74 @@ def test_rollback_config_restores_previous(tmp_path):
     assert load_overrides(
         path, pair="btc", profiles=config.TRADING_PROFILES
     ) == {"order_size": 1.0}
+    assert runner.calls == []
+    assert result.detail["restored"] == {"order_size": 1.0}
+    assert result.detail["modes"] == {"order_size": "hot"}
+    assert result.detail["status"] == "stopped"
+    assert result.detail["worker_running"] is False
+    assert result.detail["desired_digest"] == desired_digest(
+        load_desired_config("btc", paths.state_dir, config.TRADING_PROFILES)
+    )
+
+
+def test_rollback_running_worker_reports_hot_reload_without_restart(
+    tmp_path, monkeypatch,
+):
+    paths = make_paths(tmp_path)
+    path = overlay_path(paths.state_dir, "btc")
+    write_overrides(
+        path, {"order_size": 1}, pair="btc", profiles=config.TRADING_PROFILES,
+    )
+    write_overrides(
+        path, {"order_size": 2}, pair="btc", profiles=config.TRADING_PROFILES,
+    )
+    monkeypatch.setattr(ca, "worker_statuses", lambda *_args: {"btc": True})
+    runner = RecordingRunner()
+
+    result = ca.handle_rollback_config(paths, "btc", None, runner)
+
+    assert result.ok is True
+    assert result.detail["status"] == "waiting"
+    assert result.detail["worker_running"] is True
+    assert runner.calls == []
+
+
+def test_rollback_reports_new_session_values_as_pending(tmp_path):
+    paths = make_paths(tmp_path)
+    path = overlay_path(paths.state_dir, "btc")
+    write_overrides(
+        path, {"commission_perc": 0.01},
+        pair="btc", profiles=config.TRADING_PROFILES,
+    )
+    write_overrides(
+        path, {"commission_perc": 0.02},
+        pair="btc", profiles=config.TRADING_PROFILES,
+    )
+
+    result = ca.handle_rollback_config(paths, "btc", None, RecordingRunner())
+
+    assert result.ok is True
+    assert result.detail["status"] == "stopped"
+    assert result.detail["field_status"] == {
+        "commission_perc": "pending_new_session",
+    }
+
+
+def test_rollback_rejects_invalid_previous_without_changing_overlay(tmp_path):
+    paths = make_paths(tmp_path)
+    path = overlay_path(paths.state_dir, "btc")
+    previous_path = path.with_name(path.name + ".previous")
+    path.write_text('{"order_size": 2}')
+    previous_path.write_text('{"not_a_real_field": 1}')
+    before = path.read_bytes()
+    runner = RecordingRunner()
+
+    result = ca.handle_rollback_config(paths, "btc", None, runner)
+
+    assert result.ok is False
+    assert "unknown field" in result.detail["error"]
+    assert path.read_bytes() == before
+    assert runner.calls == []
 
 
 def test_create_backup_snapshots_expected_files_only(tmp_path):

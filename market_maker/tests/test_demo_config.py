@@ -201,6 +201,47 @@ def test_write_preserves_existing_overlay_only_after_strict_pair_validation(tmp_
     assert previous_path.read_text() == '{"order_size": 0.1}'
 
 
+def test_write_failure_preserves_live_and_previous_files_exactly(tmp_path, monkeypatch):
+    path = overlay_path(tmp_path, "btc")
+    previous_path = path.with_name(path.name + ".previous")
+    path.write_text('{ "order_size" : 1 }\n')
+    previous_path.write_text('{ "order_size" : 0.5 }\n')
+    before_live = path.read_bytes()
+    before_previous = previous_path.read_bytes()
+    real_atomic_write = demo_config._atomic_write
+    calls = 0
+
+    def fail_second_write(target, document):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("injected live-overlay failure")
+        return real_atomic_write(target, document)
+
+    monkeypatch.setattr(demo_config, "_atomic_write", fail_second_write)
+
+    with pytest.raises(OSError, match="injected live-overlay failure"):
+        write_overrides(
+            path, {"order_size": 2}, pair="btc", profiles=PROFILES,
+        )
+
+    assert path.read_bytes() == before_live
+    assert previous_path.read_bytes() == before_previous
+
+
+def test_pair_aware_rollback_rejects_invalid_previous_before_mutation(tmp_path):
+    path = overlay_path(tmp_path, "btc")
+    previous_path = path.with_name(path.name + ".previous")
+    path.write_text('{"order_size": 2}')
+    previous_path.write_text('{"not_a_real_field": 1}')
+    before = path.read_bytes()
+
+    with pytest.raises(OverlayValidationError, match="unknown field"):
+        rollback_overrides(path, pair="btc", profiles=PROFILES)
+
+    assert path.read_bytes() == before
+
+
 def test_desired_digest_is_stable_across_mapping_order():
     assert desired_digest({"order_size": 1.0, "depth_max": 2}) == desired_digest(
         {"depth_max": 2, "order_size": 1.0}

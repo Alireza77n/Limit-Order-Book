@@ -364,11 +364,46 @@ def handle_apply_config(paths, pair, payload, run_argv):
 
 def handle_rollback_config(paths, pair, payload, run_argv):
     try:
-        restored = rollback_overrides(overlay_path(paths.state_dir, pair))
-    except OverlayValidationError as exc:
+        worker_running = worker_statuses(paths, (pair,), run_argv)[pair]
+    except WorkerStatusError as exc:
+        return liveness_failure(exc)
+    try:
+        restored = rollback_overrides(
+            overlay_path(paths.state_dir, pair),
+            pair=pair,
+            profiles=TRADING_PROFILES,
+        )
+    except (OverlayLoadError, OverlayValidationError, OSError) as exc:
         return AgentResult(False, {"error": str(exc)})
-    restart = run_worker_command(paths, "restart_worker", pair, run_argv)
-    return AgentResult(restart.ok, {"restored": restored, "restart": restart.detail})
+    schema = editable_schema(pair, TRADING_PROFILES)
+    desired = {field: TRADING_PROFILES[pair][field] for field in schema}
+    desired.update(restored)
+    desired = validate_overrides(
+        desired, pair=pair, profiles=TRADING_PROFILES,
+    )
+    modes = {field: schema[field].mode.value for field in restored}
+    field_status = {
+        field: (
+            "pending_new_session"
+            if schema[field].mode.value == "new_session"
+            else "waiting" if worker_running else "stopped"
+        )
+        for field in restored
+    }
+    status = (
+        "stopped" if not worker_running
+        else "pending_new_session"
+        if "pending_new_session" in field_status.values()
+        else "waiting"
+    )
+    return AgentResult(True, {
+        "restored": restored,
+        "desired_digest": desired_digest(desired),
+        "modes": modes,
+        "status": status,
+        "field_status": field_status,
+        "worker_running": worker_running,
+    })
 
 
 def handle_new_session(paths, pair, payload, run_argv):
@@ -432,12 +467,39 @@ def handle_cancel_orders(paths, pair, payload, run_argv):
             "pair": pair, "was_running": False, "now_running": False,
             "note": "worker already stopped; nothing to cancel",
         })
-    stop = run_worker_command(paths, "stop_worker", pair, run_argv)
-    start = run_worker_command(paths, "start_worker", pair, run_argv)
-    return AgentResult(stop.ok and start.ok, {
-        "pair": pair, "was_running": True, "now_running": True,
+    stop = _lifecycle_command(paths, "stop_worker", pair, run_argv)
+    if not stop.ok:
+        try:
+            now_running = worker_statuses(paths, (pair,), run_argv)[pair]
+            status_error = None
+        except WorkerStatusError as exc:
+            now_running = None
+            status_error = str(exc)
+        detail = {
+            "phase": "stop", "pair": pair, "was_running": True,
+            "now_running": now_running, "stop": stop.detail,
+        }
+        if status_error is not None:
+            detail["status_error"] = status_error
+        return AgentResult(False, detail)
+
+    start = _lifecycle_command(paths, "start_worker", pair, run_argv)
+    try:
+        now_running = worker_statuses(paths, (pair,), run_argv)[pair]
+        status_error = None
+    except WorkerStatusError as exc:
+        now_running = None
+        status_error = str(exc)
+    ok = start.ok and now_running is True
+    detail = {
+        "pair": pair, "was_running": True, "now_running": now_running,
         "stop": stop.detail, "start": start.detail,
-    })
+    }
+    if not ok:
+        detail["phase"] = "start" if not start.ok else "verify"
+    if status_error is not None:
+        detail["status_error"] = status_error
+    return AgentResult(ok, detail)
 
 
 def handle_create_backup(paths, pair, payload, run_argv):

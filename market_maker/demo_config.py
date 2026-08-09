@@ -205,6 +205,7 @@ CONFIG_STATUS_LABELS: Mapping[str, str] = MappingProxyType({
 
 def _snapshot_is_current_shape(
     pair: str, snapshot: Any, current_session_id: Optional[str],
+    desired: Mapping[str, Any],
 ) -> bool:
     if not isinstance(snapshot, Mapping):
         return False
@@ -219,6 +220,23 @@ def _snapshot_is_current_shape(
     if not isinstance(snapshot.get("desired_digest"), str):
         return False
     if not isinstance(snapshot.get("session_id"), str):
+        return False
+    applied = snapshot["applied"]
+    pending = snapshot["pending_new_session"]
+    desired_fields = set(desired)
+    if set(applied) != desired_fields or not set(pending) <= desired_fields:
+        return False
+    try:
+        for field, value in applied.items():
+            definition = FIELD_DEFINITIONS[field]
+            _validate_field(field, value, definition)
+        _validate_desired_values(applied)
+        for field, value in pending.items():
+            definition = FIELD_DEFINITIONS[field]
+            if definition.mode is not ApplicationMode.NEW_SESSION:
+                return False
+            _validate_field(field, value, definition)
+    except (KeyError, OverlayValidationError, TypeError):
         return False
     if (
         current_session_id is not None
@@ -267,7 +285,9 @@ def config_status(
     }
     desired_config_digest = desired_digest(desired_values)
 
-    if not _snapshot_is_current_shape(pair, snapshot, current_session_id):
+    if not _snapshot_is_current_shape(
+        pair, snapshot, current_session_id, desired_values,
+    ):
         return {
             "pair": pair,
             "state": "stale",
@@ -389,13 +409,28 @@ def config_status(
 
 
 def _atomic_write(path: Path, document: Dict[str, Any]) -> None:
+    encoded = json.dumps(
+        document, sort_keys=True, indent=2, allow_nan=False,
+    ).encode()
+    _atomic_write_bytes(path, encoded)
+
+
+def _atomic_write_bytes(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    with tmp_path.open("w") as tmp_file:
-        json.dump(document, tmp_file, sort_keys=True, indent=2, allow_nan=False)
+    with tmp_path.open("wb") as tmp_file:
+        tmp_file.write(content)
         tmp_file.flush()
         os.fsync(tmp_file.fileno())
     os.replace(tmp_path, path)
+
+
+def _restore_file(path: Path, existed: bool, content: Optional[bytes]) -> None:
+    if existed:
+        assert content is not None
+        _atomic_write_bytes(path, content)
+    elif path.exists():
+        path.unlink()
 
 
 def read_runtime_snapshot(state_dir: PathLike, pair: str) -> Optional[Dict[str, Any]]:
@@ -439,9 +474,22 @@ def write_overrides(
 
     overlay_file = Path(path)
     previous_file = overlay_file.with_name(overlay_file.name + ".previous")
-    if overlay_file.exists():
-        _atomic_write(previous_file, load_overrides(overlay_file, pair=pair, profiles=profiles))
-    _atomic_write(overlay_file, validated)
+    overlay_existed = overlay_file.exists()
+    previous_existed = previous_file.exists()
+    overlay_content = overlay_file.read_bytes() if overlay_existed else None
+    previous_content = previous_file.read_bytes() if previous_existed else None
+    preserved = (
+        load_overrides(overlay_file, pair=pair, profiles=profiles)
+        if overlay_existed else None
+    )
+    try:
+        if preserved is not None:
+            _atomic_write(previous_file, preserved)
+        _atomic_write(overlay_file, validated)
+    except Exception:
+        _restore_file(overlay_file, overlay_existed, overlay_content)
+        _restore_file(previous_file, previous_existed, previous_content)
+        raise
     return validated
 
 
@@ -450,13 +498,23 @@ def has_previous(path: PathLike) -> bool:
     return overlay_file.with_name(overlay_file.name + ".previous").exists()
 
 
-def rollback_overrides(path: PathLike) -> Dict[str, Any]:
+def rollback_overrides(
+    path: PathLike, *, pair: Optional[str] = None,
+    profiles: Optional[Mapping[str, Mapping[str, Any]]] = None,
+) -> Dict[str, Any]:
     """Restore the overlay from its `.previous` slot."""
     overlay_file = Path(path)
     previous_file = overlay_file.with_name(overlay_file.name + ".previous")
     if not previous_file.exists():
         raise OverlayValidationError(f"no previous overlay to restore: {path}")
-    validated = load_overrides(previous_file)
+    validated = load_overrides(previous_file, pair=pair, profiles=profiles)
+    if pair is not None and profiles is not None:
+        desired = {
+            key: profiles[pair][key] for key in editable_schema(pair, profiles)
+        }
+        desired.update(validated)
+        validate_overrides(desired, pair=pair, profiles=profiles)
+        _validate_desired_values(desired)
     _atomic_write(overlay_file, validated)
     return validated
 

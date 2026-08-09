@@ -310,6 +310,24 @@ def test_config_status_rejects_inconsistent_snapshot_status_and_error(status, er
     assert view["error"] is None
 
 
+@pytest.mark.parametrize("updates", [
+    {"applied": {"order_size": "one"}},
+    {"applied": {"order_size": -1.0}},
+    {"applied": {"order_size": 1.0, "not_a_real_field": 1}},
+    {"pending_new_session": {"order_size": 1.0}},
+    {"pending_new_session": {"commission_perc": 2.0}},
+    {"pending_new_session": {"not_a_real_field": 1}},
+])
+def test_config_status_rejects_snapshot_values_outside_pair_schema(updates):
+    desired = {"order_size": 1.0}
+    snapshot = _runtime_snapshot(desired, **updates)
+
+    view = config_status("btc", desired, snapshot, True)
+
+    assert view["state"] == "stale"
+    assert view["applied"] == {}
+
+
 def test_config_status_rejects_snapshot_from_another_stack_session():
     desired = {"order_size": 1.0}
     snapshot = _runtime_snapshot(desired, session_id="old-session")
