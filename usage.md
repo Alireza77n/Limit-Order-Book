@@ -360,11 +360,12 @@ Run every command below from the repository root:
 cd /Users/parsaoryani/Documents/Limit-Order-Book
 ```
 
-Create `market_maker/.env` from the example so the Admin login is configured:
+`market_maker/.env` is optional for the Demo workers (for example, Telegram
+settings). The loopback-only local Admin service has a fixed local-development
+login of `admin/admin` and does not receive this secrets-bearing file:
 
 ```sh
 cp market_maker/.env.example market_maker/.env
-# The local example login is admin/admin; replace it outside local development.
 # Edit TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID if notifications are wanted.
 # Do not add a real Nobitex order token for a Demo-only deployment.
 ```
@@ -592,18 +593,15 @@ Compose command. `admin` (`market_maker/admin_app.py`) is a real service in
 the root `docker-compose.yml` now, the same way it already was in
 `deploy/docker-compose.production.yml` — no more "run it natively" split.
 
-**One-time setup (both local and server): admin credentials.** The admin
-container fails every login attempt until `ADMIN_USERNAME`/
-`ADMIN_PASSWORD_HASH` are set — see the `market_maker/.env.example` entries
-for the exact `generate_password_hash` one-liner. Locally, put them in
-`market_maker/.env` (already loaded by every service via `env_file`); on
-the server, they belong in `deploy/admin.env` (already the case, no change
-there).
+**Admin credentials.** Local Compose is loopback-only and deliberately uses
+`admin/admin`; it injects only Admin/path variables, never the trading secrets
+from `market_maker/.env`. Production credentials belong in the gitignored
+`deploy/admin.env` and must be unique; use the generation commands in
+`deploy/admin.env.example`.
 
 **Local:**
 
 ```sh
-cp market_maker/.env.example market_maker/.env   # first time only, then fill in ADMIN_USERNAME/ADMIN_PASSWORD_HASH
 docker compose up -d --build --wait
 ```
 
