@@ -254,9 +254,13 @@ def _session_id(app: Flask) -> Optional[str]:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text()).get("session_id")
+        document = json.loads(path.read_text())
     except (OSError, ValueError):
         return None
+    if not isinstance(document, dict):
+        return None
+    session_id = document.get("session_id")
+    return session_id if isinstance(session_id, str) and session_id.strip() else None
 
 
 def _recent_audit(app: Flask, limit: int = 20):
@@ -510,12 +514,13 @@ def _config_view(app: Flask, pair: str, path) -> dict:
     except OverlayLoadError as exc:
         snapshot = None
         runtime_error = str(exc)
+    current_session_id = _session_id(app)
     status = config_status(
         pair,
         desired,
-        snapshot,
+        snapshot if current_session_id is not None else None,
         _worker_running(app, pair),
-        current_session_id=_session_id(app),
+        current_session_id=current_session_id,
     )
     return {
         "pair": pair,

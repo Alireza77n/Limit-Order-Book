@@ -357,6 +357,7 @@ def test_config_json_separates_desired_applied_and_status(client, app, monkeypat
     state_dir = Path(app.config["STATE_DIR"])
     desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
     (state_dir / "runtime_config_btc.json").write_text(json.dumps(_runtime_snapshot(desired)))
+    (state_dir / "stack_session.json").write_text(json.dumps({"session_id": "session-1"}))
     monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
     _login(client)
 
@@ -366,6 +367,25 @@ def test_config_json_separates_desired_applied_and_status(client, app, monkeypat
     assert body["applied"] == desired
     assert body["status"]["state"] == "applied"
     assert set(body["schema"]) == EXPECTED_FIELDS
+
+
+@pytest.mark.parametrize("session_document", [None, {"session_id": ""}], ids=["missing", "invalid"])
+def test_config_json_treats_snapshot_as_stale_without_current_session_identity(
+    client, app, monkeypatch, session_document,
+):
+    state_dir = Path(app.config["STATE_DIR"])
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    (state_dir / "runtime_config_btc.json").write_text(json.dumps(_runtime_snapshot(desired)))
+    if session_document is not None:
+        (state_dir / "stack_session.json").write_text(json.dumps(session_document))
+    monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
+    _login(client)
+
+    body = client.get("/admin/config/btc").get_json()
+
+    assert body["status"]["state"] == "stale"
+    assert body["status"]["label"] == "Runtime status unknown/stale"
+    assert body["applied"] == {}
 
 
 def test_config_json_reports_malformed_runtime_snapshot_as_stale(client, app):

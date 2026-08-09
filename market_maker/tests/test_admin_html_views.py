@@ -281,6 +281,7 @@ def test_config_page_shows_modes_statuses_and_separate_json_views(
         "updated_at": "2026-08-09T12:00:00+00:00",
     }
     write_runtime_snapshot(state_dir, "btc", snapshot)
+    (state_dir / "stack_session.json").write_text(json.dumps({"session_id": "session-1"}))
     monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
     _login(client)
 
@@ -291,6 +292,36 @@ def test_config_page_shows_modes_statuses_and_separate_json_views(
     assert "Applied now" in body
     assert 'data-mode="hot"' in body
     assert 'data-mode="new_session"' in body
+
+
+@pytest.mark.parametrize("session_document", [None, {"session_id": ""}], ids=["missing", "invalid"])
+def test_config_page_shows_stale_without_current_session_identity(
+    client, app, monkeypatch, session_document,
+):
+    state_dir = Path(app.config["STATE_DIR"])
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    snapshot = {
+        "schema_version": 1,
+        "pair": "btc",
+        "session_id": "session-1",
+        "applied": dict(desired),
+        "pending_new_session": {},
+        "desired_digest": desired_digest(desired),
+        "status": "applied",
+        "error": None,
+        "updated_at": "2026-08-09T12:00:00+00:00",
+    }
+    write_runtime_snapshot(state_dir, "btc", snapshot)
+    if session_document is not None:
+        (state_dir / "stack_session.json").write_text(json.dumps(session_document))
+    monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
+    _login(client)
+
+    body = _html(client.get("/admin/config/btc", headers=HTML))
+
+    assert 'data-config-status="stale"' in body
+    assert "Runtime status unknown/stale" in body
+    assert "Applied now" not in body
 
 
 def test_config_page_shows_old_digest_worker_error_as_failed(
@@ -311,6 +342,7 @@ def test_config_page_shows_old_digest_worker_error_as_failed(
         "updated_at": "2026-08-09T12:00:00+00:00",
     }
     write_runtime_snapshot(state_dir, "btc", snapshot)
+    (state_dir / "stack_session.json").write_text(json.dumps({"session_id": "session-1"}))
     monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
     _login(client)
 
