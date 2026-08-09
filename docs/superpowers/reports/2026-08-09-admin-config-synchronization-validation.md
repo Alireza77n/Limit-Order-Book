@@ -207,7 +207,8 @@ The final ordered run used baseline session
 ### Reproducible local E2E commands
 
 The following is the repeatable command sequence used for the checks above.
-Credentials are read from the operator environment and never printed. Before
+Credentials are read interactively into protected temporary files and never
+placed in command arguments or exported environment variables. Before
 starting the agent, inspect `market_maker/results/control/commands/`; move each
 pre-existing command to a named temporary backup and record its exact path so
 it cannot execute during validation.
@@ -217,11 +218,46 @@ set -euo pipefail
 export LOB_ADMIN_URL=http://127.0.0.1:8051
 export LOB_DASHBOARD_URL=http://127.0.0.1:8050
 export LOB_STATE_DIR=market_maker/results
-read -r LOB_ADMIN_USER
-read -rs LOB_ADMIN_PASSWORD; printf '\n'
-export LOB_ADMIN_USER LOB_ADMIN_PASSWORD
 VALIDATION_BACKUP="$(mktemp -d)"
 export LOB_ADMIN_URL LOB_DASHBOARD_URL LOB_STATE_DIR VALIDATION_BACKUP
+umask 077
+AGENT_PID=''
+cleanup_validation() {
+  if [ -n "${AGENT_PID:-}" ] && kill -0 "$AGENT_PID" 2>/dev/null; then
+    kill "$AGENT_PID"
+    wait "$AGENT_PID" || true
+  fi
+  rm -f -- "$VALIDATION_BACKUP/admin-user" "$VALIDATION_BACKUP/admin-password"
+  python3 - <<'PY'
+import json, os, shutil, uuid
+from pathlib import Path
+state = Path(os.environ["LOB_STATE_DIR"])
+backup = Path(os.environ["VALIDATION_BACKUP"])
+for name in ("demo_config_btc.json", "demo_config_btc.json.previous",
+             "demo_config_usdt.json", "demo_config_usdt.json.previous"):
+    target, source = state / name, backup / name
+    if (backup / f"{name}.absent").exists():
+        target.unlink(missing_ok=True)
+    elif source.exists():
+        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        shutil.copy2(source, temporary)
+        os.replace(temporary, target)
+manifest = backup / "queued-command-paths.json"
+if manifest.exists():
+    for original_name in json.loads(manifest.read_text()):
+        original = Path(original_name)
+        quarantined = backup / "queued-commands" / original.name
+        if quarantined.exists() and not original.exists():
+            os.replace(quarantined, original)
+PY
+}
+trap cleanup_validation EXIT INT TERM
+
+read -r -p 'Admin username: ' LOB_ADMIN_USER
+read -rs -p 'Admin password: ' LOB_ADMIN_PASSWORD; printf '\n'
+printf '%s' "$LOB_ADMIN_USER" > "$VALIDATION_BACKUP/admin-user"
+printf '%s' "$LOB_ADMIN_PASSWORD" > "$VALIDATION_BACKUP/admin-password"
+unset LOB_ADMIN_USER LOB_ADMIN_PASSWORD
 
 # Back up the four exact overlay targets, including recording original absence.
 python3 - <<'PY'
@@ -236,7 +272,14 @@ for name in ("demo_config_btc.json", "demo_config_btc.json.previous",
         shutil.copy2(source, backup / name)
     else:
         (backup / f"{name}.absent").touch()
+PY
 
+# Only now, after the cleanup trap exists, quarantine queued commands.
+python3 - <<'PY'
+import json, os
+from pathlib import Path
+state = Path(os.environ["LOB_STATE_DIR"])
+backup = Path(os.environ["VALIDATION_BACKUP"])
 commands = state / "control" / "commands"
 quarantine = backup / "queued-commands"
 quarantine.mkdir()
@@ -245,7 +288,7 @@ for source in sorted(commands.glob("*.json")):
     target = quarantine / source.name
     os.replace(source, target)
     manifest.append(str(source))
-(backup / "queued-command-paths.json").write_text(__import__("json").dumps(manifest))
+(backup / "queued-command-paths.json").write_text(json.dumps(manifest))
 PY
 
 docker compose up -d --build --wait
@@ -263,21 +306,26 @@ PY
 )"
 curl -sS -o /dev/null -w 'login HTTP %{http_code}\n' -b "$COOKIE_JAR" \
   -c "$COOKIE_JAR" -X POST "$LOB_ADMIN_URL/admin/login" \
-  --data-urlencode "username=$LOB_ADMIN_USER" \
-  --data-urlencode "password=$LOB_ADMIN_PASSWORD" \
+  --data-urlencode "username@$VALIDATION_BACKUP/admin-user" \
+  --data-urlencode "password@$VALIDATION_BACKUP/admin-password" \
   --data-urlencode "csrf_token=$LOGIN_CSRF"
-curl -fsS -b "$COOKIE_JAR" "$LOB_ADMIN_URL/admin/config/btc" \
+rm -f -- "$VALIDATION_BACKUP/admin-user" "$VALIDATION_BACKUP/admin-password"
+curl -fsS -H 'Accept: application/json' -b "$COOKIE_JAR" \
+  "$LOB_ADMIN_URL/admin/config/btc" \
   > "$VALIDATION_BACKUP/btc-before.json"
-curl -fsS -b "$COOKIE_JAR" "$LOB_ADMIN_URL/admin/config/usdt" \
+curl -fsS -H 'Accept: application/json' -b "$COOKIE_JAR" \
+  "$LOB_ADMIN_URL/admin/config/usdt" \
   > "$VALIDATION_BACKUP/usdt-before.json"
 CSRF="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["csrf_token"])' "$VALIDATION_BACKUP/btc-before.json")"
 
-curl -fsS -b "$COOKIE_JAR" -X POST "$LOB_ADMIN_URL/admin/config/btc" \
+curl -fsS -H 'Accept: application/json' -b "$COOKIE_JAR" \
+  -X POST "$LOB_ADMIN_URL/admin/config/btc" \
   -d "csrf_token=$CSRF" -d order_size=.00001 -d inv_max=.0005 \
   -d inv_min=.000001 -d cancel_after_minutes=8 -d depth_max=7 \
   -d time_step=5 -d demo_inv_initial=.0001 -d cash_initial=1500000 \
   -d commission_perc=.0012 > "$VALIDATION_BACKUP/btc-config-result.json"
-curl -fsS -b "$COOKIE_JAR" -X POST "$LOB_ADMIN_URL/admin/config/usdt" \
+curl -fsS -H 'Accept: application/json' -b "$COOKIE_JAR" \
+  -X POST "$LOB_ADMIN_URL/admin/config/usdt" \
   -d "csrf_token=$CSRF" -d order_size=.5 -d inv_max=20 -d inv_min=1 \
   -d cancel_after_minutes=7 -d depth_max=6 -d time_step=4 \
   -d demo_inv_initial=4 -d cash_initial=2200000 -d commission_perc=.002 \
@@ -357,13 +405,16 @@ after each POST.
 
 ```bash
 export SESSION_BEFORE="$(python3 -c 'import json; print(json.load(open("market_maker/results/stack_session.json"))["session_id"])')"
-curl -fsS -b "$COOKIE_JAR" -X POST "$LOB_ADMIN_URL/admin/workers/restart" \
+curl -fsS -H 'Accept: application/json' -b "$COOKIE_JAR" \
+  -X POST "$LOB_ADMIN_URL/admin/workers/restart" \
   -d "csrf_token=$CSRF" -d pair=btc > "$VALIDATION_BACKUP/btc-restart.json"
-curl -fsS -b "$COOKIE_JAR" -X POST "$LOB_ADMIN_URL/admin/workers/restart" \
+curl -fsS -H 'Accept: application/json' -b "$COOKIE_JAR" \
+  -X POST "$LOB_ADMIN_URL/admin/workers/restart" \
   -d "csrf_token=$CSRF" -d pair=usdt > "$VALIDATION_BACKUP/usdt-restart.json"
 test "$SESSION_BEFORE" = "$(python3 -c 'import json; print(json.load(open("market_maker/results/stack_session.json"))["session_id"])')" \
   && echo 'PASS: worker restarts retained session'
-curl -fsS -b "$COOKIE_JAR" -X POST "$LOB_ADMIN_URL/admin/session/new" \
+curl -fsS -H 'Accept: application/json' -b "$COOKIE_JAR" \
+  -X POST "$LOB_ADMIN_URL/admin/session/new" \
   -d "csrf_token=$CSRF" > "$VALIDATION_BACKUP/new-session.json"
 python3 - <<'PY'
 import json, os, time
@@ -393,7 +444,29 @@ docker compose up -d --force-recreate --wait
 docker compose ps
 curl -fsS "$LOB_ADMIN_URL/admin/health"
 curl -fsS "$LOB_DASHBOARD_URL/_dash-layout" > /dev/null
-echo 'PASS: recreation healthy; rerun digest/snapshot assertions above'
+python3 - <<'PY'
+import json, os, sys, time
+from pathlib import Path
+sys.path.insert(0, str(Path("market_maker").resolve()))
+from config import TRADING_PROFILES
+from demo_config import desired_digest, load_desired_config
+state = Path(os.environ["LOB_STATE_DIR"])
+current = json.loads((state / "stack_session.json").read_text())["session_id"]
+deadline = time.time() + 20
+while True:
+    try:
+        for pair in ("btc", "usdt"):
+            desired = load_desired_config(pair, state, TRADING_PROFILES)
+            snapshot = json.loads((state / f"runtime_config_{pair}.json").read_text())
+            assert snapshot["session_id"] == current
+            assert snapshot["desired_digest"] == desired_digest(desired)
+            assert not snapshot["pending_new_session"]
+        break
+    except (AssertionError, FileNotFoundError, json.JSONDecodeError):
+        if time.time() >= deadline: raise
+        time.sleep(.25)
+print("PASS: recreation healthy and both snapshots match desired digests")
+PY
 ```
 
 For restoration, submit the nine `desired` values saved in each
@@ -405,31 +478,33 @@ agent. They never remove a runtime directory:
 
 ```bash
 python3 - <<'PY'
-import json, os, re, requests
+import http.cookiejar, json, os, requests
 from pathlib import Path
 base = os.environ["LOB_ADMIN_URL"]
 backup = Path(os.environ["VALIDATION_BACKUP"])
 session = requests.Session()
-page = session.get(base + "/admin/login", timeout=10); page.raise_for_status()
-token = re.search('name="csrf_token" value="([^"]+)"', page.text).group(1)
-login = session.post(base + "/admin/login", data={
-    "username": os.environ["LOB_ADMIN_USER"],
-    "password": os.environ["LOB_ADMIN_PASSWORD"], "csrf_token": token,
-}, timeout=10); login.raise_for_status()
-csrf = session.get(base + "/admin/config/btc", timeout=10).json()["csrf_token"]
+jar = http.cookiejar.MozillaCookieJar(str(backup / "admin.cookies"))
+jar.load(ignore_discard=True, ignore_expires=True)
+session.cookies.update(jar)
+headers = {"Accept": "application/json"}
+config = session.get(base + "/admin/config/btc", headers=headers, timeout=10)
+config.raise_for_status()
+csrf = config.json()["csrf_token"]
 for pair in ("btc", "usdt"):
     desired = json.loads((backup / f"{pair}-before.json").read_text())["desired"]
     response = session.post(base + f"/admin/config/{pair}",
+                            headers=headers,
                             data={**desired, "csrf_token": csrf}, timeout=40)
     response.raise_for_status()
 rotation = session.post(base + "/admin/session/new",
-                        data={"csrf_token": csrf}, timeout=60)
+                        headers=headers, data={"csrf_token": csrf}, timeout=60)
 rotation.raise_for_status()
 print("PASS: prior desired values submitted and consumed by a restored session")
 PY
 
 kill "$AGENT_PID"
 wait "$AGENT_PID" || true
+AGENT_PID=''
 python3 - <<'PY'
 import json, os, shutil, uuid
 from pathlib import Path
@@ -450,6 +525,7 @@ for original in json.loads((backup / "queued-command-paths.json").read_text()):
     os.replace(backup / "queued-commands" / original.name, original)
 print("PASS: exact overlay baseline and quarantined queues restored; agent stopped")
 PY
+trap - EXIT INT TERM
 pgrep -af '[d]eploy/control_agent.py --mode local' && exit 1 || true
 python3 - <<'PY'
 import json, os, sys, time
