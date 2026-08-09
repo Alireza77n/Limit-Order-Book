@@ -1,14 +1,19 @@
 # Runs both currency pairs in demo (paper-trading) mode plus the history
-# dashboard, all sharing one results/ volume so the dashboard sees both
-# bots' live output. See usage.md §6 for the full walkthrough.
+# dashboard and the admin control panel, all sharing one results/ volume so
+# the dashboard/admin see both bots' live output. See usage.md §7 for the
+# full walkthrough.
 #
-#   cp market_maker/.env.example market_maker/.env   # fill in real values first
+#   cp market_maker/.env.example market_maker/.env   # fill in real values first (incl. ADMIN_USERNAME/ADMIN_PASSWORD_HASH)
 #   docker compose up --build
 #
 # Real (--mode real) trading isn't wired up here -- it needs a reachable
 # MySQL server, which is out of scope while the project's focus is demo
 # mode (see README.md's Known limitations). Point MYSQL_HOST at your own
 # server and swap a service's command below if/when that's needed.
+#
+# Browser worker/session actions require the separate host-side agent; run
+# `python3 deploy/control_agent.py --mode local` for local validation. The
+# Admin container intentionally has no Docker socket or host-process authority.
 
 services:
   session-init:
@@ -74,6 +79,34 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8050', timeout=3).raise_for_status()"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  admin:
+    build: .
+    command: ["python", "admin_app.py"]
+    env_file:
+      - path: market_maker/.env
+        required: false
+    environment:
+      # admin_app.py's own defaults are runtime/results, runtime/state, etc
+      # (matching the production layout) -- point it at the same shared
+      # volume the other local services actually use instead.
+      LOB_RESULTS_DIR: /app/market_maker/results
+      LOB_STATE_DIR: /app/market_maker/results
+      LOB_CONTROL_DIR: /app/market_maker/results/control
+      LOB_BACKUPS_DIR: /app/market_maker/results/backups
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    ports:
+      - "8051:8051"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8051/admin/health', timeout=3).raise_for_status()"]
       interval: 15s
       timeout: 5s
       retries: 3
