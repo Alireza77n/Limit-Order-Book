@@ -254,6 +254,94 @@ def test_failed_worker_lifecycle_json_contract_is_unchanged(client, monkeypatch)
     assert response.get_json()["results"][0]["ok"] is False
 
 
+QUEUE_BACKED_HTML_ROUTES = [
+    ("post", "/admin/workers/stop", {"pair": "btc"}, "stop_worker"),
+    ("post", "/admin/session/new", {}, "new_session"),
+    ("post", "/admin/orders/cancel", {"pair": "btc"}, "cancel_orders"),
+    ("post", "/admin/backups/create", {}, "create_backup"),
+    (
+        "post", "/admin/backups/manual-1/restore",
+        {"confirm": "RESTORE"}, "restore_backup",
+    ),
+    ("post", "/admin/reset", {"confirm": "RESET"}, "reset_demo"),
+    ("post", "/admin/recover/apply", {}, "recover_demo"),
+    ("get", "/admin/export", {}, "create_backup"),
+    ("post", "/admin/config/btc", {"order_size": "3.5"}, "apply_config"),
+    ("post", "/admin/config/btc", {"action": "revert"}, "rollback_config"),
+]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "data", "expected_action"),
+    QUEUE_BACKED_HTML_ROUTES,
+    ids=[
+        "worker", "new-session", "cancel", "backup-create", "backup-restore",
+        "reset", "recover", "export", "config-apply", "config-rollback",
+    ],
+)
+def test_every_queue_backed_html_route_reports_failed_control_result(
+    client, app, monkeypatch, method, path, data, expected_action,
+):
+    def _failed_result(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {
+            "command_id": command_id,
+            "ok": False,
+            "detail": {
+                "error": f"simulated {expected_action} failure",
+                "phase": "execute",
+            },
+            "finished_at": "now",
+        }
+
+    monkeypatch.setattr(admin_app_module, "await_result", _failed_result)
+    token = _login(client)
+    submitted = dict(data)
+    if method == "post":
+        submitted["csrf_token"] = token
+
+    response = client.open(path, method=method.upper(), data=submitted, headers=HTML)
+
+    assert response.status_code == 502
+    body = _html(response)
+    assert f"simulated {expected_action} failure" in body
+    assert "execute" in body
+    assert "flash-success" not in body
+    assert _commands_written(app)[0]["action"] == expected_action
+
+
+@pytest.mark.parametrize(
+    ("path", "data"),
+    [
+        ("/admin/orders/cancel", {"pair": "btc"}),
+        ("/admin/backups/create", {}),
+        ("/admin/backups/manual-1/restore", {"confirm": "RESTORE"}),
+        ("/admin/reset", {"confirm": "RESET"}),
+        ("/admin/recover/apply", {}),
+    ],
+    ids=["cancel", "backup-create", "backup-restore", "reset", "recover"],
+)
+def test_failed_remaining_mutating_routes_keep_json_contract(
+    client, monkeypatch, path, data,
+):
+    def _failed_result(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {
+            "command_id": command_id,
+            "ok": False,
+            "detail": {"error": "agent failed", "phase": "execute"},
+            "finished_at": "now",
+        }
+
+    monkeypatch.setattr(admin_app_module, "await_result", _failed_result)
+    submitted = dict(data, csrf_token=_login(client))
+
+    response = client.post(path, data=submitted)
+
+    assert response.status_code == 200
+    body = response.get_json()
+    result = body["results"][0] if "results" in body else body
+    assert result["ok"] is False
+
+
 # ---------- Config pages ----------
 
 @pytest.mark.parametrize("pair", ["btc", "usdt"])

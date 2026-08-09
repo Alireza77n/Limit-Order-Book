@@ -717,6 +717,10 @@ def _register_routes(app: Flask) -> None:
                 return _workers_html_response(app, None), 409
             return (str(exc), 409)
         if _wants_html():
+            failed = [result for result in results if not result.get("ok")]
+            if failed:
+                flash(_command_failure_message({"results": failed}), "error")
+                return _workers_html_response(app, results), 502
             flash(f"Cancel requested for {', '.join(pairs)}.", "success")
             return _workers_html_response(app, results)
         return jsonify({"results": results})
@@ -741,6 +745,9 @@ def _register_routes(app: Flask) -> None:
                 return _backups_html_response(app), 409
             return (str(exc), 409)
         if _wants_html():
+            if not result.get("ok"):
+                flash(_command_failure_message(result), "error")
+                return _backups_html_response(app), 502
             flash("Backup created.", "success")
             return _backups_html_response(app)
         return jsonify(result)
@@ -768,6 +775,9 @@ def _register_routes(app: Flask) -> None:
                 return _backups_html_response(app), 409
             return (str(exc), 409)
         if _wants_html():
+            if not result.get("ok"):
+                flash(_command_failure_message(result), "error")
+                return _backups_html_response(app), 502
             flash(f"Backup '{name}' restored.", "success")
             return _backups_html_response(app)
         return jsonify(result)
@@ -812,6 +822,9 @@ def _register_routes(app: Flask) -> None:
                 return _recovery_html_response(app), 409
             return (str(exc), 409)
         if _wants_html():
+            if not result.get("ok"):
+                flash(_command_failure_message(result), "error")
+                return _recovery_html_response(app), 502
             flash("Demo reset complete. A new session was created.", "success")
             return _recovery_html_response(app)
         return jsonify(result)
@@ -843,6 +856,9 @@ def _register_routes(app: Flask) -> None:
                 return _recovery_html_response(app), 409
             return (str(exc), 409)
         if _wants_html():
+            if not result.get("ok"):
+                flash(_command_failure_message(result), "error")
+                return _recovery_html_response(app), 502
             flash("Safe recovery applied.", "success")
             return _recovery_html_response(app)
         return jsonify(result)
@@ -857,7 +873,11 @@ def _register_routes(app: Flask) -> None:
                 return _error_page(409, str(exc))
             return (str(exc), 409)
         backup_name = (result.get("detail") or {}).get("backup")
-        if not result.get("ok") or not backup_name:
+        if not result.get("ok"):
+            if _wants_html():
+                return _error_page(502, _command_failure_message(result))
+            return ("export snapshot failed", 500)
+        if not backup_name:
             if _wants_html():
                 return _error_page(500, "Export snapshot failed.")
             return ("export snapshot failed", 500)
