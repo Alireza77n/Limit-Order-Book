@@ -7,8 +7,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "deploy"))
 
+import config  # noqa: E402
 import control_agent as ca  # noqa: E402
-from demo_config import load_overrides, overlay_path, write_overrides  # noqa: E402
+from demo_config import (  # noqa: E402
+    desired_digest,
+    load_desired_config,
+    load_overrides,
+    overlay_path,
+    write_overrides,
+)
 
 
 class FakeCompleted:
@@ -34,6 +41,21 @@ def make_paths(tmp_path):
     for d in (state_dir, results_dir, backups_dir, control_dir):
         d.mkdir(parents=True, exist_ok=True)
     return ca.AgentPaths(tmp_path, state_dir, results_dir, backups_dir, control_dir)
+
+
+def test_local_mode_uses_root_compose_and_market_maker_results(tmp_path):
+    repo_root = tmp_path
+    paths = ca.build_agent_paths("local", repo_root)
+    local_results = repo_root / "market_maker" / "results"
+
+    assert paths.state_dir == local_results
+    assert paths.results_dir == local_results
+    assert paths.control_dir == local_results / "control"
+    assert paths.backups_dir == local_results / "backups"
+    argv = ca.resolve_worker_argv("restart_worker", "btc", mode="local")
+    assert argv[-2:] == ["restart", "btc-demo"]
+    assert "docker-compose.yml" in argv
+    assert "deploy/docker-compose.production.yml" not in argv
 
 
 def test_resolve_worker_argv_fixed_dict_lookup():
@@ -106,13 +128,140 @@ def test_cancel_orders_stops_and_restarts_when_running(tmp_path):
     assert verbs == ["stop", "start"]
 
 
-def test_apply_config_writes_overlay_and_restarts(tmp_path):
+def test_new_session_aborts_if_a_running_worker_cannot_stop(tmp_path):
+    import fcntl
+
+    paths = make_paths(tmp_path)
+    lock_path = ca.worker_lock_path(paths, "btc")
+    held = lock_path.open("a+")
+    fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    calls = []
+
+    def failing_stop_runner(argv, **kwargs):
+        calls.append(list(argv))
+        return FakeCompleted(1)
+
+    try:
+        result = ca.handle_new_session(paths, None, None, failing_stop_runner)
+    finally:
+        fcntl.flock(held.fileno(), fcntl.LOCK_UN)
+        held.close()
+
+    assert result.ok is False
+    assert result.detail["phase"] == "stop"
+    assert result.detail["pair"] == "btc"
+    assert result.detail["action"] == "stop_worker"
+    assert calls[0][-2:] == ["stop", "btc-demo"]
+    assert not (paths.state_dir / "stack_session.json").exists()
+
+
+def test_new_session_reports_stop_runner_exception_with_lifecycle_context(tmp_path):
+    import fcntl
+
+    paths = make_paths(tmp_path)
+    lock_path = ca.worker_lock_path(paths, "btc")
+    held = lock_path.open("a+")
+    fcntl.flock(held.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def raising_runner(argv, **kwargs):
+        raise OSError("docker unavailable")
+
+    try:
+        result = ca.handle_new_session(paths, None, None, raising_runner)
+    finally:
+        fcntl.flock(held.fileno(), fcntl.LOCK_UN)
+        held.close()
+
+    assert result.ok is False
+    assert result.detail["phase"] == "stop"
+    assert result.detail["pair"] == "btc"
+    assert result.detail["action"] == "stop_worker"
+    assert result.detail["failure"] == {"error": "OSError: docker unavailable"}
+
+
+def test_new_session_reports_partial_failure_if_worker_cannot_restart(tmp_path):
+    import fcntl
+
+    paths = make_paths(tmp_path)
+    lock_path = ca.worker_lock_path(paths, "btc")
+    lease = {"file": lock_path.open("a+")}
+    fcntl.flock(lease["file"].fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def failing_start_runner(argv, **kwargs):
+        if argv[-2] == "stop":
+            fcntl.flock(lease["file"].fileno(), fcntl.LOCK_UN)
+            lease["file"].close()
+            lease["file"] = None
+            return FakeCompleted(0)
+        return FakeCompleted(1)
+
+    try:
+        result = ca.handle_new_session(paths, None, None, failing_start_runner)
+    finally:
+        if lease["file"] is not None:
+            fcntl.flock(lease["file"].fileno(), fcntl.LOCK_UN)
+            lease["file"].close()
+
+    assert result.ok is False
+    assert result.detail["phase"] == "start"
+    assert result.detail["pair"] == "btc"
+    assert result.detail["action"] == "start_worker"
+    assert result.detail["failures"] == [{
+        "pair": "btc",
+        "action": "start_worker",
+        "detail": {"argv": ca.COMPOSE_ARGV_PREFIX + ["start", "btc-demo"], "returncode": 1},
+    }]
+    assert (paths.state_dir / "stack_session.json").exists()
+
+
+def test_new_session_reports_start_runner_exception_with_lifecycle_context(tmp_path):
+    import fcntl
+
+    paths = make_paths(tmp_path)
+    lock_path = ca.worker_lock_path(paths, "btc")
+    lease = {"file": lock_path.open("a+")}
+    fcntl.flock(lease["file"].fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def raising_start_runner(argv, **kwargs):
+        if argv[-2] == "stop":
+            fcntl.flock(lease["file"].fileno(), fcntl.LOCK_UN)
+            lease["file"].close()
+            lease["file"] = None
+            return FakeCompleted(0)
+        raise OSError("docker unavailable")
+
+    try:
+        result = ca.handle_new_session(paths, None, None, raising_start_runner)
+    finally:
+        if lease["file"] is not None:
+            fcntl.flock(lease["file"].fileno(), fcntl.LOCK_UN)
+            lease["file"].close()
+
+    assert result.ok is False
+    assert result.detail["phase"] == "start"
+    assert result.detail["pair"] == "btc"
+    assert result.detail["action"] == "start_worker"
+    assert result.detail["failures"] == [{
+        "pair": "btc",
+        "action": "start_worker",
+        "detail": {"error": "OSError: docker unavailable"},
+    }]
+
+
+def test_apply_config_persists_without_restarting_worker(tmp_path):
     paths = make_paths(tmp_path)
     runner = RecordingRunner()
-    result = ca.handle_apply_config(paths, "btc", {"overrides": {"order_size": 5}}, runner)
+    result = ca.handle_apply_config(paths, "btc", {"overrides": {"order_size": 0.2}}, runner)
     assert result.ok is True
-    assert load_overrides(overlay_path(paths.state_dir, "btc")) == {"order_size": 5.0}
-    assert runner.calls[0][0][-2:] == ["restart", "btc-demo"]
+    assert load_overrides(
+        overlay_path(paths.state_dir, "btc"), pair="btc", profiles=config.TRADING_PROFILES
+    ) == {"order_size": 0.2}
+    assert runner.calls == []
+    assert result.detail["persisted"] == {"order_size": 0.2}
+    assert result.detail["modes"] == {"order_size": "hot"}
+    assert result.detail["desired_digest"] == desired_digest(
+        load_desired_config("btc", paths.state_dir, config.TRADING_PROFILES)
+    )
 
 
 def test_apply_config_rejects_invalid_overlay(tmp_path):
@@ -126,12 +275,18 @@ def test_apply_config_rejects_invalid_overlay(tmp_path):
 def test_rollback_config_restores_previous(tmp_path):
     paths = make_paths(tmp_path)
     path = overlay_path(paths.state_dir, "btc")
-    write_overrides(path, {"order_size": 1})
-    write_overrides(path, {"order_size": 2})
+    write_overrides(
+        path, {"order_size": 1}, pair="btc", profiles=config.TRADING_PROFILES
+    )
+    write_overrides(
+        path, {"order_size": 2}, pair="btc", profiles=config.TRADING_PROFILES
+    )
     runner = RecordingRunner()
     result = ca.handle_rollback_config(paths, "btc", None, runner)
     assert result.ok is True
-    assert load_overrides(path) == {"order_size": 1.0}
+    assert load_overrides(
+        path, pair="btc", profiles=config.TRADING_PROFILES
+    ) == {"order_size": 1.0}
 
 
 def test_create_backup_snapshots_expected_files_only(tmp_path):

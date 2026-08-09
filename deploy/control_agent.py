@@ -15,6 +15,7 @@ Not installed/deployed by this session -- see docs/deployment/ADMIN_PAGE.md.
 
 from __future__ import annotations
 
+import argparse
 import fcntl
 import os
 import shutil
@@ -38,8 +39,13 @@ from control_queue import (  # noqa: E402
     submit_command,  # noqa: F401  (re-exported for convenience/tests)
     write_result,
 )
+from config import TRADING_PROFILES  # noqa: E402
 from demo_config import (  # noqa: E402
+    OverlayLoadError,
     OverlayValidationError,
+    desired_digest,
+    editable_schema,
+    load_desired_config,
     overlay_path,
     rollback_overrides,
     validate_overrides,
@@ -56,6 +62,10 @@ COMPOSE_ARGV_PREFIX = [
     "-f", "deploy/docker-compose.production.yml",
     "--env-file", "deploy/demo.env",
 ]
+LOCAL_COMPOSE_ARGV_PREFIX = [
+    "docker", "compose", "-p", "limit-order-book",
+    "-f", "docker-compose.yml",
+]
 SERVICE_NAME = {"btc": "btc-demo", "usdt": "usdt-demo"}
 # Lock file suffix matches session.py/run.py: WorkerLease is created with
 # identity f"{cfg.pair}-demo" against lease_path .worker_<pair.lower()>.lock,
@@ -68,6 +78,11 @@ WORKER_ARGV: Dict[tuple, List[str]] = {
     for action, verb in (("start_worker", "start"), ("stop_worker", "stop"), ("restart_worker", "restart"))
     for pair in PAIRS
 }
+LOCAL_WORKER_ARGV: Dict[tuple, List[str]] = {
+    (action, pair): LOCAL_COMPOSE_ARGV_PREFIX + [verb, SERVICE_NAME[pair]]
+    for action, verb in (("start_worker", "start"), ("stop_worker", "stop"), ("restart_worker", "restart"))
+    for pair in PAIRS
+}
 
 BACKUP_GLOBS = (
     "paper_*.json", "paper_*_archive.jsonl", "paper_fee_scopes.json",
@@ -76,21 +91,52 @@ BACKUP_GLOBS = (
 
 
 class AgentPaths:
-    def __init__(self, app_root, state_dir, results_dir, backups_dir, control_dir):
+    def __init__(self, app_root, state_dir, results_dir, backups_dir, control_dir, mode="production"):
         self.app_root = Path(app_root)
         self.state_dir = Path(state_dir)
         self.results_dir = Path(results_dir)
         self.backups_dir = Path(backups_dir)
         self.control_dir = Path(control_dir)
+        self.mode = mode
 
 
-def resolve_worker_argv(action: str, pair: str) -> List[str]:
+def build_agent_paths(mode: str, app_root) -> AgentPaths:
+    app_root = Path(app_root)
+    if mode == "production":
+        return AgentPaths(
+            app_root=app_root,
+            state_dir=app_root / "runtime/state",
+            results_dir=app_root / "runtime/results",
+            backups_dir=app_root / "runtime/backups",
+            control_dir=app_root / "runtime/control",
+            mode=mode,
+        )
+    if mode == "local":
+        local_results = app_root / "market_maker/results"
+        return AgentPaths(
+            app_root=app_root,
+            state_dir=local_results,
+            results_dir=local_results,
+            backups_dir=local_results / "backups",
+            control_dir=local_results / "control",
+            mode=mode,
+        )
+    raise ValueError(f"unknown control-agent mode: {mode!r}")
+
+
+def resolve_worker_argv(action: str, pair: str, mode: str = "production") -> List[str]:
     """Fixed dict lookup only -- raises KeyError for anything outside
     {start,stop,restart}_worker x {btc,usdt}."""
     key = (action, pair)
-    if key not in WORKER_ARGV:
-        raise KeyError(f"no fixed argv for action={action!r} pair={pair!r}")
-    return list(WORKER_ARGV[key])
+    if mode == "production":
+        if key not in WORKER_ARGV:
+            raise KeyError(f"no fixed argv for action={action!r} pair={pair!r}")
+        return list(WORKER_ARGV[key])
+    if mode == "local":
+        if key not in LOCAL_WORKER_ARGV:
+            raise KeyError(f"no fixed argv for action={action!r} pair={pair!r}")
+        return list(LOCAL_WORKER_ARGV[key])
+    raise KeyError(f"no fixed argv for mode={mode!r}")
 
 
 def worker_lock_path(paths: AgentPaths, pair: str) -> Path:
@@ -115,7 +161,7 @@ def is_worker_running(paths: AgentPaths, pair: str) -> bool:
 
 def run_worker_command(paths: AgentPaths, action: str, pair: str, run_argv: Callable = None) -> AgentResult:
     run_argv = run_argv or _default_run_argv
-    argv = resolve_worker_argv(action, pair)
+    argv = resolve_worker_argv(action, pair, mode=paths.mode)
     completed = run_argv(argv, cwd=str(paths.app_root), capture_output=True, text=True)
     ok = getattr(completed, "returncode", 1) == 0
     return AgentResult(ok, {"argv": argv, "returncode": getattr(completed, "returncode", None)})
@@ -196,12 +242,24 @@ def handle_apply_config(paths, pair, payload, run_argv):
     overrides = (payload or {}).get("overrides", {})
     try:
         # Re-validate independently -- never trust lob-admin's validation alone.
-        validate_overrides(overrides)
-        write_overrides(overlay_path(paths.state_dir, pair), overrides)
-    except OverlayValidationError as exc:
+        validated = validate_overrides(
+            overrides, pair=pair, profiles=TRADING_PROFILES
+        )
+        persisted = write_overrides(
+            overlay_path(paths.state_dir, pair),
+            validated,
+            pair=pair,
+            profiles=TRADING_PROFILES,
+        )
+        desired = load_desired_config(pair, paths.state_dir, TRADING_PROFILES)
+    except (OverlayLoadError, OverlayValidationError, OSError) as exc:
         return AgentResult(False, {"error": str(exc)})
-    restart = run_worker_command(paths, "restart_worker", pair, run_argv)
-    return AgentResult(restart.ok, {"applied": overrides, "restart": restart.detail})
+    schema = editable_schema(pair, TRADING_PROFILES)
+    return AgentResult(True, {
+        "persisted": persisted,
+        "desired_digest": desired_digest(desired),
+        "modes": {field: schema[field].mode.value for field in persisted},
+    })
 
 
 def handle_rollback_config(paths, pair, payload, run_argv):
@@ -215,13 +273,49 @@ def handle_rollback_config(paths, pair, payload, run_argv):
 
 def handle_new_session(paths, pair, payload, run_argv):
     running_before = {p: is_worker_running(paths, p) for p in PAIRS}
+    stopped = []
     for p, was_running in running_before.items():
         if was_running:
-            run_worker_command(paths, "stop_worker", p, run_argv)
+            try:
+                stop = run_worker_command(paths, "stop_worker", p, run_argv)
+            except Exception as exc:  # noqa: BLE001 -- preserve lifecycle context
+                stop = AgentResult(False, {"error": f"{type(exc).__name__}: {exc}"})
+            if not stop.ok:
+                return AgentResult(False, {
+                    "phase": "stop",
+                    "pair": p,
+                    "action": "stop_worker",
+                    "failure": stop.detail,
+                    "stopped": stopped,
+                })
+            stopped.append(p)
     session_id = initialize_stack_session(paths.state_dir / "stack_session.json", force_new=True)
     restarted = [p for p, was_running in running_before.items() if was_running]
+    started = []
+    failures = []
     for p in restarted:
-        run_worker_command(paths, "start_worker", p, run_argv)
+        try:
+            start = run_worker_command(paths, "start_worker", p, run_argv)
+        except Exception as exc:  # noqa: BLE001 -- preserve lifecycle context
+            start = AgentResult(False, {"error": f"{type(exc).__name__}: {exc}"})
+        if start.ok:
+            started.append(p)
+        else:
+            failures.append({
+                "pair": p,
+                "action": "start_worker",
+                "detail": start.detail,
+            })
+    if failures:
+        first_failure = failures[0]
+        return AgentResult(False, {
+            "phase": "start",
+            "pair": first_failure["pair"],
+            "action": first_failure["action"],
+            "session_id": session_id,
+            "started": started,
+            "failures": failures,
+        })
     return AgentResult(True, {"session_id": session_id, "restarted": restarted})
 
 
@@ -420,14 +514,11 @@ def poll_once(paths: AgentPaths, run_argv: Callable = None) -> int:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the Demo host control agent")
+    parser.add_argument("--mode", choices=("production", "local"), default="production")
+    args = parser.parse_args()
     app_root = Path(__file__).resolve().parent.parent
-    paths = AgentPaths(
-        app_root=app_root,
-        state_dir=app_root / "runtime/state",
-        results_dir=app_root / "runtime/results",
-        backups_dir=app_root / "runtime/backups",
-        control_dir=app_root / "runtime/control",
-    )
+    paths = build_agent_paths(args.mode, app_root)
     while True:
         poll_once(paths)
         time.sleep(2)
