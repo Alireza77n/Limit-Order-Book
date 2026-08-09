@@ -73,7 +73,7 @@ services:
       - path: market_maker/.env
         required: false
     volumes:
-      - ./market_maker/results:/app/market_maker/results
+      - ./market_maker/results:/app/market_maker/results:ro
     ports:
       - "8050:8050"
     restart: unless-stopped
@@ -101,7 +101,8 @@ services:
       session-init:
         condition: service_completed_successfully
     volumes:
-      - ./market_maker/results:/app/market_maker/results
+      - ./market_maker/results:/app/market_maker/results:ro
+      - ./market_maker/results/control:/app/market_maker/results/control
     ports:
       - "8051:8051"
     restart: unless-stopped

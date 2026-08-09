@@ -7,6 +7,8 @@ import subprocess
 import sys
 
 import pytest
+from dotenv import dotenv_values
+from werkzeug.security import check_password_hash
 
 from demo_entrypoint import SENSITIVE_ENV
 
@@ -268,7 +270,11 @@ def test_mounts_are_limited_to_separate_results_and_state_roots():
 
     local_blocks = _service_blocks(LOCAL_COMPOSE_PATH.read_text())
     assert _list(local_blocks["dashboard"], "    volumes:") == [
-        "./market_maker/results:/app/market_maker/results"
+        "./market_maker/results:/app/market_maker/results:ro"
+    ]
+    assert _list(local_blocks["admin"], "    volumes:") == [
+        "./market_maker/results:/app/market_maker/results:ro",
+        "./market_maker/results/control:/app/market_maker/results/control",
     ]
     for web_service in ("dashboard", "admin"):
         assert "/var/run/docker.sock" not in blocks[web_service]
@@ -317,6 +323,14 @@ def test_demo_environment_is_the_exact_credential_empty_runtime_map():
         "PYTHONDONTWRITEBYTECODE": "1",
         "LOB_TELEGRAM_DISABLED": "1",
     }
+
+
+def test_local_env_example_has_working_admin_admin_without_blank_session_key():
+    values = dotenv_values(ROOT / "market_maker/.env.example")
+
+    assert values["ADMIN_USERNAME"] == "admin"
+    assert check_password_hash(values["ADMIN_PASSWORD_HASH"], "admin")
+    assert "ADMIN_SESSION_SECRET" not in values
 
 
 def test_rendered_compose_model_enforces_the_complete_deployment_contract():
