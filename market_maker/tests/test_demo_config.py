@@ -4,6 +4,7 @@ import config
 
 from demo_config import (
     FIELD_DEFINITIONS,
+    FIELD_SPECS,
     OverlayLoadError,
     OverlayValidationError,
     apply_overrides,
@@ -49,6 +50,15 @@ def test_obsolete_and_continuous_only_fields_are_not_editable():
 
 def test_field_definitions_are_read_only():
     assert not hasattr(FIELD_DEFINITIONS, "update")
+
+
+def test_legacy_field_specs_is_read_only_and_matches_new_schema_metadata():
+    assert not hasattr(FIELD_SPECS, "update")
+    assert set(FIELD_SPECS) == set(FIELD_DEFINITIONS)
+    for key, definition in FIELD_DEFINITIONS.items():
+        expected = ((definition.value_type,) if definition.value_type is bool else
+                    (definition.value_type, definition.minimum, definition.maximum))
+        assert FIELD_SPECS[key] == expected
 
 
 def test_validate_accepts_known_fields():

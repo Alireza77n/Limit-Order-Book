@@ -59,6 +59,14 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "commission_perc": FieldDefinition(float, 0, 1, ApplicationMode.NEW_SESSION, "Simulated fee fraction for a new Demo session."),
 })
 
+# Deprecated compatibility view for Admin. Remove when Task 5 migrates Admin
+# from the old tuple metadata contract to FIELD_DEFINITIONS.
+FIELD_SPECS: Mapping[str, tuple] = MappingProxyType({
+    key: ((definition.value_type,) if definition.value_type is bool else
+          (definition.value_type, definition.minimum, definition.maximum))
+    for key, definition in FIELD_DEFINITIONS.items()
+})
+
 ALLOWED_FIELDS = frozenset(FIELD_DEFINITIONS)
 
 # Old overlays may contain these fields from prior Demo releases. They are
