@@ -362,3 +362,60 @@ def test_effective_config_panel_uses_shared_field_rows(tmp_path, monkeypatch):
     assert hidden_style == {"display": "none"}
     assert hidden_summary == ""
     assert hidden_rows == []
+
+
+def test_dashboard_config_reports_malformed_overlay_without_hiding_applied_snapshot(
+    tmp_path, monkeypatch,
+):
+    import dashboard
+
+    _configure_dashboard_state(monkeypatch, tmp_path)
+    desired = load_desired_config("btc", tmp_path, TRADING_PROFILES)
+    _write_runtime_snapshot(tmp_path, "btc", desired)
+    (tmp_path / "demo_config_btc.json").write_text("{")
+
+    view = dashboard.load_effective_demo_config("btc_demo")
+    style, summary, rows = dashboard.refresh_effective_config_panel("btc_demo", 6)
+
+    assert view["status"]["state"] == "failed"
+    assert "invalid JSON" in view["status"]["error"]
+    assert view["applied"]["order_size"] == pytest.approx(desired["order_size"])
+    order_size = next(row for row in rows if row["Field"] == "order_size")
+    assert style == {}
+    assert "Failed to apply" in summary
+    assert "invalid JSON" in summary
+    assert order_size == {
+        "Field": "order_size",
+        "Desired": None,
+        "Applied": desired["order_size"],
+        "Mode": "hot",
+        "Status": "Failed to apply",
+    }
+
+
+@pytest.mark.parametrize("invalid_overlay", [
+    {"unknown_setting": 1},
+    {"order_size": -1},
+])
+def test_dashboard_invalid_usdt_overlay_is_explicit_and_pair_isolated(
+    tmp_path, monkeypatch, invalid_overlay,
+):
+    import dashboard
+
+    _configure_dashboard_state(monkeypatch, tmp_path)
+    btc_desired = load_desired_config("btc", tmp_path, TRADING_PROFILES)
+    usdt_desired = load_desired_config("usdt", tmp_path, TRADING_PROFILES)
+    _write_runtime_snapshot(tmp_path, "btc", btc_desired)
+    _write_runtime_snapshot(tmp_path, "usdt", usdt_desired)
+    (tmp_path / "demo_config_usdt.json").write_text(json.dumps(invalid_overlay))
+
+    usdt_view = dashboard.load_effective_demo_config("usdt_demo")
+    btc_view = dashboard.load_effective_demo_config("btc_demo")
+
+    assert usdt_view["status"]["state"] == "failed"
+    assert usdt_view["status"]["error"]
+    assert usdt_view["applied"]["order_size"] == pytest.approx(
+        usdt_desired["order_size"]
+    )
+    assert btc_view["status"]["state"] != "failed"
+    assert btc_view["status"]["error"] is None

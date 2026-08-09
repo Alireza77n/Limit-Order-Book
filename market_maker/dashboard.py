@@ -31,8 +31,11 @@ from dash.dependencies import Input, Output
 
 from config import DEMO_STATE_DIR, TRADING_PROFILES, demo_csv_path
 from demo_config import (
+    CONFIG_STATUS_LABELS,
     OverlayLoadError,
+    OverlayValidationError,
     config_status,
+    editable_schema,
     load_desired_config,
     read_runtime_snapshot,
 )
@@ -213,7 +216,12 @@ def load_effective_demo_config(track_key: str) -> Optional[dict]:
         return None
 
     state_dir = Path(DEMO_STATE_DIR)
-    desired = load_desired_config(pair, state_dir, TRADING_PROFILES)
+    desired_error = None
+    try:
+        desired = load_desired_config(pair, state_dir, TRADING_PROFILES)
+    except (OverlayLoadError, OverlayValidationError) as error:
+        desired = {}
+        desired_error = str(error)
     runtime_error = None
     try:
         snapshot = read_runtime_snapshot(state_dir, pair)
@@ -225,13 +233,52 @@ def load_effective_demo_config(track_key: str) -> Optional[dict]:
     except SessionError:
         current_session_id = None
 
-    status = config_status(
-        pair,
-        desired,
-        snapshot if current_session_id is not None else None,
-        _demo_worker_running(pair),
-        current_session_id=current_session_id,
-    )
+    worker_running = _demo_worker_running(pair)
+    current_snapshot = snapshot if current_session_id is not None else None
+    if desired_error is None:
+        status = config_status(
+            pair,
+            desired,
+            current_snapshot,
+            worker_running,
+            current_session_id=current_session_id,
+        )
+    else:
+        profile_values = {
+            field: TRADING_PROFILES[pair][field]
+            for field in editable_schema(pair, TRADING_PROFILES)
+        }
+        snapshot_status = config_status(
+            pair,
+            profile_values,
+            current_snapshot,
+            worker_running,
+            current_session_id=current_session_id,
+        )
+        applied = snapshot_status["applied"]
+        failed_label = CONFIG_STATUS_LABELS["failed"]
+        failed_fields = {
+            field: dict(
+                row,
+                desired=None,
+                applied=applied.get(field),
+                state="failed",
+                label=failed_label,
+            )
+            for field, row in snapshot_status["fields"].items()
+        }
+        status = dict(
+            snapshot_status,
+            state="failed",
+            label=failed_label,
+            desired_digest=None,
+            pending_new_session={},
+            error=desired_error,
+            fields=failed_fields,
+        )
+        runtime_error = "; ".join(
+            message for message in (desired_error, runtime_error) if message
+        )
     return {
         "pair": pair,
         "desired": desired,
