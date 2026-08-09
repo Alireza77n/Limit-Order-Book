@@ -333,6 +333,19 @@ def test_local_env_example_has_working_admin_admin_without_blank_session_key():
     assert "ADMIN_SESSION_SECRET" not in values
 
 
+def test_local_admin_is_loopback_only_and_receives_no_trading_secrets():
+    blocks = _service_blocks(LOCAL_COMPOSE_PATH.read_text())
+    admin = blocks["admin"]
+
+    assert _list(admin, "    ports:") == ["127.0.0.1:8051:8051"]
+    assert "\n    env_file:" not in admin
+    assert "ADMIN_USERNAME: admin" in admin
+    assert "ADMIN_PASSWORD_HASH:" in admin
+    assert "ADMIN_SESSION_SECRET:" in admin
+    for sensitive_name in SENSITIVE_ENV:
+        assert sensitive_name not in admin
+
+
 def test_rendered_compose_model_enforces_the_complete_deployment_contract():
     model = _rendered_compose()
     services = model["services"]

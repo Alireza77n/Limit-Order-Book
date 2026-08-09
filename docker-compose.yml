@@ -86,10 +86,13 @@ services:
   admin:
     build: .
     command: ["python", "admin_app.py"]
-    env_file:
-      - path: market_maker/.env
-        required: false
     environment:
+      # Local-only login: admin/admin. Production uses deploy/admin.env with
+      # unique credentials. `$$` escapes Compose interpolation so Werkzeug
+      # receives the required single `$` hash separators.
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD_HASH: "pbkdf2:sha256:1000000$$zJIa0qrinUjVXew5$$7c096d955aaa98980a78de5cd26efc4c4b3411ccf5013268247c792e600e20da"
+      ADMIN_SESSION_SECRET: local-demo-admin-session-secret
       # admin_app.py's own defaults are runtime/results, runtime/state, etc
       # (matching the production layout) -- point it at the same shared
       # volume the other local services actually use instead.
@@ -104,7 +107,7 @@ services:
       - ./market_maker/results:/app/market_maker/results:ro
       - ./market_maker/results/control:/app/market_maker/results/control
     ports:
-      - "8051:8051"
+      - "127.0.0.1:8051:8051"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8051/admin/health', timeout=3).raise_for_status()"]
