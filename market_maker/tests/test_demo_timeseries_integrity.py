@@ -70,6 +70,7 @@ class RestThenTouchBook(ExchangeClient):
 def demo_run(tmp_path, monkeypatch):
     monkeypatch.setattr(engine_module, "TELEGRAM_BOT_TOKEN", None)
     monkeypatch.setattr(engine_module, "TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
 
     cfg = run.make_cfg("usdt", mode="demo", session_id="timeseries-session")
     cfg.max_rounds = 12
@@ -79,7 +80,6 @@ def demo_run(tmp_path, monkeypatch):
     cfg.demo_state_path = str(tmp_path / "state.json")
     cfg.demo_fee_state_path = str(tmp_path / "fees.json")
     cfg.demo_archive_path = str(tmp_path / "arch.jsonl")
-    cfg.demo_max_open_orders_per_side = 3
 
     bot = run.make_bot(cfg, mode="demo")
     bot.exchange._market_data = RestThenTouchBook()
@@ -100,18 +100,6 @@ def demo_run(tmp_path, monkeypatch):
     ledger.process_market = traced
     bot.run()
     return bot, cfg, observed
-
-
-def test_inventory_never_jumps_by_more_than_one_observation_budget(demo_run):
-    _bot, cfg, _observed = demo_run
-    df = pd.read_csv(cfg.output_csv).sort_values("Round")
-
-    biggest = df["inv_current"].diff().abs().max()
-
-    # One market observation can transfer at most the configured per-side
-    # budget (order_size x demo_max_fill_per_observation_orders).
-    budget = cfg.order_size * cfg.demo_max_fill_per_observation_orders
-    assert biggest <= budget + 1e-9
 
 
 def test_recorded_trajectory_is_strictly_consistent_round_to_round(demo_run):

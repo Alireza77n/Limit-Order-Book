@@ -11,9 +11,13 @@
 # mode (see README.md's Known limitations). Point MYSQL_HOST at your own
 # server and swap a service's command below if/when that's needed.
 #
-# Browser worker/session actions require the separate host-side agent; run
-# `python3 deploy/control_agent.py --mode local` for local validation. The
-# Admin container intentionally has no Docker socket or host-process authority.
+# `docker compose up -d --build --wait` alone brings up a fully working
+# stack: the `control-agent` service below runs deploy/control_agent.py so
+# every Admin action (config edits, worker start/stop/restart, new session,
+# backups) actually applies, with no separate host-side process needed. The
+# Admin web container itself still has no Docker socket or host-process
+# authority -- only `control-agent` does, and it exists only in this local
+# compose file (never in deploy/docker-compose.production.yml).
 
 services:
   session-init:
@@ -114,3 +118,24 @@ services:
       interval: 15s
       timeout: 5s
       retries: 3
+
+  control-agent:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.control-agent
+    # Bind-mounted at the *same* absolute host path (not /app) so that this
+    # container's `docker compose -f docker-compose.yml ...` calls -- sent
+    # over the mounted socket to the host daemon -- resolve relative volume
+    # paths (like ./market_maker/results) against the real host project
+    # directory instead of a path that only exists inside this container.
+    # Requires `docker compose` to be invoked from the project root (as
+    # documented above), so $PWD is that directory.
+    working_dir: ${PWD}
+    command: ["python", "-u", "deploy/control_agent.py", "--mode", "local"]
+    volumes:
+      - ${PWD}:${PWD}
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    restart: unless-stopped

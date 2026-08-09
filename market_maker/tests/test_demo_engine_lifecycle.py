@@ -86,6 +86,7 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
         "engine.mysql.connector.connect",
         lambda **kwargs: (_ for _ in ()).throw(AssertionError("MySQL forbidden in Demo Mode")),
     )
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     cfg.output_csv = str(tmp_path / "usdt-demo.csv")
     cfg.demo_state_path = str(tmp_path / "usdt-state.json")
@@ -167,7 +168,8 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     ]
 
 
-def test_demo_queue_ahead_uses_displayed_selected_level_volume(tmp_path):
+def test_demo_queue_ahead_uses_displayed_selected_level_volume(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     cfg.demo_state_path = str(tmp_path / "state.json")
     cfg.demo_fee_state_path = str(tmp_path / "fees.json")
@@ -185,7 +187,8 @@ def test_demo_queue_ahead_uses_displayed_selected_level_volume(tmp_path):
     assert bot._demo_queue_ahead(book, "buy", 1) == 0
 
 
-def test_demo_engine_submits_selected_level_queue_and_round(tmp_path):
+def test_demo_engine_submits_selected_level_queue_and_round(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="queue-session")
     cfg.output_csv = str(tmp_path / "queue.csv")
     cfg.demo_state_path = str(tmp_path / "queue-state.json")
@@ -211,7 +214,7 @@ def test_demo_engine_submits_selected_level_queue_and_round(tmp_path):
     assert buy.round_no == 1
 
 
-def test_demo_engine_recovers_after_temporary_market_data_failure(tmp_path):
+def test_demo_engine_recovers_after_temporary_market_data_failure(monkeypatch, tmp_path):
     class FlakyMarketData(DeterministicMarketData):
         def get_orderbook(self, symbol):
             if self.orderbook_calls == 0:
@@ -219,6 +222,7 @@ def test_demo_engine_recovers_after_temporary_market_data_failure(tmp_path):
                 raise OSError("temporary feed outage")
             return super().get_orderbook(symbol)
 
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="recovery-session")
     cfg.output_csv = str(tmp_path / "recovery.csv")
     cfg.demo_state_path = str(tmp_path / "recovery-state.json")
@@ -244,7 +248,7 @@ def test_demo_engine_recovers_after_temporary_market_data_failure(tmp_path):
     )
 
 
-def test_telegram_reporter_failure_does_not_cancel_or_stop_rounds(tmp_path):
+def test_telegram_reporter_failure_does_not_cancel_or_stop_rounds(monkeypatch, tmp_path):
     class FailingReporter(RecordingReporter):
         def round_summary(self, text):
             raise OSError("telegram unavailable")
@@ -252,6 +256,7 @@ def test_telegram_reporter_failure_does_not_cancel_or_stop_rounds(tmp_path):
         def order_submitted(self, ledger, order, *, reply_to_message_id=None):
             raise OSError("telegram unavailable")
 
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="telegram-retry-session")
     cfg.output_csv = str(tmp_path / "telegram.csv")
     cfg.demo_state_path = str(tmp_path / "telegram-state.json")
@@ -275,7 +280,8 @@ def test_telegram_reporter_failure_does_not_cancel_or_stop_rounds(tmp_path):
     }
 
 
-def test_worker_fatal_exit_preserves_orders_for_same_session_retry(tmp_path):
+def test_worker_fatal_exit_preserves_orders_for_same_session_retry(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="fatal-retry-session")
     cfg.output_csv = str(tmp_path / "fatal.csv")
     cfg.demo_state_path = str(tmp_path / "fatal-state.json")
@@ -305,7 +311,8 @@ def test_worker_fatal_exit_preserves_orders_for_same_session_retry(tmp_path):
     assert set(restored.exchange.ledger.active_orders) == set(bot.exchange.ledger.active_orders)
 
 
-def test_coordinated_signal_is_the_only_stack_shutdown_cancellation(tmp_path):
+def test_coordinated_signal_is_the_only_stack_shutdown_cancellation(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="coordinated-session")
     cfg.output_csv = str(tmp_path / "coordinated.csv")
     cfg.demo_state_path = str(tmp_path / "coordinated-state.json")
@@ -371,7 +378,8 @@ class AlwaysNoQuoteStrategy:
         }
 
 
-def test_demo_engine_records_no_quote_episode_and_alert_state(tmp_path):
+def test_demo_engine_records_no_quote_episode_and_alert_state(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="no-quote-session")
     cfg.output_csv = str(tmp_path / "no-quote.csv")
     cfg.demo_result_db_path = str(tmp_path / "no-quote.sqlite3")
@@ -401,7 +409,8 @@ def test_demo_engine_records_no_quote_episode_and_alert_state(tmp_path):
     assert '"spread":0.01' in diagnostics
 
 
-def test_demo_restart_continues_round_numbers_in_same_session(tmp_path):
+def test_demo_restart_continues_round_numbers_in_same_session(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="restart-session")
     cfg.output_csv = str(tmp_path / "restart.csv")
     cfg.demo_result_db_path = str(tmp_path / "restart.sqlite3")

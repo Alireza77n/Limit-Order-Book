@@ -1,0 +1,25 @@
+# Local-development-only image for the `control-agent` service in the root
+# docker-compose.yml. Same Python runtime/deps as the main app image, plus
+# the Docker CLI so deploy/control_agent.py can run `docker compose`
+# worker/session actions on the Admin panel's behalf.
+#
+# SECURITY: the `control-agent` service mounts /var/run/docker.sock, which
+# gives this container root-equivalent control of the host Docker daemon.
+# Local development only -- there is no equivalent service in
+# deploy/docker-compose.production.yml, and this image is never used there.
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends docker-cli docker-compose \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY deploy/requirements-control-agent.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --timeout 120 --retries 5 -r /tmp/requirements.txt
+
+# No app code COPY: docker-compose.yml bind-mounts the live project tree at
+# a matching path (see the `control-agent` service's working_dir/volumes)
+# so control_agent.py's `docker compose -f docker-compose.yml ...` calls
+# resolve against the real host project directory, not a container-local
+# copy of it.

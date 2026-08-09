@@ -1,0 +1,8 @@
+# Subset of ../requirements.txt actually imported by control_agent.py's
+# own module chain (config.py, demo_config.py, control_queue.py,
+# session.py) -- deliberately excludes dash/plotly/mysql-connector-python
+# (dashboard.py/engine.py only), which this image never imports.
+requests
+pandas
+numpy
+python-dotenv

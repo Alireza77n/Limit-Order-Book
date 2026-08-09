@@ -4,7 +4,8 @@ import run
 from helpers import make_bot, make_orderbook
 
 
-def test_zero_inventory_usdt_diagnostic_classifies_depth_fallback():
+def test_zero_inventory_usdt_diagnostic_classifies_depth_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     cfg.exp_ret_min = cfg.commission_perc
     bot = make_bot(cfg)
@@ -33,7 +34,8 @@ def test_zero_inventory_usdt_diagnostic_classifies_depth_fallback():
     assert diagnostic["candidate_results"][0]["required_threshold"] == 0.002
 
 
-def test_shallow_book_diagnostic_documents_unexpressible_inventory_skew():
+def test_shallow_book_diagnostic_documents_unexpressible_inventory_skew(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     bot = make_bot(cfg)
 
@@ -47,7 +49,8 @@ def test_shallow_book_diagnostic_documents_unexpressible_inventory_skew():
     assert diagnostic["selection_reason"] == "inventory_skew_unexpressible_in_shallow_book"
 
 
-def test_actual_candidate_selection_is_not_classified_as_fallback():
+def test_actual_candidate_selection_is_not_classified_as_fallback(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     cfg.commission_perc = 0.0001
     cfg.exp_ret_min = 0.0001
@@ -63,7 +66,8 @@ def test_actual_candidate_selection_is_not_classified_as_fallback():
     assert diagnostic["selected_ask_level"] == quote["ask level"]
 
 
-def test_optional_jsonl_logging_is_deterministic_and_disabled_by_default(tmp_path):
+def test_optional_jsonl_logging_is_deterministic_and_disabled_by_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     cfg.algo1_diagnostics_path = str(tmp_path / "algo1.jsonl")
     bot = make_bot(cfg)
@@ -88,16 +92,24 @@ def test_optional_jsonl_logging_is_deterministic_and_disabled_by_default(tmp_pat
     assert "token" not in first.lower()
 
 
-def test_no_quote_reason_distinguishes_shallow_skew_from_profitability():
+def test_no_quote_reason_distinguishes_shallow_skew_from_profitability(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     bot = make_bot(cfg)
 
     assert bot.strategy.no_quote_reason(make_orderbook(n=4), 0.0) == (
         "inventory_skew_unexpressible_in_shallow_book"
     )
+    # Book is flat at every level, so even the loosest inventory-skewed
+    # candidate never clears the profitability bar -- the root-cause fix
+    # (reports/batch-fill-definitive-root-cause.md) surfaces this under its
+    # own name rather than the generic profitability_threshold, since it
+    # used to be the silent (depth_max, depth_max) fallback path.
     tight = {
         "bids": [["100", "1"] for _ in range(11)],
         "asks": [["100.1", "1"] for _ in range(11)],
         "lastTradePrice": "100",
     }
-    assert bot.strategy.no_quote_reason(tight, 0.0) == "profitability_threshold"
+    assert bot.strategy.no_quote_reason(tight, 0.0) == (
+        "no_profitable_inventory_skewed_candidate"
+    )

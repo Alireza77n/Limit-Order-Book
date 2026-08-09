@@ -506,6 +506,19 @@ def test_concurrent_request_while_locked_gets_in_progress_response(client, app, 
         lock.release()
 
 
+def test_control_agent_unreachable_reports_clear_timeout_not_500(client, app, monkeypatch):
+    from control_queue import ResultTimeout
+
+    def _timeout(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        raise ResultTimeout(f"no result for {command_id} within {timeout}s")
+
+    monkeypatch.setattr(admin_app_module, "await_result", _timeout)
+    token = _login(client)
+    response = client.post("/admin/workers/start", data={"pair": "btc", "csrf_token": token})
+    assert response.status_code == 504
+    assert "control agent" in response.get_data(as_text=True).lower()
+
+
 def test_status_route_reports_session_and_workers(client, app):
     (Path(app.config["STATE_DIR"]) / "stack_session.json").write_text(json.dumps({"session_id": "demo-123"}))
     _login(client)

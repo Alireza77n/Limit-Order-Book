@@ -68,7 +68,8 @@ def test_demo_engine_rejects_mysql_persistence_before_connecting(monkeypatch):
     assert calls == []
 
 
-def test_make_bot_demo_strips_authenticated_trading_capability(monkeypatch):
+def test_make_bot_demo_strips_authenticated_trading_capability(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("btc", mode="demo")
     cfg.token = "must-not-propagate"
 
@@ -80,7 +81,8 @@ def test_make_bot_demo_strips_authenticated_trading_capability(monkeypatch):
     assert market_data.trading_enabled is False
 
 
-def test_disabled_nobitex_adapter_blocks_order_and_cancel_calls(monkeypatch):
+def test_disabled_nobitex_adapter_blocks_order_and_cancel_calls(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("btc", mode="demo")
     bot = run.make_bot(cfg, mode="demo")
     market_data = bot.exchange._market_data
@@ -100,7 +102,8 @@ def test_disabled_nobitex_adapter_blocks_order_and_cancel_calls(monkeypatch):
         market_data.cancel_old_orders(10)
 
 
-def test_make_bot_demo_owns_configured_persistent_paper_ledger(tmp_path):
+def test_make_bot_demo_owns_configured_persistent_paper_ledger(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     cfg.demo_state_path = str(tmp_path / "usdt-state.json")
     cfg.demo_fee_state_path = str(tmp_path / "fees.json")

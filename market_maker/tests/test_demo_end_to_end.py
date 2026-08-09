@@ -61,6 +61,13 @@ def test_two_symbol_demo_replay_shares_session_isolates_state_and_has_zero_real_
     monkeypatch.setattr(NobitexExchangeClient, "cancel_all_open_orders", forbidden("bulk_cancel"))
     monkeypatch.setattr(NobitexExchangeClient, "cancel_old_orders", forbidden("stale_cancel"))
 
+    # make_cfg(mode="demo") reads any live Admin-desired overlay from
+    # run.DEMO_STATE_DIR at construction time, not just at reload -- it must
+    # be patched to an empty directory before make_cfg runs, or this
+    # replay's config (and therefore its fill outcome) depends on whatever
+    # the host's live Demo overlay currently contains.
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+
     shared_session = "deterministic-shared-session"
     fee_path = tmp_path / "fee-scopes.json"
     results = {}

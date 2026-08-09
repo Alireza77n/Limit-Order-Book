@@ -29,7 +29,13 @@ from typing import Optional
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session as flask_session, url_for
 from werkzeug.security import check_password_hash
 
-from control_queue import ControlLock, OperationInProgress, await_result, submit_command
+from control_queue import (
+    ControlLock,
+    OperationInProgress,
+    ResultTimeout,
+    await_result,
+    submit_command,
+)
 import control_queue
 from demo_config import (
     OverlayLoadError,
@@ -207,6 +213,18 @@ def enqueue_batch(app: Flask, action: str, pairs, payload=None):
             })
             results.append(dict(result, pair=pair))
     return results
+
+
+def _control_error(exc: Exception):
+    """Map a control-queue failure to (status_code, message). ResultTimeout
+    means no control agent picked up the command -- distinct from
+    OperationInProgress (another operation is mid-flight)."""
+    if isinstance(exc, ResultTimeout):
+        return 504, (
+            "No response from the control agent within the timeout. "
+            "Is deploy/control_agent.py running for this environment?"
+        )
+    return 409, str(exc)
 
 
 def _resolve_pairs(selector: Optional[str]):
@@ -667,11 +685,12 @@ def _register_routes(app: Flask) -> None:
             return ("invalid pair (expected btc, usdt, or both)", 400)
         try:
             results = enqueue_batch(app, f"{action}_worker", pairs)
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if _wants_html():
-                flash(str(exc), "warning")
-                return _workers_html_response(app, None), 409
-            return (str(exc), 409)
+                flash(message, "warning")
+                return _workers_html_response(app, None), status
+            return (message, status)
         if _wants_html():
             failed = [result for result in results if not result.get("ok")]
             if failed:
@@ -687,11 +706,12 @@ def _register_routes(app: Flask) -> None:
     def admin_new_session():
         try:
             result = enqueue_and_wait(app, "new_session")
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if _wants_html():
-                flash(str(exc), "warning")
-                return _workers_html_response(app, None), 409
-            return (str(exc), 409)
+                flash(message, "warning")
+                return _workers_html_response(app, None), status
+            return (message, status)
         if _wants_html():
             if not result.get("ok"):
                 flash(_command_failure_message(result), "error")
@@ -711,11 +731,12 @@ def _register_routes(app: Flask) -> None:
             return ("invalid pair (expected btc, usdt, or both)", 400)
         try:
             results = enqueue_batch(app, "cancel_orders", pairs)
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if _wants_html():
-                flash(str(exc), "warning")
-                return _workers_html_response(app, None), 409
-            return (str(exc), 409)
+                flash(message, "warning")
+                return _workers_html_response(app, None), status
+            return (message, status)
         if _wants_html():
             failed = [result for result in results if not result.get("ok")]
             if failed:
@@ -739,11 +760,12 @@ def _register_routes(app: Flask) -> None:
     def admin_backups_create():
         try:
             result = enqueue_and_wait(app, "create_backup", None, payload={"prefix": "manual"})
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if _wants_html():
-                flash(str(exc), "warning")
-                return _backups_html_response(app), 409
-            return (str(exc), 409)
+                flash(message, "warning")
+                return _backups_html_response(app), status
+            return (message, status)
         if _wants_html():
             if not result.get("ok"):
                 flash(_command_failure_message(result), "error")
@@ -769,11 +791,12 @@ def _register_routes(app: Flask) -> None:
                 app, "restore_backup", None,
                 payload={"backup_name": name, "confirm": "RESTORE"},
             )
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if _wants_html():
-                flash(str(exc), "warning")
-                return _backups_html_response(app), 409
-            return (str(exc), 409)
+                flash(message, "warning")
+                return _backups_html_response(app), status
+            return (message, status)
         if _wants_html():
             if not result.get("ok"):
                 flash(_command_failure_message(result), "error")
@@ -816,11 +839,12 @@ def _register_routes(app: Flask) -> None:
             }), 400
         try:
             result = enqueue_and_wait(app, "reset_demo", None, payload={"confirm": "RESET"})
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if _wants_html():
-                flash(str(exc), "warning")
-                return _recovery_html_response(app), 409
-            return (str(exc), 409)
+                flash(message, "warning")
+                return _recovery_html_response(app), status
+            return (message, status)
         if _wants_html():
             if not result.get("ok"):
                 flash(_command_failure_message(result), "error")
@@ -850,11 +874,12 @@ def _register_routes(app: Flask) -> None:
         # exclusively /admin/reset, gated by its own typed confirm field.
         try:
             result = enqueue_and_wait(app, "recover_demo", None)
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if _wants_html():
-                flash(str(exc), "warning")
-                return _recovery_html_response(app), 409
-            return (str(exc), 409)
+                flash(message, "warning")
+                return _recovery_html_response(app), status
+            return (message, status)
         if _wants_html():
             if not result.get("ok"):
                 flash(_command_failure_message(result), "error")
@@ -868,10 +893,11 @@ def _register_routes(app: Flask) -> None:
     def admin_export():
         try:
             result = enqueue_and_wait(app, "create_backup", None, payload={"prefix": "export"})
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if _wants_html():
-                return _error_page(409, str(exc))
-            return (str(exc), 409)
+                return _error_page(status, message)
+            return (message, status)
         backup_name = (result.get("detail") or {}).get("backup")
         if not result.get("ok"):
             if _wants_html():
@@ -1009,12 +1035,13 @@ def _admin_config_post(app: Flask, pair: str, path):
     if request.form.get("action") == "revert":
         try:
             result = enqueue_and_wait(app, "rollback_config", pair)
-        except OperationInProgress as exc:
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
             if wants_html:
                 return render_template(
-                    "admin/config.html", **_config_page_context(app, pair, path, error=str(exc)),
-                ), 409
-            return (str(exc), 409)
+                    "admin/config.html", **_config_page_context(app, pair, path, error=message),
+                ), status
+            return (message, status)
         if not result.get("ok"):
             message = _command_failure_message(result)
             if wants_html:
@@ -1081,12 +1108,13 @@ def _admin_config_post(app: Flask, pair: str, path):
 
     try:
         result = enqueue_and_wait(app, "apply_config", pair, payload={"overrides": validated})
-    except OperationInProgress as exc:
+    except (OperationInProgress, ResultTimeout) as exc:
+        status, message = _control_error(exc)
         if wants_html:
             return render_template(
-                "admin/config.html", **_config_page_context(app, pair, path, error=str(exc)),
-            ), 409
-        return (str(exc), 409)
+                "admin/config.html", **_config_page_context(app, pair, path, error=message),
+            ), status
+        return (message, status)
     if not result.get("ok"):
         message = _command_failure_message(result)
         if wants_html:
