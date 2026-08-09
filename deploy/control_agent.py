@@ -73,14 +73,24 @@ SERVICE_NAME = {"btc": "btc-demo", "usdt": "usdt-demo"}
 LOCK_SUFFIX = {"btc": "btcirt", "usdt": "usdtirt"}
 
 # Fixed argv per (action, pair) -- 6 arrays total, no string interpolation.
+WORKER_COMMAND_SUFFIX: Dict[str, List[str]] = {
+    "start_worker": ["up", "-d", "--no-deps", "--no-recreate"],
+    "stop_worker": ["stop"],
+    "restart_worker": ["restart"],
+}
 WORKER_ARGV: Dict[tuple, List[str]] = {
-    (action, pair): COMPOSE_ARGV_PREFIX + [verb, SERVICE_NAME[pair]]
-    for action, verb in (("start_worker", "start"), ("stop_worker", "stop"), ("restart_worker", "restart"))
+    (action, pair): COMPOSE_ARGV_PREFIX + suffix + [SERVICE_NAME[pair]]
+    for action, suffix in WORKER_COMMAND_SUFFIX.items()
     for pair in PAIRS
 }
 LOCAL_WORKER_ARGV: Dict[tuple, List[str]] = {
-    (action, pair): LOCAL_COMPOSE_ARGV_PREFIX + [verb, SERVICE_NAME[pair]]
-    for action, verb in (("start_worker", "start"), ("stop_worker", "stop"), ("restart_worker", "restart"))
+    (action, pair): LOCAL_COMPOSE_ARGV_PREFIX + suffix + [SERVICE_NAME[pair]]
+    for action, suffix in WORKER_COMMAND_SUFFIX.items()
+    for pair in PAIRS
+}
+LOCAL_WORKER_STATUS_ARGV: Dict[str, List[str]] = {
+    pair: LOCAL_COMPOSE_ARGV_PREFIX
+    + ["ps", "--status", "running", "--services", SERVICE_NAME[pair]]
     for pair in PAIRS
 }
 
@@ -143,10 +153,24 @@ def worker_lock_path(paths: AgentPaths, pair: str) -> Path:
     return paths.state_dir / f".worker_{LOCK_SUFFIX[pair]}.lock"
 
 
-def is_worker_running(paths: AgentPaths, pair: str) -> bool:
+def is_worker_running(
+    paths: AgentPaths, pair: str, run_argv: Callable = None
+) -> bool:
     """A running worker holds an exclusive flock on its lease file (see
     session.py's WorkerLease). If we can acquire the lock, nothing is
-    holding it -- the worker is not running."""
+    holding it -- the worker is not running. Docker Desktop does not
+    propagate container-held flocks to the macOS host, so local mode uses
+    Compose's fixed service-status query instead."""
+    if paths.mode == "local":
+        run_argv = run_argv or _default_run_argv
+        argv = list(LOCAL_WORKER_STATUS_ARGV[pair])
+        completed = run_argv(
+            argv, cwd=str(paths.app_root), capture_output=True, text=True
+        )
+        if getattr(completed, "returncode", 1) != 0:
+            return False
+        running_services = set((getattr(completed, "stdout", "") or "").splitlines())
+        return SERVICE_NAME[pair] in running_services
     lock_path = worker_lock_path(paths, pair)
     if not lock_path.exists():
         return False
@@ -272,7 +296,7 @@ def handle_rollback_config(paths, pair, payload, run_argv):
 
 
 def handle_new_session(paths, pair, payload, run_argv):
-    running_before = {p: is_worker_running(paths, p) for p in PAIRS}
+    running_before = {p: is_worker_running(paths, p, run_argv) for p in PAIRS}
     stopped = []
     for p, was_running in running_before.items():
         if was_running:
@@ -320,7 +344,7 @@ def handle_new_session(paths, pair, payload, run_argv):
 
 
 def handle_cancel_orders(paths, pair, payload, run_argv):
-    was_running = is_worker_running(paths, pair)
+    was_running = is_worker_running(paths, pair, run_argv)
     if not was_running:
         return AgentResult(True, {
             "pair": pair, "was_running": False, "now_running": False,
@@ -344,7 +368,7 @@ def handle_create_backup(paths, pair, payload, run_argv):
 def handle_reset_demo(paths, pair, payload, run_argv):
     if (payload or {}).get("confirm") != "RESET":
         return AgentResult(False, {"error": "confirmation required"})
-    running_before = {p: is_worker_running(paths, p) for p in PAIRS}
+    running_before = {p: is_worker_running(paths, p, run_argv) for p in PAIRS}
     for p, was_running in running_before.items():
         if was_running:
             run_worker_command(paths, "stop_worker", p, run_argv)
@@ -398,7 +422,7 @@ def handle_restore_backup(paths, pair, payload, run_argv):
     if backup_dir is None:
         return AgentResult(False, {"error": "invalid or unknown backup name"})
 
-    running_before = {p: is_worker_running(paths, p) for p in PAIRS}
+    running_before = {p: is_worker_running(paths, p, run_argv) for p in PAIRS}
     for p, was_running in running_before.items():
         if was_running:
             run_worker_command(paths, "stop_worker", p, run_argv)
@@ -426,7 +450,7 @@ def handle_recover_demo(paths, pair, payload, run_argv):
     stale_locks = []
     for p in PAIRS:
         lock_path = worker_lock_path(paths, p)
-        if lock_path.exists() and not is_worker_running(paths, p):
+        if lock_path.exists() and not is_worker_running(paths, p, run_argv):
             lock_path.unlink()
             stale_locks.append(p)
 

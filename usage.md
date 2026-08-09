@@ -294,11 +294,15 @@ hardcoded CSV) -- superseded by this dashboard, no functional loss.
 **Admin control page:** a separate, authenticated management surface for
 the Demo stack (worker start/stop/restart, per-pair config, sessions,
 order cancellation, backup/restore, reset, recovery) lives at
-`market_maker/admin_app.py` (`python3 admin_app.py`, served at `/admin/`
-in production, behind its own Basic Auth + login). It is Demo-only --
-no Real Mode option exists anywhere in it -- and never mutates state
-directly; see `docs/deployment/ADMIN_PAGE.md` for routes, security
-model, and deployment steps.
+`market_maker/admin_app.py`, served at `/admin/` behind its own login (plus
+Nginx/Basic Auth in production). Runs as the `admin` service in both
+`docker-compose.yml` (local) and `deploy/docker-compose.production.yml`
+(server) -- `docker compose up -d admin`, or natively with
+`python3 admin_app.py` if you'd rather not use Docker locally -- see §7 for
+the full local/server walkthrough and the local host-agent command. It is
+Demo-only -- no Real Mode option exists anywhere in it
+-- and never mutates state directly; see `docs/deployment/ADMIN_PAGE.md`
+for routes, security model, and deployment steps.
 
 ---
 
@@ -574,11 +578,37 @@ as USDT or BTC.
 Everything below is Docker Compose. §1/§1b cover running `run.py`/
 `dashboard.py` natively (no Docker) if you want that instead.
 
-**Local** uses the root `docker-compose.yml` — 4 services: `session-init`,
-`btc-demo`, `usdt-demo`, `dashboard`. It does not include `admin` (run
-`python3 admin_app.py` natively from `market_maker/` if you want the admin
-panel locally — serves `http://localhost:8051/admin/`, no Nginx/Basic Auth
-layer since that's a production-only concern).
+**Local** uses the root `docker-compose.yml` — 5 services: `session-init`,
+`btc-demo`, `usdt-demo`, `dashboard`, and `admin`.
+
+**Local Admin mutations:** the Admin container never receives the Docker
+socket. Run the allow-listed host control agent in a second terminal while
+using config, worker, session, backup, or recovery actions:
+
+```sh
+python3 deploy/control_agent.py --mode local
+```
+
+Stop it with `Ctrl-C` afterward. Local mode uses the root Compose project and
+`market_maker/results`; queued actions execute normally rather than simply
+timing out. Inspect `market_maker/results/control/commands/` before starting
+the agent if this checkout may contain older queued requests.
+
+The per-pair configuration surface contains exactly nine fields:
+
+| Field | Application mode |
+|---|---|
+| `order_size`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step` | Hot — applied at a worker round boundary |
+| `demo_inv_initial`, `cash_initial`, `commission_perc` | New session — saved now, applied by **New session** |
+
+No current field requires a restart. Desired overlays are pair-isolated and
+persist across worker/Compose restarts. Runtime snapshots separately report
+desired, applied, and pending values plus a digest and stack-session identity.
+**Applied now** is acknowledged; **Saved; waiting for running worker** needs a
+running worker/boundary; **Saved; applies next session** needs **New session**;
+**Worker stopped**, **Runtime status unknown/stale**, and **Failed to apply**
+mean start the worker, verify session/snapshot ownership, or inspect the
+recorded worker error respectively.
 
 **Server** (`ssh ubuntu@185.206.95.141`, `/home/ubuntu/limit-order-book`)
 uses `deploy/docker-compose.production.yml` — the same 4 services plus a
@@ -617,8 +647,8 @@ docker compose logs -f                # follow every service's logs at once
 ### 7.2 Local: one service at a time
 
 Valid service names: `session-init` (runs once and exits — not something
-you start/stop directly, it's a dependency of the other three),
-`btc-demo`, `usdt-demo`, `dashboard`.
+you start/stop directly, it's a dependency of the other four), `btc-demo`,
+`usdt-demo`, `dashboard`, `admin`.
 
 ```sh
 docker compose up -d btc-demo           # create+start just BTC (starts session-init first if needed)
@@ -626,6 +656,7 @@ docker compose up -d --build btc-demo   # same, but rebuild its image first
 docker compose start btc-demo           # resume a previously-`stop`ped BTC container
 docker compose stop btc-demo            # halt just BTC, leave usdt-demo/dashboard running
 docker compose restart usdt-demo        # restart just USDT, same session, no rebuild
+docker compose restart admin            # restart just the admin panel (e.g. after editing .env)
 docker compose logs -f dashboard        # follow one service's logs
 ```
 

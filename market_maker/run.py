@@ -166,6 +166,10 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
                 hot_terminal_order_limit=cfg.demo_hot_terminal_order_limit,
                 archive_max_bytes=cfg.demo_archive_max_bytes,
             )
+            # Freeze new-session fields before the first market round.  A
+            # same-session process restart must reload this seed instead of
+            # consuming values that were submitted for a future session.
+            ledger._persist()
         exchange = DemoExchangeClient(
             market_data=real_exchange,
             pair=cfg.pair,

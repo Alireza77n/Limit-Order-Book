@@ -5,9 +5,10 @@ Implementation plan: `docs/superpowers/plans/2026-08-01-admin-demo-control.md`.
 Branch: `parsaoryani/admin-demo-control`. This document is written so a
 separate session ("Codex") can execute the actual server deployment without
 needing the design conversation's context. **Nothing in this document has
-been executed against the production host by the session that wrote it** —
-it is documentation and local-only artifact validation (compose `config`,
-`bash -n`), not a deployment.
+been executed against the production host by the session that wrote it.** A
+real local Docker/Admin/control-agent/Dashboard validation was completed on
+2026-08-09; see
+`docs/superpowers/reports/2026-08-09-admin-config-synchronization-validation.md`.
 
 ## What this feature is
 
@@ -55,6 +56,45 @@ Every mutating route is `@login_required` + `@csrf_protected`. Destructive
 routes (`reset`, `restore_backup`) require the exact typed `confirm` value
 server-side — a JS confirm dialog alone is not trusted.
 
+## Demo configuration synchronization
+
+The Admin exposes exactly nine numeric fields for each pair. The six hot
+fields are applied by the running worker at a round boundary; the three
+new-session fields remain pending until **New session** is submitted. No
+current field requires a worker or stack restart.
+
+| Field | Mode | Meaning |
+|---|---|---|
+| `order_size` | hot | Base-asset amount per order round |
+| `inv_max` | hot | Maximum inventory |
+| `inv_min` | hot | Minimum inventory |
+| `cancel_after_minutes` | hot | Resting-order cancellation age |
+| `depth_max` | hot | Maximum strategy order-book depth |
+| `time_step` | hot | Seconds between quoting rounds |
+| `demo_inv_initial` | new session | Starting Demo inventory |
+| `cash_initial` | new session | Starting quote cash |
+| `commission_perc` | new session | Simulated fee fraction |
+
+The resolved desired values are pair-isolated in
+`demo_config_btc.json`/`demo_config_usdt.json`; writes are atomic and the
+prior overlay is retained as `.previous`. Workers own
+`runtime_config_<pair>.json`, which records the stack session, applied
+values, pending new-session values, desired digest, timestamp, and error.
+The initial paper-ledger seed is persisted before the first round, so a
+same-session process restart cannot consume future-session values. Bind
+mounts preserve overlays, ledgers, and snapshots across Compose recreation.
+
+Status labels mean:
+
+| Label | Operator action |
+|---|---|
+| **Applied now** | Desired digest and applied hot values are acknowledged |
+| **Saved; waiting for running worker** | Start the worker and wait for a round boundary |
+| **Saved; applies next session** | Submit **New session** when ready |
+| **Worker stopped; applies when started** | Start the worker; hot values apply at its boundary |
+| **Runtime status unknown/stale** | Snapshot is missing, malformed, wrong-pair, or from another stack session |
+| **Failed to apply** | Inspect the worker error and control-agent audit/result |
+
 ## Security controls
 
 - HTTPS via the existing Nginx cert; separate Basic Auth realm/`.htpasswd`
@@ -63,7 +103,7 @@ server-side — a JS confirm dialog alone is not trusted.
 - `runtime/control/control.lock` serializes management operations; a
   concurrent request gets `409` (`OperationInProgress`), never a second
   enqueue.
-- Closed enums for both config fields (`demo_config.FIELD_SPECS`) and
+- Closed enums for both config fields (`demo_config.FIELD_DEFINITIONS`) and
   agent actions (`control_queue.ACTIONS`) — allow-list, not a blocklist.
 - No Docker socket anywhere in `lob-admin`. `deploy/control_agent.py` only
   ever runs fully-hardcoded argv arrays (`WORKER_ARGV`) or calls fixed
@@ -97,6 +137,26 @@ server-side — a JS confirm dialog alone is not trusted.
   limits, healthcheck, `admin.env.example` has no committed secrets).
 
 Run locally: `python3 -m pytest -q` from the repo root.
+
+## Local operation
+
+The Admin container deliberately has no Docker socket and cannot execute its
+own queued mutations. For a local stack, run the host agent in a second
+terminal for as long as Admin actions are needed:
+
+```bash
+docker compose up -d --build --wait
+python3 deploy/control_agent.py --mode local
+```
+
+Stop the agent with `Ctrl-C` when finished. Local mode uses the root Compose
+project and `market_maker/results`; it queries the fixed BTC/USDT service
+allow-list for liveness and starts workers with `--no-deps`, so `session-init`
+cannot rotate the session except during an explicit stack/session operation.
+Starting the agent processes any already queued commands, so inspect
+`market_maker/results/control/commands/` first when preserving an existing
+runtime. Config and worker actions do not inherently time out locally—the
+agent must simply be running while they are submitted.
 
 ## Step-by-step deployment (for the executing session)
 

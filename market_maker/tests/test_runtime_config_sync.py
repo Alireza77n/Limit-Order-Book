@@ -238,6 +238,38 @@ def test_same_session_restart_keeps_commission_pending(tmp_path, monkeypatch):
     ]["commission_perc"] == 0.02
 
 
+def test_same_session_restart_before_first_round_keeps_session_fields_pending(
+    tmp_path, monkeypatch
+):
+    first = make_runtime_bot(tmp_path, monkeypatch, session="s1")
+    starting_values = (
+        first.exchange.ledger.inventory,
+        first.exchange.ledger.cash,
+        first.exchange.ledger.commission_perc,
+    )
+    save_desired(
+        tmp_path,
+        demo_inv_initial=7,
+        cash_initial=900,
+        commission_perc=0.02,
+    )
+
+    restarted = make_runtime_bot(tmp_path, monkeypatch, session="s1")
+
+    assert (
+        restarted.exchange.ledger.inventory,
+        restarted.exchange.ledger.cash,
+        restarted.exchange.ledger.commission_perc,
+    ) == starting_values
+    assert demo_config.read_runtime_snapshot(tmp_path, "usdt")[
+        "pending_new_session"
+    ] == {
+        "demo_inv_initial": 7.0,
+        "cash_initial": 900.0,
+        "commission_perc": 0.02,
+    }
+
+
 def test_new_session_consumes_pending_inventory_cash_and_commission(
     tmp_path, monkeypatch
 ):

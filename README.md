@@ -962,7 +962,7 @@ Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with 
 
 A comprehensive, live-updating history dashboard (`python dashboard.py`) covers wealth, inventory, cash, depth levels, spreads, and no-quote episode state for every real/demo × BTC/USDT combination — see usage.md §3. A separate, authenticated admin control page (`python admin_app.py`, Demo-only, no Real Mode surface) adds worker/session/config/backup control on top of that read-only view — see usage.md §3 and `docs/deployment/ADMIN_PAGE.md`.
 
-`docker compose up -d --build --wait` (repo root) runs a shared session initializer, both pairs in continuous demo mode, and the dashboard, sharing one results volume — see usage.md §6.
+`docker compose up -d --build --wait` (repo root) runs a shared session initializer, both pairs in continuous demo mode, the dashboard, and the authenticated Admin service, sharing bind-mounted runtime data. Admin mutations use the separate local host agent (`python3 deploy/control_agent.py --mode local`) rather than a Docker socket — see usage.md §6–7.
 
 ---
 

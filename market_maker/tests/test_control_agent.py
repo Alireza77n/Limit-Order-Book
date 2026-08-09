@@ -58,9 +58,42 @@ def test_local_mode_uses_root_compose_and_market_maker_results(tmp_path):
     assert "deploy/docker-compose.production.yml" not in argv
 
 
+def test_local_new_session_uses_compose_liveness_and_restarts_workers(tmp_path):
+    paths = ca.build_agent_paths("local", tmp_path)
+    paths.state_dir.mkdir(parents=True)
+    calls = []
+
+    def local_runner(argv, **kwargs):
+        calls.append(list(argv))
+        completed = FakeCompleted(0)
+        completed.stdout = f"{argv[-1]}\n" if "ps" in argv else ""
+        return completed
+
+    result = ca.handle_new_session(paths, None, None, local_runner)
+
+    assert result.ok is True
+    assert result.detail["restarted"] == ["btc", "usdt"]
+    assert calls[:2] == [
+        ca.LOCAL_COMPOSE_ARGV_PREFIX
+        + ["ps", "--status", "running", "--services", "btc-demo"],
+        ca.LOCAL_COMPOSE_ARGV_PREFIX
+        + ["ps", "--status", "running", "--services", "usdt-demo"],
+    ]
+    assert calls[2:] == [
+        ca.LOCAL_COMPOSE_ARGV_PREFIX + ["stop", "btc-demo"],
+        ca.LOCAL_COMPOSE_ARGV_PREFIX + ["stop", "usdt-demo"],
+        ca.LOCAL_COMPOSE_ARGV_PREFIX
+        + ["up", "-d", "--no-deps", "--no-recreate", "btc-demo"],
+        ca.LOCAL_COMPOSE_ARGV_PREFIX
+        + ["up", "-d", "--no-deps", "--no-recreate", "usdt-demo"],
+    ]
+
+
 def test_resolve_worker_argv_fixed_dict_lookup():
     argv = ca.resolve_worker_argv("start_worker", "btc")
-    assert argv == ca.COMPOSE_ARGV_PREFIX + ["start", "btc-demo"]
+    assert argv == ca.COMPOSE_ARGV_PREFIX + [
+        "up", "-d", "--no-deps", "--no-recreate", "btc-demo",
+    ]
 
 
 @pytest.mark.parametrize("action,pair", [
@@ -124,8 +157,11 @@ def test_cancel_orders_stops_and_restarts_when_running(tmp_path):
     assert result.ok is True
     assert result.detail["was_running"] is True
     assert result.detail["now_running"] is True
-    verbs = [call[0][-2] for call in runner.calls]  # second-to-last argv element is the compose verb
-    assert verbs == ["stop", "start"]
+    assert [call[0] for call in runner.calls] == [
+        ca.COMPOSE_ARGV_PREFIX + ["stop", "btc-demo"],
+        ca.COMPOSE_ARGV_PREFIX
+        + ["up", "-d", "--no-deps", "--no-recreate", "btc-demo"],
+    ]
 
 
 def test_new_session_aborts_if_a_running_worker_cannot_stop(tmp_path):
@@ -209,7 +245,11 @@ def test_new_session_reports_partial_failure_if_worker_cannot_restart(tmp_path):
     assert result.detail["failures"] == [{
         "pair": "btc",
         "action": "start_worker",
-        "detail": {"argv": ca.COMPOSE_ARGV_PREFIX + ["start", "btc-demo"], "returncode": 1},
+        "detail": {
+            "argv": ca.COMPOSE_ARGV_PREFIX
+            + ["up", "-d", "--no-deps", "--no-recreate", "btc-demo"],
+            "returncode": 1,
+        },
     }]
     assert (paths.state_dir / "stack_session.json").exists()
 
