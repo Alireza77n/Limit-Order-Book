@@ -47,6 +47,17 @@
       All orders here are simulated paper orders; no real order is ever placed.
     </p>
 
+    <p class="text-muted mb-md">
+      {% if session_id %}
+        Current session only: <code>{{ session_id }}</code>. Round numbers restart
+        at 1 each session, so earlier sessions are excluded to keep this table
+        consistent with the Dashboard.
+      {% else %}
+        No active session found — showing all recorded rounds, which may span
+        several sessions with repeating round numbers.
+      {% endif %}
+    </p>
+
     <form method="get" class="filters-form" style="display: flex; gap: var(--spacing-md); flex-wrap: wrap; margin-bottom: var(--spacing-lg); align-items: end;">
       <input type="hidden" name="pair" value="{{ selected_pair }}">
       <input type="hidden" name="view" value="{{ view }}">
@@ -72,7 +83,7 @@
       <a href="{{ url_for('admin_orders', pair=selected_pair, view=view) }}" class="btn btn-ghost">Clear</a>
     </form>
 
-    {% if orders %}
+    {% if rows %}
       <div class="table-wrapper">
         <table class="table">
           <thead>
@@ -91,38 +102,37 @@
             </tr>
           </thead>
           <tbody>
-            {% for order in orders %}
-              {% set is_buy = order.get('Buy Order ID') is not none and order.get('Buy Order ID') == order.get('Buy Order ID') %}
-              {% set p = 'Buy' if is_buy else 'Sell' %}
-              {% set status = order.get(p ~ ' Status') %}
+            {# One row per ORDER: a round that both bought and sold yields two
+               rows. Rendering one row per round used to hide the sell. #}
+            {% for row in rows %}
               <tr>
-                <td class="mono">{{ cell(order.get('Timestamp')[:19].replace('T', ' ') if order.get('Timestamp') else none) }}</td>
-                <td class="mono text-right">{{ cell(order.get('Round')) }}</td>
+                <td class="mono">{{ cell(row.timestamp[:19].replace('T', ' ') if row.timestamp else none) }}</td>
+                <td class="mono text-right">{{ cell(row.round) }}</td>
                 <td>
-                  {% if not order.is_order %}
-                    <span class="status-badge status-warning">Decision</span>
-                  {% elif is_buy %}
+                  {% if not row.is_order %}
+                    <span class="status-badge status-warning">Decision{% if row.side %} · {{ row.side|capitalize }}{% endif %}</span>
+                  {% elif row.side == 'buy' %}
                     <span class="status-badge status-running">Buy</span>
                   {% else %}
                     <span class="status-badge status-stopped">Sell</span>
                   {% endif %}
                 </td>
                 <td>
-                  {% if not order.is_order %}
-                    <span class="mono">{{ cell(order.decision_reason) }}</span>
-                  {% elif status == 'filled' %}<span class="status-badge status-running">Filled</span>
-                  {% elif status == 'partially_filled' %}<span class="status-badge status-warning">Partial</span>
-                  {% elif status == 'open' %}<span class="status-badge">Open</span>
-                  {% elif status == 'cancelled' %}<span class="status-badge status-stopped">Cancelled</span>
-                  {% else %}{{ cell(status) }}{% endif %}
+                  {% if not row.is_order %}
+                    <span class="mono">{{ cell(row.decision_reason) }}</span>
+                  {% elif row.status == 'filled' %}<span class="status-badge status-running">Filled</span>
+                  {% elif row.status == 'partially_filled' %}<span class="status-badge status-warning">Partial</span>
+                  {% elif row.status == 'open' %}<span class="status-badge">Open</span>
+                  {% elif row.status == 'cancelled' %}<span class="status-badge status-stopped">Cancelled</span>
+                  {% else %}{{ cell(row.status) }}{% endif %}
                 </td>
-                <td class="mono">{{ cell(order.get(p ~ ' Order ID')) }}</td>
-                <td class="mono text-right">{{ cell(order.get(p ~ ' Original Amount'), '%.8f') }}</td>
-                <td class="mono text-right">{{ cell(order.get(p ~ ' Matched Amount'), '%.8f') }}</td>
-                <td class="mono text-right">{{ cell(order.get(p ~ ' Remaining Amount'), '%.8f') }}</td>
-                <td class="mono text-right">{{ cell(order.get(p ~ ' Limit Price'), '%.2f') }}</td>
-                <td class="mono text-right">{{ cell(order.get(p ~ ' Selected Level')) }}</td>
-                <td>{{ cell(order.get(p ~ ' Fill Reason')) }}</td>
+                <td class="mono">{{ cell(row.order_id) }}</td>
+                <td class="mono text-right">{{ cell(row.original, '%.8f') }}</td>
+                <td class="mono text-right">{{ cell(row.matched, '%.8f') }}</td>
+                <td class="mono text-right">{{ cell(row.remaining, '%.8f') }}</td>
+                <td class="mono text-right">{{ cell(row.limit_price, '%.2f') }}</td>
+                <td class="mono text-right">{{ cell(row.level) }}</td>
+                <td>{{ cell(row.fill_reason) }}</td>
               </tr>
             {% endfor %}
           </tbody>

@@ -49,7 +49,7 @@ from demo_config import (
     validate_overrides,
 )
 from config import TRADING_PROFILES, demo_csv_path
-from dashboard import activity_records, load_track
+from dashboard import activity_records, filter_session, load_track
 
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
 PAIRS = ("btc", "usdt")
@@ -386,6 +386,71 @@ def _decision_reason(record):
         if _has_value(value):
             return value
     return None
+
+
+def _side_decision_reason(record, prefix):
+    """Why one side of a round produced no order."""
+    for key in (f"{prefix} Not Sent Reason", "No Quote Reason"):
+        value = record.get(key)
+        if _has_value(value):
+            return value
+    value = record.get(f"{prefix} Status")
+    return value if _has_value(value) else None
+
+
+def _display_rows(records, *, side=None, include_decisions=False):
+    """Explode round records into ONE ROW PER ORDER.
+
+    engine.py writes one CSV row per ROUND, carrying a Buy* order and a Sell*
+    order side by side. The Orders table used to render one row per round and
+    pick whichever side had an order id first, so every round that both bought
+    and sold displayed only the buy and silently dropped the sell -- 11 of 13
+    rounds in the observed session hid a sell that way, including three
+    completed sell fills that the Dashboard showed and the Admin panel did not.
+    """
+    rows = []
+    for record in records:
+        emitted = False
+        for prefix in ("Buy", "Sell"):
+            if side and side != prefix.lower():
+                continue
+            order_id = record.get(f"{prefix} Order ID")
+            status = record.get(f"{prefix} Status")
+            if not _has_value(order_id) and not _has_value(status):
+                continue
+            is_order = _has_value(order_id)
+            if not is_order and not include_decisions:
+                continue
+            rows.append({
+                "timestamp": record.get("Timestamp"),
+                "round": record.get("Round"),
+                "side": prefix.lower(),
+                "is_order": is_order,
+                "status": status,
+                "order_id": order_id if is_order else None,
+                "original": record.get(f"{prefix} Original Amount"),
+                "matched": record.get(f"{prefix} Matched Amount"),
+                "remaining": record.get(f"{prefix} Remaining Amount"),
+                "limit_price": record.get(f"{prefix} Limit Price"),
+                "level": record.get(f"{prefix} Selected Level"),
+                "fill_reason": record.get(f"{prefix} Fill Reason"),
+                "decision_reason": None if is_order else _side_decision_reason(record, prefix),
+            })
+            emitted = True
+        if not emitted and include_decisions and not side:
+            # Neither side quoted this round (no_quote) -- one sideless row.
+            rows.append({
+                "timestamp": record.get("Timestamp"),
+                "round": record.get("Round"),
+                "side": None,
+                "is_order": False,
+                "status": None,
+                "order_id": None,
+                "original": None, "matched": None, "remaining": None,
+                "limit_price": None, "level": None, "fill_reason": None,
+                "decision_reason": _decision_reason(record),
+            })
+    return rows
 
 
 def _filter_orders(records, side=None, status=None, include_decisions=False):
@@ -940,6 +1005,15 @@ def _register_routes(app: Flask) -> None:
         csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
         csv_path = os.path.join(app.config["RESULTS_DIR"], csv_name)
         df = load_track(csv_path)  # dashboard.py's own pure loader -- not re-implemented here
+        # Scope to the running session. The CSV accumulates every session ever
+        # run and round numbers restart at 1 in each, so without this the table
+        # listed three different "Round 8" rows from three sessions -- and
+        # disagreed with the Dashboard, which does filter (dashboard.filter_session).
+        # The Admin panel manages the *running* stack, so that is the session
+        # it must report on.
+        session_id = _session_id(app)
+        if df is not None and session_id:
+            df = filter_session(df, session_id)
         records = activity_records(df) if df is not None else []
         filtered = _filter_orders(
             records, side=side, status=status, include_decisions=include_decisions
@@ -950,10 +1024,17 @@ def _register_routes(app: Flask) -> None:
             record["decision_reason"] = None if record["is_order"] else _decision_reason(record)
         if _wants_html():
             return render_template(
-                "admin/orders.html", orders=orders, selected_pair=pair,
+                "admin/orders.html",
+                # One row per ORDER, so a round that both bought and sold shows
+                # both. The JSON keeps the round-shaped records it always
+                # returned -- those were never lossy, only the table was.
+                rows=_display_rows(
+                    orders, side=side, include_decisions=include_decisions
+                ),
+                selected_pair=pair,
                 side_filter=side, status_filter=status, view=view,
                 decision_count=sum(1 for r in records if not _is_real_order(r)),
-                csrf_token=get_csrf_token(), session_id=_session_id(app),
+                csrf_token=get_csrf_token(), session_id=session_id,
             )
         return jsonify({"orders": orders})
 

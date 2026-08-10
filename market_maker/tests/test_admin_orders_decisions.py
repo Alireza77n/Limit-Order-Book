@@ -86,6 +86,77 @@ def _login(client):
     client.post("/admin/login", data={"username": "admin", "password": "pw", "csrf_token": token})
 
 
+def test_orders_view_shows_only_the_running_session(app, client, tmp_path):
+    """The CSV keeps every session and round numbers restart at 1 in each, so
+    an unfiltered table listed several different 'Round 1' rows and contradicted
+    the Dashboard, which does filter. Only the running session may appear."""
+    csv_name = Path(demo_csv_path(TRADING_PROFILES["usdt"]["output_csv"])).name
+    stale = [
+        # Same round numbers as the live rows, from an older session, with the
+        # opposite outcome -- this is exactly what made the two views disagree.
+        {"Session_id": "s0", "Round": 1, "Timestamp": "2026-07-31 12:00:00",
+         "Quote Status": "quote_generated", "Bid Price": 90.0, "Ask Price": 95.0,
+         "Buy Order ID": "usdtirt-buy-1-000", "Buy Status": "cancelled",
+         "Buy Original Amount": 1.0, "Buy Matched Amount": 0.0},
+        {"Session_id": "s0", "Round": 5, "Timestamp": "2026-07-31 12:00:40",
+         "Quote Status": "quote_generated", "Bid Price": 90.0, "Ask Price": 95.0,
+         "Sell Order ID": "usdtirt-sell-5-000", "Sell Status": "cancelled",
+         "Sell Original Amount": 1.0, "Sell Matched Amount": 0.0},
+    ]
+    pd.DataFrame(stale + ROWS).to_csv(tmp_path / "results" / csv_name, index=False)
+    _login(client)
+
+    body = client.get("/admin/orders?pair=usdt&view=decisions").get_json()["orders"]
+
+    assert {row["Session_id"] for row in body} == {"s1"}
+    ids = {row.get("Buy Order ID") for row in body} | {row.get("Sell Order ID") for row in body}
+    assert "usdtirt-buy-1-000" not in ids
+    assert "usdtirt-sell-5-000" not in ids
+    # Each round appears once, so a round number identifies one row again.
+    rounds = [row["Round"] for row in body]
+    assert len(rounds) == len(set(rounds))
+
+
+def test_a_round_that_bought_and_sold_shows_both_orders(app, client, tmp_path):
+    """engine.py writes one CSV row per ROUND carrying both a buy and a sell.
+    The table rendered one row per round and picked the buy whenever it existed,
+    so completed sell fills were invisible in Admin while the Dashboard showed
+    them. Both orders must appear."""
+    csv_name = Path(demo_csv_path(TRADING_PROFILES["usdt"]["output_csv"])).name
+    both = [{
+        "Session_id": "s1", "Round": 8, "Timestamp": "2026-08-01 12:01:00",
+        "Quote Status": "quote_generated", "Bid Price": 98.0, "Ask Price": 101.0,
+        "Buy Order ID": "usdtirt-buy-8-888", "Buy Status": "filled",
+        "Buy Original Amount": 1.0, "Buy Matched Amount": 1.0,
+        "Sell Order ID": "usdtirt-sell-8-999", "Sell Status": "filled",
+        "Sell Original Amount": 1.0, "Sell Matched Amount": 1.0,
+    }]
+    pd.DataFrame(both).to_csv(tmp_path / "results" / csv_name, index=False)
+    _login(client)
+
+    html = client.get("/admin/orders?pair=usdt", headers=HTML).get_data(as_text=True)
+
+    assert "usdtirt-buy-8-888" in html
+    assert "usdtirt-sell-8-999" in html
+
+
+def test_side_filter_shows_only_that_side_of_a_two_sided_round(app, client, tmp_path):
+    csv_name = Path(demo_csv_path(TRADING_PROFILES["usdt"]["output_csv"])).name
+    both = [{
+        "Session_id": "s1", "Round": 8, "Timestamp": "2026-08-01 12:01:00",
+        "Quote Status": "quote_generated",
+        "Buy Order ID": "usdtirt-buy-8-888", "Buy Status": "filled",
+        "Sell Order ID": "usdtirt-sell-8-999", "Sell Status": "filled",
+    }]
+    pd.DataFrame(both).to_csv(tmp_path / "results" / csv_name, index=False)
+    _login(client)
+
+    html = client.get("/admin/orders?pair=usdt&side=sell", headers=HTML).get_data(as_text=True)
+
+    assert "usdtirt-sell-8-999" in html
+    assert "usdtirt-buy-8-888" not in html
+
+
 # ---------- pure helpers ----------
 
 def test_is_real_order_requires_an_order_id():

@@ -212,6 +212,40 @@ def test_buy_clamped_above_the_floor_still_sends_a_partial_order(monkeypatch, tm
     assert frame["Buy Original Amount"].iloc[0] == pytest.approx(0.5)
 
 
+def test_fully_locked_inventory_is_not_reported_as_insufficient(monkeypatch, tmp_path):
+    """Holding stock whose every unit is already committed to resting sells is
+    not the same as holding nothing. Calling both 'insufficient_inventory' sent
+    an operator hunting a phantom accounting bug when inv_current showed plenty."""
+    monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    cfg = run.make_cfg("usdt", mode="demo", session_id="locked-session")
+    cfg.output_csv = str(tmp_path / "usdt-demo.csv")
+    cfg.demo_state_path = str(tmp_path / "state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "fees.json")
+    cfg.demo_result_db_path = str(tmp_path / "db.sqlite3")
+    cfg.demo_inv_initial = cfg.inv_initial = 1.0
+    cfg.cash_initial = 1_000.0
+    cfg.order_size = 1.0
+    cfg.max_rounds = 2
+    cfg.time_step = 0
+    # Keep the round-1 sell resting so round 2 finds all inventory locked.
+    cfg.demo_level1_fast_fill_enabled = False
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    times = iter([T0, T0 + timedelta(seconds=1), T0 + timedelta(seconds=2)])
+    bot.now_provider = lambda: next(times)
+    bot.sleep_fn = lambda seconds: None
+    frame = bot.run()
+
+    second = frame.iloc[1]
+    assert second["Locked Inventory"] > 0
+    assert second["Available Inventory"] == pytest.approx(0)
+    assert second["Sell Not Sent Reason"] == "inventory_locked_in_open_orders"
+    assert second["Sell Status"] == "not_sent_inventory_locked_in_open_orders"
+
+
 def test_demo_queue_ahead_uses_displayed_selected_level_volume(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")

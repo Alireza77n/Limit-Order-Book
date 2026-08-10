@@ -1171,6 +1171,13 @@ class SimpleMarketMaker:
                             sell_order = ledger.get_order(result_id)
                         else:
                             sell_reason = "rejected"
+                    elif snapshot.locked_inventory > 0 and snapshot.inventory > float(self.cfg.inv_min):
+                        # Holding stock, but every unit is already committed to
+                        # resting sell orders. Reporting that as
+                        # "insufficient_inventory" reads as "we hold nothing",
+                        # which is the opposite of the truth and sends whoever
+                        # is debugging looking for a phantom accounting bug.
+                        sell_reason = "inventory_locked_in_open_orders"
                     else:
                         sell_reason = "insufficient_inventory"
 
