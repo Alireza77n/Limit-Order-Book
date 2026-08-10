@@ -30,6 +30,12 @@ docs/
 .docker-validation-results*/
 .worktrees/
 
+# Local UI-testing scratch: Playwright MCP output and ad-hoc screenshots
+# dropped at the repo root. Scoped to the root so real image assets
+# committed under docs/ or a future assets/ dir are unaffected.
+.playwright-mcp/
+/*.png
+
 # Docker Compose's live runtime data (backups, control queue/audit, results,
 # state) -- host bind-mount target, never meant to be tracked in git. Never
 # committed on the server either; if it ever gets `git add`ed by accident,
