@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 import run
@@ -129,3 +131,36 @@ def test_real_cumulative_partial_fill_applies_four_then_six_and_no_duplicate(mon
     assert inventory == pytest.approx(9.99)
     assert cash == pytest.approx(1_000)
     assert bot.last_round_fee_irt == 0
+
+
+def test_locked_exposure_guard_applies_identically_in_real_mode():
+    """_locked_cash_guard_reason / _locked_inventory_guard_reason are shared
+    between _run_demo and the real-mode loop -- this proves a real-mode
+    SimpleMarketMaker instance exercises the exact same guard, using its own
+    get_open_order_totals()-shaped inputs (cash/inventory currently held,
+    not a PaperLedger snapshot)."""
+    cfg = run.make_cfg("usdt", mode="real", session_id="real-session")
+    cfg.buy_locked_cash_limit_enabled = True
+    cfg.buy_locked_cash_limit_ratio = 0.3
+    cfg.sell_locked_inventory_limit_enabled = True
+    cfg.sell_locked_inventory_limit_ratio = 0.3
+    exchange = _ScopedExchange()
+    bot = SimpleMarketMaker(cfg, None, exchange, strategy=_Strategy(), persist_to_db=False)
+    bot.session = "real-session"
+    bot.now_provider = lambda: datetime.now(timezone.utc)
+
+    # cash_current=1000 total resource; 270 already locked in open buys.
+    assert bot._locked_cash_guard_reason(
+        locked_buy_cash=270, new_order_cash=30, cash_base=1_000,
+    ) is None  # 300/1000 == 0.30, at the boundary, accepted
+    assert bot._locked_cash_guard_reason(
+        locked_buy_cash=270, new_order_cash=31, cash_base=1_000,
+    ) == "locked_cash_limit"
+
+    # inv_current=10 total resource; 3 already locked in open sells.
+    assert bot._locked_inventory_guard_reason(
+        locked_sell_inventory=3, new_order_amount=0.5, inventory_base=10,
+    ) == "locked_inventory_limit"
+    assert bot._locked_inventory_guard_reason(
+        locked_sell_inventory=2, new_order_amount=0.5, inventory_base=10,
+    ) is None

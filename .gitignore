@@ -18,6 +18,7 @@ deploy/admin.env
 # Data outputs the bot writes at runtime (market_maker/results/)
 *.csv
 market_maker/results/*.json
+market_maker/results/*.json.previous
 market_maker/results/*.lock
 market_maker/results/*.sqlite3
 market_maker/results/*.sqlite3-shm

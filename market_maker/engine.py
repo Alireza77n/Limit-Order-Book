@@ -793,6 +793,89 @@ class SimpleMarketMaker:
         """
         return max(1e-10, abs(float(self.cfg.order_size)) * MIN_ORDER_SIZE_FRACTION)
 
+    @staticmethod
+    def _locked_exposure_ratio(projected_locked: float, resource_total: float) -> float:
+        """projected_locked / resource_total, safe when resource_total is 0.
+
+        Zero resource with zero projected exposure is vacuously fine (ratio
+        0.0, e.g. a disabled/never-funded account). Zero resource with any
+        positive projected exposure can never be financed, so it is reported
+        as unboundedly over any finite configured limit rather than raising.
+        """
+        if resource_total > 0:
+            return projected_locked / resource_total
+        return float("inf") if projected_locked > 0 else 0.0
+
+    def _locked_exposure_guard_reason(
+        self,
+        *,
+        side: str,
+        enabled: bool,
+        limit_ratio: float,
+        locked_before: float,
+        new_order_amount: float,
+        resource_total: float,
+        reason: str,
+    ) -> Optional[str]:
+        """Shared BUY-cash / SELL-inventory pre-trade exposure guard.
+
+        Existing open orders are never touched -- this only ever decides
+        whether to submit a NEW order, evaluated after every other sizing/cap
+        check has already passed (see the call sites in _run_demo and the
+        real-mode loop). Denominator is the account's total relevant
+        resource before reservation (free + already locked for this side),
+        so the ratio does not shrink just because capital moved from free to
+        locked -- see MMConfig.buy_locked_cash_limit_ratio's docstring.
+        """
+        if not enabled:
+            return None
+        projected_locked = locked_before + new_order_amount
+        ratio = self._locked_exposure_ratio(projected_locked, resource_total)
+        if ratio <= limit_ratio:
+            return None
+        print(json.dumps({
+            "event": "locked_exposure_order_rejected",
+            "pair": self.cfg.pair,
+            "side": side,
+            "reason": f"not_sent_{reason}",
+            "locked_before": locked_before,
+            "new_order_amount": new_order_amount,
+            "projected_locked": projected_locked,
+            "resource_total": resource_total,
+            "projected_ratio": ratio,
+            "configured_limit": limit_ratio,
+            "session_id": str(self.session),
+            "process_id": os.getpid(),
+            "timestamp": self.now_provider().isoformat(),
+        }, sort_keys=True), flush=True)
+        return reason
+
+    def _locked_cash_guard_reason(
+        self, *, locked_buy_cash: float, new_order_cash: float, cash_base: float,
+    ) -> Optional[str]:
+        return self._locked_exposure_guard_reason(
+            side="BUY",
+            enabled=bool(getattr(self.cfg, "buy_locked_cash_limit_enabled", False)),
+            limit_ratio=float(getattr(self.cfg, "buy_locked_cash_limit_ratio", 1.0)),
+            locked_before=locked_buy_cash,
+            new_order_amount=new_order_cash,
+            resource_total=cash_base,
+            reason="locked_cash_limit",
+        )
+
+    def _locked_inventory_guard_reason(
+        self, *, locked_sell_inventory: float, new_order_amount: float, inventory_base: float,
+    ) -> Optional[str]:
+        return self._locked_exposure_guard_reason(
+            side="SELL",
+            enabled=bool(getattr(self.cfg, "sell_locked_inventory_limit_enabled", False)),
+            limit_ratio=float(getattr(self.cfg, "sell_locked_inventory_limit_ratio", 1.0)),
+            locked_before=locked_sell_inventory,
+            new_order_amount=new_order_amount,
+            resource_total=inventory_base,
+            reason="locked_inventory_limit",
+        )
+
     def _demo_queue_ahead(self, ob: Dict[str, Any], side: str, level: int) -> float:
         if not self.cfg.demo_queue_enabled:
             return 0.0
@@ -1155,7 +1238,16 @@ class SimpleMarketMaker:
                         0.0,
                         min(self.cfg.order_size, snapshot.available_inventory - float(self.cfg.inv_min)),
                     )
-                    if sell_amount >= self._min_tradable_size():
+                    sell_locked_reason = None
+                    if sell_amount >= self._min_tradable_size() and (
+                        sell_locked_reason := self._locked_inventory_guard_reason(
+                            locked_sell_inventory=snapshot.locked_inventory,
+                            new_order_amount=sell_amount,
+                            inventory_base=snapshot.inventory,
+                        )
+                    ) is not None:
+                        sell_reason = sell_locked_reason
+                    elif sell_amount >= self._min_tradable_size():
                         sell_id = (
                             f"{self.pair.lower()}-sell-{round_no}-{int(now.timestamp() * 1000)}"
                         )
@@ -1188,10 +1280,17 @@ class SimpleMarketMaker:
                     )
                     affordable = snapshot.available_cash / bid_price if bid_price and bid_price > 0 else 0.0
                     buy_amount = max(0.0, min(self.cfg.order_size, affordable))
+                    buy_locked_cash_reason = None
                     if buy_amount < self._min_tradable_size():
                         buy_reason = "insufficient_cash"
                     elif buy_locked_amount + snapshot.inventory + self.cfg.order_size >= self.cfg.inv_max:
                         buy_reason = "inventory_cap"
+                    elif (buy_locked_cash_reason := self._locked_cash_guard_reason(
+                        locked_buy_cash=snapshot.locked_cash,
+                        new_order_cash=buy_amount * bid_price,
+                        cash_base=snapshot.cash,
+                    )) is not None:
+                        buy_reason = buy_locked_cash_reason
                     else:
                         buy_id = (
                             f"{self.pair.lower()}-buy-{round_no}-{int(now.timestamp() * 1000)}"
@@ -1513,6 +1612,12 @@ class SimpleMarketMaker:
     
                     # SELL: cap by available (inventory minus already-locked sells)
                     sell_size = max(0.0, min(self.cfg.order_size, (inv_current - sell_locked['amount']) - float(self.cfg.inv_min)))
+                    if sell_size >= self._min_tradable_size() and self._locked_inventory_guard_reason(
+                        locked_sell_inventory=sell_locked['amount'],
+                        new_order_amount=sell_size,
+                        inventory_base=inv_current,
+                    ) is not None:
+                        sell_size = 0.0  # blocked by the locked-inventory guard; do not submit
                     if sell_size >= self._min_tradable_size():
                         sell_id = self.send_order(
                             order_type="sell",
@@ -1535,6 +1640,12 @@ class SimpleMarketMaker:
                         buy_affordable_base = 0.0
     
                     buy_size = max(0.0, min(self.cfg.order_size, buy_affordable_base))
+                    if buy_size >= self._min_tradable_size() and self._locked_cash_guard_reason(
+                        locked_buy_cash=buy_locked['cash'],
+                        new_order_cash=buy_size * bid_price,
+                        cash_base=cash_current,
+                    ) is not None:
+                        buy_size = 0.0  # blocked by the locked-cash guard; do not submit
                     if (buy_size >= self._min_tradable_size()) and (buy_locked['amount'] + inv_current + self.cfg.order_size < self.cfg.inv_max):
                         buy_id = self.send_order(
                             order_type="buy",

@@ -246,6 +246,165 @@ def test_fully_locked_inventory_is_not_reported_as_insufficient(monkeypatch, tmp
     assert second["Sell Status"] == "not_sent_inventory_locked_in_open_orders"
 
 
+_HOT_LOCKED_GUARD_FIELDS = {
+    "order_size", "inv_max",
+    "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
+    "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
+}
+
+
+def _locked_guard_bot(monkeypatch, tmp_path, *, rounds, **cfg_overrides):
+    """4 rounds against a book that never touches either side's limit price
+    (bid 90 / ask 110 vs a constant best bid 99 / ask 100), so orders rest
+    open and locked exposure accumulates round over round instead of being
+    released by an immediate fill.
+
+    HOT-mode fields (the four new guard fields, order_size, inv_max) must be
+    patched onto TRADING_PROFILES rather than set on cfg directly: the demo
+    worker reloads hot config from the profile+overlay at every round
+    boundary (RuntimeConfigSynchronizer.reload_at_round_boundary), which
+    would otherwise silently revert a direct cfg.attr assignment back to the
+    profile default after round 1 -- exactly the bug this test caught in
+    itself the first time it was written, with the guard reading as
+    permanently disabled.
+    """
+    monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    for key, value in cfg_overrides.items():
+        if key in _HOT_LOCKED_GUARD_FIELDS:
+            monkeypatch.setitem(run.TRADING_PROFILES["usdt"], key, value)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "order_size", 1.0)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inv_max", 1000.0)
+    cfg = run.make_cfg("usdt", mode="demo", session_id="locked-guard-session")
+    cfg.output_csv = str(tmp_path / "usdt-demo.csv")
+    cfg.demo_state_path = str(tmp_path / "usdt-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "fee-state.json")
+    cfg.demo_result_db_path = str(tmp_path / "usdt-demo.sqlite3")
+    cfg.demo_level1_fast_fill_enabled = False
+    cfg.max_rounds = rounds
+    cfg.time_step = 0
+    for key, value in cfg_overrides.items():
+        if key not in _HOT_LOCKED_GUARD_FIELDS:
+            setattr(cfg, key, value)
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    times = iter([T0 + timedelta(seconds=i) for i in range(rounds + 2)])
+    bot.now_provider = lambda: next(times)
+    bot.sleep_fn = lambda seconds: None
+    return bot.run()
+
+
+def test_locked_cash_guard_blocks_only_the_order_that_would_exceed_ratio(monkeypatch, tmp_path):
+    """cash_initial=1000, bid=90, order_size=1.0 -> 90 locked per resting buy.
+    Limit 30% of 1000 = 300: 3 orders (270) fit, a 4th (360) does not.
+
+    The bot cancels every still-resting order when the session ends, which
+    retroactively updates their historical rows to 'cancelled' (see
+    _finish_demo_session) -- so accepted rounds are asserted by the absence
+    of the guard's reason, not by a terminal 'open' status.
+    """
+    frame = _locked_guard_bot(
+        monkeypatch, tmp_path, rounds=4,
+        demo_inv_initial=0.0, cash_initial=1_000.0,
+        buy_locked_cash_limit_enabled=True, buy_locked_cash_limit_ratio=0.3,
+    )
+    statuses = frame["Buy Status"].tolist()
+    assert all(status != "not_sent_locked_cash_limit" for status in statuses[:3])
+    assert statuses[3] == "not_sent_locked_cash_limit"
+
+
+def test_locked_cash_guard_disabled_lets_all_four_orders_through(monkeypatch, tmp_path):
+    frame = _locked_guard_bot(
+        monkeypatch, tmp_path, rounds=4,
+        demo_inv_initial=0.0, cash_initial=1_000.0,
+        buy_locked_cash_limit_enabled=False, buy_locked_cash_limit_ratio=0.3,
+    )
+    assert all(status != "not_sent_locked_cash_limit" for status in frame["Buy Status"])
+    assert frame["Buy Original Amount"].astype(bool).all()
+
+
+def test_locked_inventory_guard_blocks_only_the_order_that_would_exceed_ratio(monkeypatch, tmp_path):
+    """demo_inv_initial=10, order_size=1.0 -> 1 locked per resting sell.
+    Limit 30% of 10 = 3: 3 orders fit exactly (<=), a 4th does not."""
+    frame = _locked_guard_bot(
+        monkeypatch, tmp_path, rounds=4,
+        demo_inv_initial=10.0, cash_initial=1_000_000.0,
+        sell_locked_inventory_limit_enabled=True, sell_locked_inventory_limit_ratio=0.3,
+    )
+    statuses = frame["Sell Status"].tolist()
+    assert all(status != "not_sent_locked_inventory_limit" for status in statuses[:3])
+    assert statuses[3] == "not_sent_locked_inventory_limit"
+
+
+def test_locked_inventory_guard_unaffected_when_buy_guard_disabled(monkeypatch, tmp_path):
+    """BUY and SELL guards are independent switches: SELL enabled and tight
+    while BUY stays fully unrestricted must still block only the SELL side."""
+    frame = _locked_guard_bot(
+        monkeypatch, tmp_path, rounds=4,
+        demo_inv_initial=10.0, cash_initial=1_000_000.0,
+        buy_locked_cash_limit_enabled=False,
+        sell_locked_inventory_limit_enabled=True, sell_locked_inventory_limit_ratio=0.3,
+    )
+    assert all(status != "not_sent_locked_cash_limit" for status in frame["Buy Status"])
+    assert frame["Sell Status"].iloc[3] == "not_sent_locked_inventory_limit"
+
+
+def test_cancelling_a_locked_order_releases_its_exposure(monkeypatch, tmp_path):
+    """3 resting buys hit the 30% ratio (270/1000); cancelling one before
+    round 4 must free its share so a new order is accepted again."""
+    monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    # HOT fields: must be patched onto the profile, not set on cfg directly --
+    # see _locked_guard_bot's docstring for why a direct cfg assignment gets
+    # silently reverted at the first round-boundary reload.
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "order_size", 1.0)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inv_max", 1000.0)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "buy_locked_cash_limit_enabled", True)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "buy_locked_cash_limit_ratio", 0.3)
+    cfg = run.make_cfg("usdt", mode="demo", session_id="locked-cancel-session")
+    cfg.output_csv = str(tmp_path / "usdt-demo.csv")
+    cfg.demo_state_path = str(tmp_path / "usdt-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "fee-state.json")
+    cfg.demo_result_db_path = str(tmp_path / "usdt-demo.sqlite3")
+    cfg.demo_level1_fast_fill_enabled = False
+    cfg.demo_inv_initial = 0.0
+    cfg.cash_initial = 1_000.0
+    cfg.max_rounds = 4
+    cfg.time_step = 0
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    times = iter([T0 + timedelta(seconds=i) for i in range(6)])
+    bot.now_provider = lambda: next(times)
+    bot.sleep_fn = lambda seconds: None
+    ledger = bot.exchange.ledger
+    original_process_market = ledger.process_market
+
+    def process_market_and_cancel_first_buy(**kwargs):
+        events = original_process_market(**kwargs)
+        first_buy_id = next(
+            (oid for oid, o in ledger.active_orders.items() if o.side == "buy"), None,
+        )
+        if first_buy_id is not None:
+            cancel_event = ledger.cancel_order(
+                first_buy_id, now=kwargs["now"], reason="test_release",
+            )
+            if cancel_event is not None:
+                events = list(events) + [cancel_event]
+            ledger.process_market = original_process_market  # cancel once only
+        return events
+
+    ledger.process_market = process_market_and_cancel_first_buy
+    frame = bot.run()
+
+    # Round 4 would have been blocked with all 3 originals still resting
+    # (270/1000 -> +90 = 360 > 300); one cancellation frees 90 of headroom.
+    assert frame["Buy Status"].iloc[3] != "not_sent_locked_cash_limit"
+
+
 def test_demo_queue_ahead_uses_displayed_selected_level_volume(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")

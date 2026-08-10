@@ -109,6 +109,10 @@ def run_one_round(bot):
         ("cancel_after_minutes", 3.0),
         ("depth_max", 4),
         ("time_step", 2),
+        ("buy_locked_cash_limit_enabled", True),
+        ("buy_locked_cash_limit_ratio", 0.4),
+        ("sell_locked_inventory_limit_enabled", True),
+        ("sell_locked_inventory_limit_ratio", 0.6),
     ],
 )
 def test_hot_field_updates_existing_engine(field, value, runtime_bot):

@@ -15,6 +15,8 @@ EXPECTED_FIELDS = {
     "order_size", "inv_max", "inv_min", "cancel_after_minutes",
     "depth_max", "time_step", "demo_inv_initial", "cash_initial",
     "commission_perc",
+    "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
+    "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
 }
 
 

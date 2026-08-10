@@ -57,6 +57,10 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "demo_inv_initial": FieldDefinition(float, 0, None, ApplicationMode.NEW_SESSION, "Starting inventory for a new Demo session."),
     "cash_initial": FieldDefinition(float, 0, None, ApplicationMode.NEW_SESSION, "Starting quote cash for a new Demo session."),
     "commission_perc": FieldDefinition(float, 0, 1, ApplicationMode.NEW_SESSION, "Simulated fee fraction for a new Demo session."),
+    "buy_locked_cash_limit_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Reject new BUY orders that would push locked cash past the ratio below."),
+    "buy_locked_cash_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total quote cash (free + already locked in BUY orders) locked in resting BUY orders, 0-1."),
+    "sell_locked_inventory_limit_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Reject new SELL orders that would push locked inventory past the ratio below."),
+    "sell_locked_inventory_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total base inventory (free + already locked in SELL orders) locked in resting SELL orders, 0-1."),
 })
 
 ALLOWED_FIELDS = frozenset(FIELD_DEFINITIONS)
@@ -106,6 +110,10 @@ def _validate_desired_values(values: Mapping[str, Any]) -> None:
 
 
 def _validate_field(key: str, raw_value: Any, definition: FieldDefinition) -> Any:
+    if definition.value_type is bool:
+        if not isinstance(raw_value, bool):
+            raise OverlayValidationError(f"{key} must be a boolean")
+        return raw_value
     if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
         raise OverlayValidationError(f"{key} must be numeric")
     if not math.isfinite(raw_value):

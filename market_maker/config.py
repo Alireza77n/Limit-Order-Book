@@ -34,6 +34,21 @@ class MMConfig:
     # inherited position). Change this to start demo runs somewhere other
     # than flat, without touching run.py.
     demo_inv_initial: float = 0.0
+
+    # Pre-trade risk guard: reject a new order if the capital it would commit
+    # pushes locked exposure past a configured share of the account's total
+    # relevant resource. BUY locks quote cash; SELL locks base inventory --
+    # independent switches/ratios so either side, on either pair, can be
+    # tuned or disabled without affecting the other. See
+    # SimpleMarketMaker._locked_cash_guard_reason /
+    # _locked_inventory_guard_reason in engine.py. Ratio is a fraction
+    # 0.0-1.0 (0.4 = 40%), matching this project's existing convention for
+    # fractional config values (see commission_perc).
+    buy_locked_cash_limit_enabled: bool = False
+    buy_locked_cash_limit_ratio: float = 0.8
+    sell_locked_inventory_limit_enabled: bool = False
+    sell_locked_inventory_limit_ratio: float = 0.8
+
     demo_level1_fast_fill_enabled: bool = True
     demo_level1_fill_delay_seconds: float = 0.0
     demo_level1_fill_fraction: float = 1.0
@@ -122,6 +137,10 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         order_size=0.000015,
         cash_initial=30000000,
         demo_inv_initial=0.0,   # BTC demo starting inventory -- edit here to change it
+        buy_locked_cash_limit_enabled=False,
+        buy_locked_cash_limit_ratio=0.8,
+        sell_locked_inventory_limit_enabled=False,
+        sell_locked_inventory_limit_ratio=0.8,
         url_wallet_balance="https://apiv2.nobitex.ir/users/wallets/balance",
         url_send_order="https://apiv2.nobitex.ir/market/orders/add",
         output_csv=os.path.join(RESULTS_DIR, "btc_track.csv"),
@@ -143,6 +162,10 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         order_size=1,
         cash_initial=30000000,
         demo_inv_initial=0.0,   # USDT demo starting inventory -- edit here to change it
+        buy_locked_cash_limit_enabled=False,
+        buy_locked_cash_limit_ratio=0.8,
+        sell_locked_inventory_limit_enabled=False,
+        sell_locked_inventory_limit_ratio=0.8,
         url_wallet_balance="https://apiv2.nobitex.ir/users/wallets/balance",
         url_send_order="https://apiv2.nobitex.ir/market/orders/add",
         output_csv=os.path.join(RESULTS_DIR, "usdt_track.csv"),
