@@ -142,14 +142,12 @@ def _cfg_scenario_b():
 @pytest.mark.parametrize("q", [0.0, 0.5, 1.0])
 def test_algo1_prices_scenario_never_feasible(q):
     """Strict commission threshold: no candidate pair satisfies the spread
-    condition, so level stays at the initial depth_max_local for every q."""
+    condition, not even the loosest one -- the scan never assigns a level, so
+    the helper returns None instead of the old untested (depth_max,
+    depth_max) fallback. See reports/batch-fill-definitive-root-cause.md."""
     bot = make_bot(_cfg_scenario_b())
     ob = make_orderbook(last=100.0)
-    result = bot._algo1_bid_ask_prices(ob, q)
-    assert result["bid level"] == 10
-    assert result["ask level"] == 10
-    assert result["bid"] == 90.01
-    assert result["ask"] == 110.99
+    assert bot._algo1_bid_ask_prices(ob, q) is None
 
 
 def _cfg_scenario_c():

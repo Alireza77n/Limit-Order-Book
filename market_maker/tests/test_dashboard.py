@@ -156,7 +156,7 @@ def test_session_picker_defaults_to_all_not_newest(tmp_path, monkeypatch):
     ])
     monkeypatch.setitem(dashboard.TRACKS, "btc_demo", dict(dashboard.TRACKS["btc_demo"], path=path))
 
-    options, default_value = dashboard.refresh_session_options("btc_demo", 0)
+    options, default_value = dashboard.refresh_session_options("btc_demo", 0, None)
 
     assert default_value == "all"
     assert options[0] == {"label": "All sessions (compare)", "value": "all"}
@@ -256,6 +256,91 @@ def test_no_quote_summary_tolerates_legacy_csv_without_the_column(tmp_path):
     from dashboard import no_quote_summary
 
     assert no_quote_summary(pd.DataFrame([{"Portfolio Wealth": 1.0}])) == ""
+
+
+# ---------- Session selector: must survive auto-refresh ticks ----------
+#
+# refresh_session_options is the @app.callback that (re)builds the "Session"
+# dropdown's options AND value. It fires on every 20s auto-refresh tick as
+# well as on a track change -- it used to unconditionally reset the value to
+# "all" every time it fired, which reset an operator's manual session
+# selection every ~20 seconds. These pin the fixed behavior directly against
+# the callback function (Dash's @app.callback returns the plain function, so
+# it's callable/testable exactly like any other function -- no Dash server
+# needed).
+
+def _sessions_df(*session_ids_):
+    return pd.DataFrame([{"Session_id": s} for s in session_ids_])
+
+
+def test_session_selector_defaults_to_all_on_first_load(monkeypatch):
+    import dashboard
+
+    monkeypatch.setattr(dashboard, "load_track", lambda path: _sessions_df("s1", "s2"))
+
+    options, value = dashboard.refresh_session_options("btc_real", 0, None)
+
+    assert value == "all"
+    assert options[0] == {"label": "All sessions (compare)", "value": "all"}
+
+
+def test_session_selector_preserves_manual_selection_across_ticks(monkeypatch):
+    """The core regression: simulating several auto-refresh ticks (the
+    "tick" Input firing repeatedly) must not reset a session the operator
+    already picked back to "all"."""
+    import dashboard
+
+    monkeypatch.setattr(dashboard, "load_track", lambda path: _sessions_df("s1", "s2"))
+
+    for tick in range(1, 6):
+        options, value = dashboard.refresh_session_options("btc_real", tick, "s1")
+        assert value == "s1", f"selection reset on tick {tick}"
+
+
+def test_session_selector_falls_back_to_all_when_selected_session_vanishes(monkeypatch):
+    import dashboard
+
+    monkeypatch.setattr(dashboard, "load_track", lambda path: _sessions_df("s2", "s3"))
+
+    options, value = dashboard.refresh_session_options("btc_real", 1, "s1")
+
+    assert value == "all"
+
+
+def test_session_selector_keeps_all_selection_across_ticks(monkeypatch):
+    """"all" itself must not be disturbed by refreshed options either."""
+    import dashboard
+
+    monkeypatch.setattr(dashboard, "load_track", lambda path: _sessions_df("s1"))
+
+    options, value = dashboard.refresh_session_options("btc_real", 3, "all")
+
+    assert value == "all"
+
+
+def test_session_selector_options_reflect_new_data_even_when_value_preserved(monkeypatch):
+    """The options list must still refresh (pick up newly-created sessions)
+    even while the currently selected value is held steady."""
+    import dashboard
+
+    monkeypatch.setattr(dashboard, "load_track", lambda path: _sessions_df("s1", "s2", "s3-new"))
+
+    options, value = dashboard.refresh_session_options("btc_real", 7, "s1")
+
+    assert value == "s1"
+    values = [o["value"] for o in options]
+    assert "s3-new" in values
+
+
+def test_session_selector_handles_missing_track_data(monkeypatch):
+    import dashboard
+
+    monkeypatch.setattr(dashboard, "load_track", lambda path: None)
+
+    options, value = dashboard.refresh_session_options("btc_real", 1, "s1")
+
+    assert options == []
+    assert value is None
 
 
 # ---------- Effective Demo configuration ----------

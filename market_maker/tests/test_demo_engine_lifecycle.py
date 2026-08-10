@@ -168,6 +168,50 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     ]
 
 
+def _sizing_bot(monkeypatch, tmp_path, cash_initial):
+    monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    cfg = run.make_cfg("usdt", mode="demo", session_id="sizing-session")
+    cfg.output_csv = str(tmp_path / "usdt-demo.csv")
+    cfg.demo_state_path = str(tmp_path / "usdt-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "fee-state.json")
+    cfg.demo_result_db_path = str(tmp_path / "usdt-demo.sqlite3")
+    cfg.demo_inv_initial = 0.0
+    cfg.inv_initial = 0.0
+    cfg.cash_initial = cash_initial
+    cfg.order_size = 1.0
+    cfg.max_rounds = 1
+    cfg.time_step = 0
+    cfg.demo_level1_fill_delay_seconds = 0
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    times = iter([T0, T0 + timedelta(seconds=1)])
+    bot.now_provider = lambda: next(times)
+    bot.sleep_fn = lambda seconds: None
+    return bot.run()
+
+
+def test_buy_clamped_to_dust_by_low_cash_is_not_sent(monkeypatch, tmp_path):
+    """Cash affording only 5.6% of order_size used to place a real order --
+    that is how a worker spent its last rial on a 594 IRT sliver and stalled.
+    Bid is 90, so 5.0 cash affords 0.056 of the configured size 1.0."""
+    frame = _sizing_bot(monkeypatch, tmp_path, cash_initial=5.0)
+
+    assert frame["Buy Status"].iloc[0] == "not_sent_insufficient_cash"
+    assert not frame["Buy Original Amount"].iloc[0]
+
+
+def test_buy_clamped_above_the_floor_still_sends_a_partial_order(monkeypatch, tmp_path):
+    """The floor must not suppress ordinary reduced capacity: 45.0 cash at
+    bid 90 affords 0.5, half the configured size, which is a real order."""
+    frame = _sizing_bot(monkeypatch, tmp_path, cash_initial=45.0)
+
+    assert frame["Buy Status"].iloc[0] != "not_sent_insufficient_cash"
+    assert frame["Buy Original Amount"].iloc[0] == pytest.approx(0.5)
+
+
 def test_demo_queue_ahead_uses_displayed_selected_level_volume(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")

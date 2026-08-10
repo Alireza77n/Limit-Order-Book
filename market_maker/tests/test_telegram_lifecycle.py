@@ -143,6 +143,43 @@ def test_partial_and_final_fill_reply_once_to_round_parent(tmp_path):
     assert ledger.get_order("buy-1").telegram_last_reported_matched == pytest.approx(1)
 
 
+def test_buy_fill_reports_total_fee_in_quote_currency(tmp_path):
+    """A buy's exchange fee is charged in BASE units (Nobitex convention,
+    mirrored by PaperOrder.total_fee). Reporting that number under the quote
+    label printed every real buy fee as '0.00 IRT'."""
+    ledger = PaperLedger(
+        session_id="shared-session",
+        symbol="USDTIRT",
+        initial_inventory=0,
+        initial_cash=2_500_000,
+        commission_perc=0.0015,
+        valuation_price=1_856_040,
+        state_path=tmp_path / "paper.json",
+    )
+    order = ledger.submit_order(
+        side="buy", limit_price=1_856_040, amount=0.6,
+        selected_level=1, client_order_id="buy-1", now=NOW,
+    )
+    post = _Post([
+        _Response(200, {"ok": True, "result": {"message_id": 201}}),
+        _Response(200, {"ok": True, "result": {"message_id": 202}}),
+    ])
+    reporter = PaperTelegramReporter(TelegramClient("token", "chat", post=post))
+    reporter.order_submitted(ledger, order, reply_to_message_id=7)
+    filled = ledger.apply_cumulative_fill(
+        "buy-1", cumulative_matched=0.6, fill_price=1_856_040,
+        reason="level1_fast_fill", now=NOW,
+    )
+    reporter.order_changed(ledger, filled)
+
+    # Fee is 0.0009 USDT == 1,670.44 IRT. The base figure must never be the
+    # one printed next to the quote symbol.
+    assert order.total_fee == pytest.approx(0.0009)
+    assert order.total_fee_quote == pytest.approx(1670.436)
+    assert "Total fee: 1,670.44 IRT" in post.calls[1][1]["text"]
+    assert "Total fee: 0.00 IRT" not in post.calls[1][1]["text"]
+
+
 def test_cancellation_replies_once_and_preserves_matched_amount(tmp_path):
     ledger = _ledger(tmp_path)
     order = _order(ledger)

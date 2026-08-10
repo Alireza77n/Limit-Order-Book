@@ -27,7 +27,7 @@ from typing import List, Optional
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, dash_table, dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 
 from config import DEMO_STATE_DIR, TRADING_PROFILES, demo_csv_path
 from demo_config import (
@@ -468,19 +468,32 @@ app.layout = html.Div([
 
 
 @app.callback(Output("session", "options"), Output("session", "value"),
-              Input("track", "value"), Input("tick", "n_intervals"))
-def refresh_session_options(track_key, _):
-    """Default the session picker to "All sessions (compare)", not the
-    newest single session. session.py's initialize_stack_for_workers()
-    deliberately mints a new session_id on every full-stack restart (once
-    no worker lease is held) -- that's correct/intentional, but it means
-    the newest session is near-empty right after a restart. Defaulting to
-    it made the dashboard look wiped on every restart even though every
-    prior session's rows are still in the store; the admin panel's audit
-    log and orders view were never session-filtered, so they never showed
-    that false reset. Defaulting to "all" here keeps both pages showing
-    the same cumulative picture -- an operator can still narrow to one
-    session from the dropdown when they want to."""
+              Input("track", "value"), Input("tick", "n_intervals"),
+              State("session", "value"))
+def refresh_session_options(track_key, _, current_value):
+    """Default the session picker to "All sessions (compare)" on first
+    load, not the newest single session. session.py's
+    initialize_stack_for_workers() deliberately mints a new session_id on
+    every full-stack restart (once no worker lease is held) -- that's
+    correct/intentional, but it means the newest session is near-empty
+    right after a restart. Defaulting to it made the dashboard look wiped
+    on every restart even though every prior session's rows are still in
+    the store; the admin panel's audit log and orders view were never
+    session-filtered, so they never showed that false reset. Defaulting to
+    "all" on first load keeps both pages showing the same cumulative
+    picture -- an operator can still narrow to one session from the
+    dropdown when they want to.
+
+    This callback also fires on every 20s auto-refresh tick (Input "tick")
+    purely to pick up newly-created/pruned session ids for the options
+    list -- it must NOT also reset the operator's current selection back
+    to "all" on every tick, which is what it used to do by unconditionally
+    returning "all" as the value regardless of what was already selected.
+    `State("session", "value")` reads the current selection without itself
+    retriggering this callback (State never fires a callback, only Input
+    does), so we can compare against it: keep it if it's still a valid
+    choice, only fall back to "all" if it no longer is (session pruned, or
+    the track was switched to one with a different session universe)."""
     df = load_track(TRACKS[track_key]["path"])
     if df is None:
         return [], None
@@ -488,6 +501,8 @@ def refresh_session_options(track_key, _):
     options = [{"label": "All sessions (compare)", "value": "all"}] + [
         {"label": str(s), "value": s} for s in ids
     ]
+    if current_value == "all" or current_value in ids:
+        return options, current_value
     return options, "all"
 
 

@@ -40,6 +40,19 @@ The goal of this project is to simulate, backtest, and compare different market-
   - [Output of Algorithm 1](#output-of-algorithm-1)
   - [Why Algorithm 1 is useful](#why-algorithm-1-is-useful)
   - [Algorithm 1 in practice: three scenarios](#algorithm-1-in-practice-three-scenarios)
+- [**Algorithm 1 pipeline: complete code trace**](#algorithm-1-pipeline-complete-code-trace) — read this to evaluate or modify the strategy
+  - [Pipeline overview](#pipeline-overview)
+  - [Stage 1-2 — market data and order-book parsing](#stage-1-2--market-data-and-order-book-parsing)
+  - [Stage 3-5 — fills, cancellations, and the balance snapshot](#stage-3-5--fills-cancellations-and-the-balance-snapshot)
+  - [Stage 6 — the strategy, line by line](#stage-6--the-strategy-line-by-line)
+  - [Three complete numeric rounds](#three-complete-numeric-rounds)
+  - [Stage 7 — engine-side risk and balance checks](#stage-7--engine-side-risk-and-balance-checks)
+  - [Stage 8-9 — submission and order lifecycle](#stage-8-9--submission-and-order-lifecycle)
+  - [Stage 10 — accounting](#stage-10--accounting)
+  - [Stage 11-12 — persistence and reporting](#stage-11-12--persistence-and-reporting)
+  - [Logical weaknesses and hidden assumptions](#logical-weaknesses-and-hidden-assumptions)
+  - [`main` vs `production` — what changes trading](#main-vs-production--what-changes-trading)
+  - [Realistic improvement ideas](#realistic-improvement-ideas)
 - [Algorithm 2: Avellaneda-Stoikov Model](#algorithm-2-avellaneda-stoikov-model)
   - [The idea](#the-idea)
   - [The formulas](#the-formulas)
@@ -736,6 +749,610 @@ These are the exact scenarios pinned by `market_maker/tests/test_algo1_baseline.
 **Scenario C — the scan breaks partway through (`commission_perc = exp_ret_min = 0.05`, a mid-range threshold).** At neutral inventory the deepest five pairs are feasible and the sixth is not, so the search stops at level 5/5 — a real, confirmed pair, so `decide_order()` places this quote. This is the general case: neither always-feasible nor never-feasible, the "last feasible pair before the first infeasible pair" rule from Step 3 actually deciding the outcome.
 
 Together these three cases cover the full range of what `spread_ok` can do to the scan (never stops, stops immediately, stops partway) — which is why they're the baseline characterization tests: any future change to Algorithm 1's internals that alters one of these three outcomes is a behavior change, not a refactor. Only Scenario B additionally demonstrates the Step 10 gate, since it's the only one of the three where the helper's own fallback value is unprofitable.
+---
+
+# Algorithm 1 pipeline: complete code trace
+
+Everything above describes *what* Algorithm 1 computes. This section traces
+*how* the running system executes it, function by function, with real file and
+line references against `production` (`45f111f`).
+
+Read this if you intend to **evaluate or modify** the strategy. It draws a hard
+line between four layers that are easy to conflate:
+
+| Layer | File | Owns |
+|---|---|---|
+| **Strategy** | `strategy/algo1.py` | the quote decision — pure, no I/O |
+| **Trading engine** | `engine.py` | risk caps, sizing, lifecycle, accounting, persistence |
+| **Exchange client** | `exchange/nobitex.py`, `exchange/demo.py` | order transport |
+| **Paper matching** | `paper.py` | Demo-only fill simulation |
+
+**Algorithm 1 decides prices and levels. It never decides sizes, never sees
+cash, and never knows whether an order was filled.** Every size cap, balance
+check and fill is engine or exchange territory.
+
+## Pipeline overview
+
+```
+ [1] market data          engine.py:1040   _get_orderbook()  -> exchange.get_orderbook()
+ [2] book parsing         engine.py:1048   best_bid / best_ask / last_price
+ [3] fills applied        engine.py:1063   exchange.process_market()   (Demo)
+ [4] stale cancels        engine.py:1071   ledger.cancel_stale()
+ [5] balances read        engine.py:1078   ledger.snapshot()
+ [6] STRATEGY             engine.py:1105   strategy.decide_order(ob, inventory)
+       ├ depth_cap        algo1.py:19
+       ├ tick_size        algo1.py:33
+       ├ d_q              algo1.py:74-75
+       ├ leg_pairs        algo1.py:55
+       ├ spread_ok scan   algo1.py:85-89
+       ├ price build      algo1.py:101-102
+       └ re-check gate    algo1.py:135
+ [7] engine risk caps     engine.py:1129   open-order cap / inventory cap / cash
+ [8] submission           engine.py:1140   exchange.send_order()
+ [9] lifecycle            paper.py:501/557/631/840
+[10] accounting           paper.py:557     apply_cumulative_fill()
+[11] persistence          engine.py:1266   result_store.append_round()
+[12] reporting            dashboard.py, admin_app.py, telegram_lifecycle.py
+```
+
+## Stage 1-2 — market data and order-book parsing
+
+`engine.py:256`
+
+```python
+def _get_orderbook(self, symbol=None):
+    return self.exchange.get_orderbook(symbol or self.cfg.pair)
+```
+
+In Demo mode this reaches `DemoExchangeClient.get_orderbook` (`exchange/demo.py:46`),
+which **delegates straight to the real Nobitex client** — Demo uses genuinely
+live market data. Only order placement is simulated.
+
+Parsing is defensive (`engine.py:1048`):
+
+```python
+try:
+    best_bid   = float(ob["bids"][0][0])
+    best_ask   = float(ob["asks"][0][0])
+    last_price = float(ob["lastTradePrice"])
+except (KeyError, IndexError, TypeError, ValueError):
+    round_target = self._wait_for_next_round(round_target)
+    continue                      # round abandoned, nothing logged
+```
+
+Book shape: `{"bids": [[price, size], ...], "asks": [...], "lastTradePrice": str}`,
+**index 0 = best**, prices arriving as strings. `tradePrice`/`tradedVolume` are
+read optionally (`engine.py:1056`) and feed the Demo matcher.
+
+> **Edge case:** a malformed book silently skips the round — no CSV row, no
+> `no_quote` reason. Rounds can therefore be missing from history entirely,
+> which is distinct from a logged `no_quote`.
+
+## Stage 3-5 — fills, cancellations, and the balance snapshot
+
+Order matters. Before the strategy is consulted, the engine:
+
+1. **applies fills** — `exchange.process_market(...)` (`engine.py:1063`)
+2. **cancels stale orders** — `ledger.cancel_stale(max_age_seconds=cancel_after_minutes*60)` (`engine.py:1071`)
+3. **reads balances** — `snapshot = ledger.snapshot(valuation_price=last_price)` (`engine.py:1078`)
+
+So `snapshot.inventory` passed to the strategy already reflects **this round's**
+fills. `PaperSnapshot` (`paper.py:435`) provides:
+
+```python
+locked_cash       = Σ remaining × limit_price   over resting BUY orders
+locked_inventory  = Σ remaining                 over resting SELL orders
+available_cash      = max(0, cash - locked_cash)
+available_inventory = max(0, inventory - locked_inventory)
+wealth              = inventory × valuation_price + cash
+```
+
+**Only `inventory` is given to Algorithm 1** (`engine.py:1105`). Cash, locked
+balances and wealth are engine-side and never influence the quote.
+
+## Stage 6 — the strategy, line by line
+
+### 6a. `depth_cap()` — `algo1.py:19`
+
+```python
+return max(0, min(self.cfg.depth_max, len(ob["bids"]) - 1, len(ob["asks"]) - 1))
+```
+
+`D` = deepest index valid on **both** sides. A bare `except` returns `0`.
+`D == 0` ⇒ immediate `None` from `decide_order` (`algo1.py:127`).
+
+### 6b. `tick_size()` — `algo1.py:33`
+
+```python
+if self.cfg.pair.upper().endswith("IRT"):  return 10.0
+if self.cfg.pair.upper().endswith("USDT"): return 0.01
+return 0.01
+```
+
+Both production pairs (`BTCIRT`, `USDTIRT`) end in `IRT` ⇒ **ε = 10.0**. The
+`IRT` test runs first, so `"BTCUSDT"` → `0.01` but a `…USDTIRT` name → `10.0`.
+Correct for the current pair set; a hardcoded table, not exchange metadata.
+
+### 6c. `d_q` — inventory normalization — `algo1.py:74-75`
+
+```python
+denom = self.cfg.inv_max - self.cfg.inv_min
+inv_d = int(10 * (inv_current - self.cfg.inv_min) / denom) - 5
+```
+
+```math
+d_q = \operatorname{int}\!\left(10\,\frac{q-q_{\min}}{q_{\max}-q_{\min}}\right) - 5
+```
+
+Three properties that matter and are easy to miss:
+
+* **Not clamped.** `q > q_max` ⇒ `d_q > 5`. Bounded in practice only because the
+  engine caps buying at `inv_max`.
+* **`int()` truncates toward zero**, so negative inventory rounds the opposite
+  way from positive inventory — the mapping is asymmetric about zero.
+* **`denom == 0` raises `ZeroDivisionError`** — no guard anywhere.
+
+### 6d. `leg_pairs()` — the entire skew mechanism — `algo1.py:55`
+
+```python
+pairs = []
+for bid_l in range(depth_max, 0, -1):      # depth_max .. 1  — never 0
+    ask_l = bid_l - inv_diff
+    if 0 <= ask_l <= depth_max:
+        pairs.append((bid_l, ask_l))
+return pairs
+```
+
+Three structural facts:
+
+1. **Ordered widest → tightest.** `bid_l` counts *down*, so the scan starts at
+   the most conservative pair.
+2. **The bid index never reaches 0.** `range(depth_max, 0, -1)` stops at 1 — the
+   strategy structurally **cannot quote at the raw best bid**. The ask side
+   *can* reach 0.
+3. **`ask_l = bid_l − d_q` is the skew, and the filter is the cost.** Every pair
+   whose `ask_l` falls outside `[0, depth_max]` is dropped, so **larger `|d_q|`
+   yields fewer candidates**.
+
+| `d_q` | pairs (`depth_max=10`) | count | tightest reachable |
+|---|---|---|---|
+| `+5` | `(10,5) (9,4) (8,3) (7,2) (6,1) (5,0)` | 6 | bid 5 |
+| `+4` | `(10,6) … (4,0)` | 7 | bid 4 |
+| `0` | `(10,10) … (1,1)` | 10 | bid 1 |
+| `-4` | `(6,10) … (1,5)` | 6 | bid 1 |
+| `-5` | `(5,10) … (1,6)` | 5 | bid 1 |
+
+Note the asymmetry: **positive skew loses tight *bid* levels** (bid floor rises
+to 5 at `d_q=+5`), while negative skew keeps bid 1 and instead loses *deep ask*
+levels. High inventory therefore forces a structurally wider bid.
+
+### 6e. The scan — `algo1.py:84-89`
+
+```python
+bid_level = ask_level = depth_max_local          # fallback: widest pair
+for bidx, aidx in pairs:
+    if self.spread_ok(ob, bidx, aidx):
+        bid_level, ask_level = bidx, aidx        # keep tightening
+    else:
+        break                                    # STOP at first failure
+```
+
+with `spread_ok` (`algo1.py:40`):
+
+```python
+return (ask - bid) / last > (self.cfg.commission_perc + self.cfg.exp_ret_min)
+```
+
+```math
+\frac{A_a - B_b}{L} > c + r_{\min}
+```
+
+* **`break`, not `continue`** — a tighter pair later in the list is never
+  reconsidered. Equivalent to "tightest feasible" only because spread narrows
+  monotonically as the scan tightens on a well-formed book.
+* Strict `>` — an exactly-break-even pair is rejected.
+* Any index error ⇒ `False` (fail-closed).
+* **`exp_ret_min` is resolved by the engine, not the strategy**
+  (`engine.py:99-100`): `None` ⇒ set equal to `commission_perc`, making the
+  threshold `2 × commission_perc`.
+
+### 6f. Price construction — `algo1.py:101-102`
+
+```python
+bid_price = raw_bid + epsilon
+ask_price = raw_ask - epsilon
+```
+
+One tick **inside** the selected levels, applied **after** selection — so the
+validated margin is eroded by `2ε / L` and is *not* re-tested. Reported spreads
+use the **top-of-book** mid, not the selected levels (`algo1.py:110`).
+
+### 6g. The gate — `decide_order()` — `algo1.py:125`
+
+```python
+temp = self.algo1_bid_ask_prices(ob, inv_current)
+bid_level, ask_level = temp['bid level'], temp['ask level']
+if self.spread_ok(ob, bid_level, ask_level):
+    return self.algo1_bid_ask_prices(ob, inv_current)   # recomputed
+return None
+```
+
+Re-applies `spread_ok` to the **finally selected** pair. This matters only in
+the fallback case: when no candidate passed, the levels are still `(D, D)` and
+were never validated — this gate rejects them.
+
+> **Two known inefficiencies, no behavioral impact:** the quote is computed
+> **twice** on the success path, and `temp` is dereferenced without a `None`
+> check (safe only because `depth_cap != 0` was already established).
+
+### No-quote conditions
+
+| Condition | Reason string (`algo1.py:242`) |
+|---|---|
+| `depth_cap() == 0` | `invalid_or_single_level_order_book` |
+| no candidate cleared the threshold | `profitability_threshold` |
+| `leg_pairs()` empty **and** fallback also failed | `inventory_skew_unexpressible_in_shallow_book` |
+
+Consulted **only when `decide_order` returned `None`** (`engine.py:1107-1109`).
+
+## Three complete numeric rounds
+
+Config: `USDTIRT`, `commission_perc = exp_ret_min = 0.0010` (threshold
+`0.0020`), `depth_max = 10`, `inv_max = 50`, `inv_min = 0`, `order_size = 1.0`,
+`cash = 30,000,000 IRT`. Book: bids from `1,000,000` in `500` steps; asks from
+`1,000,500` in `500` steps; `last = 1,000,000`; `mid = 1,000,250`; `ε = 10`.
+
+### Round A — LOW inventory (`q = 5.0`)
+
+```
+d_q = int(10 × 5.0 / 50) − 5 = int(1.0) − 5 = −4
+leg_pairs(−4, 10) = [(6,10), (5,9), (4,8), (3,7), (2,6), (1,5)]        6 pairs
+
+  pair    B[b]      A[a]      ratio     verdict
+ ( 6,10)  997000   1005500   0.008500   PASS
+ ( 5, 9)  997500   1005000   0.007500   PASS
+ ( 4, 8)  998000   1004500   0.006500   PASS
+ ( 3, 7)  998500   1004000   0.005500   PASS
+ ( 2, 6)  999000   1003500   0.004500   PASS
+ ( 1, 5)  999500   1003000   0.003500   PASS      ← list EXHAUSTED, no break
+
+selected (1,5)   p_b = 999500+10 = 999510   p_a = 1003000−10 = 1002990
+bid_spread =   740          ask_spread = 2740
+```
+
+**Aggressive bid, passive ask — the strategy is trying to buy.** The scan never
+broke: the skew removed the tight pairs before profitability ever bound.
+
+### Round B — NEUTRAL inventory (`q = 25.0`)
+
+```
+d_q = int(10 × 25.0 / 50) − 5 = int(5.0) − 5 = 0
+leg_pairs(0, 10) = [(10,10), (9,9), …, (1,1)]                         10 pairs
+
+  pair    B[b]      A[a]      ratio     verdict
+ (10,10)  995000   1005500   0.010500   PASS
+ …
+ ( 3, 3)  998500   1002000   0.003500   PASS
+ ( 2, 2)  999000   1001500   0.002500   PASS
+ ( 1, 1)  999500   1001000   0.001500   FAIL → break
+
+selected (2,2)   p_b = 999010   p_a = 1001490
+bid_spread = 1240          ask_spread = 1240      ← symmetric
+```
+
+**The only one of the three where profitability actually decides the outcome.**
+
+### Round C — HIGH inventory (`q = 45.0`)
+
+```
+d_q = int(10 × 45.0 / 50) − 5 = int(9.0) − 5 = +4
+leg_pairs(+4, 10) = [(10,6), (9,5), (8,4), (7,3), (6,2), (5,1), (4,0)]  7 pairs
+
+  pair    B[b]      A[a]      ratio     verdict
+ (10, 6)  995000   1003500   0.008500   PASS
+ …
+ ( 5, 1)  997500   1001000   0.003500   PASS
+ ( 4, 0)  998000   1000500   0.002500   PASS      ← list EXHAUSTED, ask hits 0
+
+selected (4,0)   p_b = 998010   p_a = 1000490
+bid_spread = 2240          ask_spread = 240
+```
+
+**Passive bid, maximally aggressive ask — the strategy is trying to sell.** The
+ask reaches level 0 (the touch); the bid cannot go below level 4 because the
+skew filtered those pairs out.
+
+### The three rounds side by side
+
+| | `q` | `d_q` | pairs | selected | bid spread | ask spread | intent |
+|---|---|---|---|---|---|---|---|
+| A | 5 | −4 | 6 | (1,5) | **740** | 2740 | buy |
+| B | 25 | 0 | 10 | (2,2) | 1240 | 1240 | neutral |
+| C | 45 | +4 | 7 | (4,0) | 2240 | **240** | sell |
+
+The skew is visible as the **asymmetry between the two spread columns**, and it
+reverses cleanly across the inventory range.
+
+## Stage 7 — engine-side risk and balance checks
+
+Algorithm 1 has now returned prices and levels. The engine decides **whether and
+how much** to send. Demo path, `engine.py:1129-1186`:
+
+```python
+# SELL
+sell_amount = max(0.0, min(order_size, snapshot.available_inventory - inv_min))
+if   self._open_order_count("sell") >= cfg.demo_max_open_orders_per_side:
+                                        sell_reason = "max_open_orders"
+elif sell_amount > 1e-10:               → SEND
+else:                                   sell_reason = "insufficient_inventory"
+
+# BUY
+affordable  = snapshot.available_cash / bid_price   if bid_price > 0 else 0.0
+buy_amount  = max(0.0, min(order_size, affordable))
+if   self._open_order_count("buy") >= cfg.demo_max_open_orders_per_side:
+                                        buy_reason = "max_open_orders"
+elif buy_amount <= 1e-10:               buy_reason = "insufficient_cash"
+elif buy_locked_amount + snapshot.inventory + order_size >= cfg.inv_max:
+                                        buy_reason = "inventory_cap"
+else:                                   → SEND
+```
+
+Note the **asymmetry**: the `inv_max` cap applies to buys only — selling reduces
+inventory and is instead bounded by `available_inventory` and `inv_min`. The cap
+uses `order_size` (not `buy_amount`) and is a strict `>=`.
+
+`_open_order_count` (`engine.py:768`) counts resting orders on one side; the cap
+exists because unbounded accumulation let a single price touch fill many orders
+at once.
+
+### When both sides, one side, or nothing is submitted
+
+| Situation | Sell | Buy | Reasons logged |
+|---|---|---|---|
+| Healthy, mid inventory | ✅ | ✅ | — |
+| `q = 0` (flat) | ❌ | ✅ | `insufficient_inventory` |
+| `q = 49.5`, `inv_max = 50` | ✅ | ❌ | `inventory_cap` (`0+49.5+1.0 ≥ 50`) |
+| Cash committed to resting buys | ✅ | ❌ | `insufficient_cash` |
+| 3 resting orders on a side | ❌/✅ | ✅/❌ | `max_open_orders` |
+| Spread unprofitable | ❌ | ❌ | `no_quote` + `profitability_threshold` |
+| Single-level book | ❌ | ❌ | `no_quote` + `invalid_or_single_level_order_book` |
+| Malformed book | ❌ | ❌ | **nothing — round skipped entirely** |
+
+**One-sided quoting is normal, not an error.** In the recorded USDT session,
+`not_sent_insufficient_cash` appears on 114 rounds while the sell side
+proceeded.
+
+## Stage 8-9 — submission and order lifecycle
+
+**Live** (`exchange/nobitex.py:send_order`) validates the response before
+acknowledging an order — HTTP 2xx, `status == "ok"`, an `order` object, and the
+echoed `clientOrderId` must match. Anything else returns `None` ⇒
+`reason = "rejected"`.
+
+**Demo** (`exchange/demo.py:53` → `paper.py:501`) validates against the ledger:
+
+```python
+if side == "buy"  and amount * limit_price > snapshot.available_cash + EPSILON:
+    rejected_reason = "insufficient_cash"
+if side == "sell" and amount > snapshot.available_inventory + EPSILON:
+    rejected_reason = "insufficient_inventory"
+```
+
+A rejected order is recorded with `status="rejected"` and never enters
+`active_orders`.
+
+### States
+
+```
+submit_order ──┬─▶ rejected                         (never active)
+               └─▶ open ──┬─▶ partially_filled ──┬─▶ filled
+                          │                      └─▶ cancelled
+                          └─▶ cancelled
+```
+
+Cancellation reasons (`paper.py:767`, `paper.py:840`): `stale_timeout`,
+`manual_cancel`, `session_end`, `coordinated_stack_shutdown`,
+`worker_fatal_exit`.
+
+> **There is no amend or replace.** Orders are never repriced in place — they
+> expire via `cancel_after_minutes` and the next round quotes fresh.
+
+### Demo matching — `paper.py:631`
+
+Per observation, orders are processed in **price-time priority**
+(`_fill_priority`, `paper.py:624`: better price first, then oldest) against a
+**finite per-side liquidity budget**:
+
+```python
+budget = traded_volume  if reported  else  max_fill_per_observation
+```
+
+Fill triggers, in order of precedence:
+
+1. `level1_fast_fill` — level 1, after `level1_fill_delay_seconds`
+2. `trade_cross` — a reported trade price crossed the limit
+3. `price_touch` — `best_ask ≤ buy_limit` (or `best_bid ≥ sell_limit`)
+4. `queue_consumed` — when `queue_enabled`, orders ahead consume budget first
+
+Buy and sell budgets are **independent** — a resting buy is filled by incoming
+sell flow and vice versa.
+
+## Stage 10 — accounting
+
+`paper.py:557`, the single mutation point for balances:
+
+```python
+new_fill = cumulative - order.processed_matched_amount     # high-watermark
+if new_fill <= EPSILON:                       return None  # idempotent
+if order.status not in {"open","partially_filled"}: return None
+
+buy : fee  = new_fill * commission_perc                    # fee in BASE
+      cash      -= new_fill * price
+      inventory += new_fill - fee
+      fee_quote  = fee * price
+
+sell: fee_quote = new_fill * price * commission_perc       # fee in QUOTE
+      inventory -= new_fill
+      cash      += new_fill * price - fee_quote
+```
+
+**Buy fees are charged in the base asset; sell fees in the quote currency** —
+this asymmetry is why a buy of 1.0 USDT at 0.1% yields `+0.999` inventory rather
+than `+1.0`.
+
+Idempotency is structural: `processed_matched_amount` is a persisted
+high-watermark, so a replayed or restarted update contributes nothing.
+
+Wealth: `inventory × valuation_price + cash`. **PnL is not stored** — it is
+`wealth − initial wealth`, derived from the round series, which is why the
+per-round history must be a faithful trajectory.
+
+## Stage 11-12 — persistence and reporting
+
+| Step | Call | File |
+|---|---|---|
+| append round | `result_store.append_round(row)` | `engine.py:1266` |
+| prune | `result_store.compact(demo_result_retain_rows)` | `engine.py:1267` |
+| export CSV | `result_store.export_bounded_csv()` | `engine.py:1268` |
+| reload frame | `result_store.load_view(...)` | `engine.py:1271` |
+
+**SQLite is canonical; the CSV is a bounded export of it.** Ledger state is
+written atomically (`tmp + os.replace`) on every mutation.
+
+When an order later changes state, `_sync_demo_order_rows` (`engine.py:904`) and
+`_update_demo_result_orders` (`engine.py:861`) back-fill **only that order's
+lifecycle columns** onto its originating row. The portfolio columns
+(`inv_current`, `cash_current`, `Portfolio Wealth`, `Round Fee`, fee scopes) are
+a per-round time series and are **never** rewritten — see the comment blocks at
+those functions for why.
+
+Consumers: `dashboard.py` (`load_track:79`, `with_derived_spreads:103`,
+`activity_records:120`, `no_quote_summary:147`), the admin panel
+(`admin_app.py`), and Telegram (`telegram_lifecycle.py`).
+
+## Logical weaknesses and hidden assumptions
+
+Each verified against the implementation, not inferred.
+
+### W1 — the inventory skew is silently dropped in a shallow book
+
+When `leg_pairs()` returns `[]` (`|d_q| ≥ depth_max`, reachable whenever the
+book is thin), the scan loop never runs and the levels stay at the `(D, D)`
+fallback — a **symmetric** quote. If that fallback happens to be profitable,
+`decide_order` returns it and the round proceeds **with no inventory skew at
+all**, at the exact moment inventory is most extreme.
+
+Reproduced: `depth_max=2`, `q=0` ⇒ `d_q=−5` ⇒ `leg_pairs(−5,2) == []`, yet a
+quote is returned at levels `(2,2)`. Because the quote succeeded, **no reason is
+logged** — the event is invisible in the CSV. `diagnostics()` does flag
+`fallback_detected`, but only when `algo1_diagnostics_enabled`.
+
+*Improvement:* clamp `d_q` to `±(depth_max − 1)` so a skew always remains
+expressible, or emit an explicit `skew_dropped` marker on the round row.
+
+### W2 — `d_q` is unclamped and asymmetric
+
+`q > q_max` ⇒ `d_q > 5`; `int()` truncates toward zero, so negative and positive
+inventory round in opposite directions. Practically bounded by the engine's
+`inv_max` cap, but a config change or an inherited position can exceed it.
+
+*Improvement:* clamp to `[-5, +5]` and use `floor` for symmetry. Neither changes
+behavior on valid config.
+
+### W3 — the one-tick improvement is untested for profitability
+
+`spread_ok` validates `(A_a − B_b)/L`, then Step 4 moves **both** quotes one tick
+inward. The realised edge is smaller than the validated one by `2ε/L`. With
+`ε=10` and `L≈1,000,000` that is `0.002%` — small, but it is a systematic
+one-directional bias, and at `commission_perc=0.0010` the threshold is only
+`0.2%`.
+
+*Improvement:* test `(A_a − ε) − (B_b + ε)` instead of the raw level gap.
+
+### W4 — `break` assumes a monotonic book
+
+The scan stops at the first failure. On a well-formed book spread narrows
+monotonically inward, so this equals "tightest feasible". On a crossed,
+stale or non-monotonic book it can stop early and quote wider than necessary.
+
+### W5 — the bid can never quote at level 0
+
+`range(depth_max, 0, -1)` excludes 0, so the bid side structurally cannot reach
+the touch while the ask side can (as Round C shows). This is a **built-in
+directional asymmetry** that is not documented as a design decision anywhere in
+the code.
+
+### W6 — execution probability is a placeholder
+
+`"bid exec prob": 1.0, "ask exec prob": 1.0` (`algo1.py:121-122`) are hardcoded
+and unused. The strategy has **no fill-probability model**, so it cannot
+distinguish a level that fills often from one that never does.
+
+### W7 — no volatility, imbalance or trade-flow input
+
+Algorithm 1 is a pure function of `(book, inventory)`. It does not react to
+volatility, order-book imbalance, recent trade direction, or queue position — all
+of which the README's own "core risks" section identifies as material.
+
+### W8 — `denom == 0` and standalone `exp_ret_min=None` both raise
+
+`inv_max == inv_min` ⇒ `ZeroDivisionError`. An `Algo1Strategy` constructed
+directly with `exp_ret_min=None` raises `TypeError` inside `spread_ok`, because
+the `None` is resolved in `SimpleMarketMaker.__init__` (`engine.py:99`), not in
+the strategy. Neither is reachable through `run.py`, but both are traps for
+unit tests and future callers.
+
+## `main` vs `production` — what changes trading
+
+Full analysis: `reports/technical-report-algo1-engine-and-branch-comparison.md`.
+`main` is a **strict ancestor** of `production` (86 commits behind, 0 ahead), and
+is the original single-file prototype `algo1_/Algo1.py`.
+
+**Algorithm 1 itself is identical.** Verified two ways: statement-by-statement
+diff of all six functions (identical after normalising the `self._x` → `self.x`
+rename), and a differential harness running both implementations side by side —
+**101,200 assertions across 4,000 randomised scenarios, 0 mismatches.**
+
+The **engine** differs in four functions:
+
+| Difference | `main` | `production` | Effect | Risk |
+|---|---|---|---|---|
+| `commission_perc` (both profiles) | `0.0025` | `0.0010` | threshold `0.50%` → `0.20%`; **quotes materially tighter at every inventory level** (neutral: levels `(3,8)` → `(1,6)`) | **HIGH — changes strategy output** |
+| `get_status_orders` `max_pages` | `1` | `100` | `main` is blind past 100 orders ⇒ understated locks, missed fills | HIGH |
+| `update_inventory_and_cash` | `'close'` only, full amount | `'all'`, incremental high-watermark | `main` **ignores partial fills until an order closes** ⇒ stale `inv_current` ⇒ wrong `d_q` ⇒ **wrong skew** | HIGH |
+| `cancel_all_open_orders` | cancels **every open order on the account** | scoped to own `clientOrderId` + pair, fail-closed | `main` destroys unrelated/manual orders on every shutdown | **CRITICAL** |
+
+Also: `main` hardcodes a live API token in `Config.py`; `send_order` returns the
+client id **without checking the HTTP response** (a rejected order is logged as
+sent); there are no tests; and `demo_btc.py`/`demo_usdt.py` are *example scripts
+that trade real money* — the word "demo" there does not mean paper trading.
+
+> **Open question that affects every quote:** `commission_perc = 0.0010` must
+> match Nobitex's real maker fee for this account tier. If the true fee is
+> higher, `spread_ok` is approving trades below cost and its entire guarantee is
+> void.
+
+## Realistic improvement ideas
+
+Ordered by expected value, all compatible with the current architecture.
+
+1. **Confirm the real maker fee** and reconcile `commission_perc` (W3 + the open
+   question above). Nothing else matters if the cost model is wrong.
+2. **Clamp `d_q`** and emit a marker when the skew is dropped (W1, W2) — small,
+   safe, removes a silent failure mode.
+3. **Test profitability on the quoted prices**, not the level gap (W3).
+4. **Empirical fill probability** replacing the `1.0` placeholders (W6): the CSV
+   already logs selected level, quoted price, mid, and fill outcome per round —
+   enough to fit `P(fill | distance from mid, level)` offline with no new
+   collection.
+5. **Order-book imbalance as a skew input** (W7): `Σ bid size / Σ ask size` over
+   the top N levels is already present in the raw book and would let the strategy
+   anticipate adverse selection rather than only react to inventory.
+6. **Adaptive `exp_ret_min`** driven by realised volatility, so the margin
+   requirement widens in fast markets instead of staying constant.
+7. **Replace `break` with a full scan** plus explicit "tightest feasible"
+   selection (W4) — behaviour-identical on well-formed books, robust on bad ones.
+
 
 ---
 

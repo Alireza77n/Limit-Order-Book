@@ -136,7 +136,7 @@ class PaperTelegramReporter:
             f"New fill: {event.new_fill:.8f} {base}\n"
             f"Total matched: {event.cumulative_matched:.8f} {base}\n"
             f"Average fill: {order.average_fill_price:,.2f} {quote}\n"
-            f"Total fee: {order.total_fee:,.2f} {quote}\n"
+            f"Total fee: {order.total_fee_quote:,.2f} {quote}\n"
             f"Inventory: {event.inventory_after:.8f} {base}\n"
             f"Cash: {event.cash_after:,.2f} {quote}\n"
             f"Wealth: {event.wealth_after:,.2f} {quote}\n"

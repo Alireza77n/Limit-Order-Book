@@ -80,13 +80,22 @@ class Algo1Strategy(Strategy):
         pairs = self.leg_pairs(inv_d, depth_max_local)
         #print('pairs:',pairs,'inv_d:',inv_d,'inv_current:',inv_current,'self.cfg.inv_min:',self.cfg.inv_min,'denom:',denom)
 
-
-        bid_level = ask_level = depth_max_local
+        # bid_level/ask_level start unset (not depth_max_local): if the scan
+        # never accepts a single candidate -- whether pairs is empty or the
+        # loosest candidate fails immediately -- there is no validated,
+        # inventory-skewed quote to fall back to. Silently reusing
+        # (depth_max, depth_max) here used to let a maximally passive,
+        # unskewed quote through whenever that untested pair happened to be
+        # profitable -- see reports/batch-fill-definitive-root-cause.md.
+        bid_level = ask_level = None
         for bidx, aidx in pairs:
             if self.spread_ok(ob, bidx, aidx):
                 bid_level, ask_level = bidx, aidx
             else:
                 break
+
+        if bid_level is None:
+            return None
 
         bid_level = max(0, min(bid_level, depth_max_local))
         ask_level = max(0, min(ask_level, depth_max_local))
@@ -129,6 +138,8 @@ class Algo1Strategy(Strategy):
             return None
 
         temp=self.algo1_bid_ask_prices(ob, inv_current)
+        if temp is None:
+            return None
 
         bid_level,ask_level=temp['bid level'],temp['ask level']
 
@@ -248,4 +259,14 @@ class Algo1Strategy(Strategy):
             return reason
         if reason == "invalid_or_single_level_order_book":
             return reason
+        if reason == "no_candidate_passed_fallback_rejected":
+            # Not one candidate in the inventory-skewed scan cleared the
+            # profitability bar -- including the loosest one. Previously this
+            # silently fell back to an untested, unskewed (depth_max,
+            # depth_max) quote instead of refusing to quote; see
+            # reports/batch-fill-definitive-root-cause.md. Surfaced under its
+            # own name (rather than the generic profitability_threshold
+            # below) so this specific path is observable in the CSV/dashboard
+            # and distinguishable in tests.
+            return "no_profitable_inventory_skewed_candidate"
         return "profitability_threshold"

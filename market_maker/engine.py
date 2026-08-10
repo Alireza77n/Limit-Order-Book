@@ -42,6 +42,12 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 # always agree and always read in the operator's local time.
 TEHRAN_TZ = pytz.timezone("Asia/Tehran")
 
+# Floor for an order whose size has been clamped by the balance available,
+# as a fraction of the configured order_size. Expressed as a fraction rather
+# than an absolute figure so it holds for both pairs at once (BTC trades
+# 0.000015 per order, USDT trades 1). See SimpleMarketMaker._min_tradable_size.
+MIN_ORDER_SIZE_FRACTION = 0.1
+
 
 class CoordinatedShutdown(KeyboardInterrupt):
     """Raised only by the installed SIGTERM/SIGINT coordination handler."""
@@ -774,12 +780,18 @@ class SimpleMarketMaker:
         fields[f"{title} Locked Cash" if side == "buy" else f"{title} Locked Inventory"] = locked
         return fields
 
-    def _open_order_count(self, side: str) -> int:
-        """Resting (open/partially filled) paper orders on one side."""
-        ledger = getattr(self.exchange, "ledger", None)
-        if ledger is None:
-            return 0
-        return sum(1 for order in ledger.active_orders.values() if order.side == side)
+    def _min_tradable_size(self) -> float:
+        """Smallest order size worth sending, in base units.
+
+        Buy/sell sizes are clamped down to the balance actually available,
+        which is correct until the remainder is a sliver: the old 1e-10 floor
+        let a buy shrink to 0.0003 USDT (594 IRT, about one US cent) purely to
+        consume the last of the cash. No exchange accepts orders that small,
+        and it left the worker with zero cash and nothing to trade. Anything
+        at or above this floor is still sized to fit, so ordinary partial
+        capacity is unaffected.
+        """
+        return max(1e-10, abs(float(self.cfg.order_size)) * MIN_ORDER_SIZE_FRACTION)
 
     def _demo_queue_ahead(self, ob: Dict[str, Any], side: str, level: int) -> float:
         if not self.cfg.demo_queue_enabled:
@@ -1143,9 +1155,7 @@ class SimpleMarketMaker:
                         0.0,
                         min(self.cfg.order_size, snapshot.available_inventory - float(self.cfg.inv_min)),
                     )
-                    if self._open_order_count("sell") >= self.cfg.demo_max_open_orders_per_side:
-                        sell_reason = "max_open_orders"
-                    elif sell_amount > 1e-10:
+                    if sell_amount >= self._min_tradable_size():
                         sell_id = (
                             f"{self.pair.lower()}-sell-{round_no}-{int(now.timestamp() * 1000)}"
                         )
@@ -1171,13 +1181,7 @@ class SimpleMarketMaker:
                     )
                     affordable = snapshot.available_cash / bid_price if bid_price and bid_price > 0 else 0.0
                     buy_amount = max(0.0, min(self.cfg.order_size, affordable))
-                    # Cap concurrent resting orders per side. inv_max/cash
-                    # alone allowed ~15-49 buys to pile up at near-identical
-                    # prices, so one price touch could fill them all at once
-                    # (reports/demo-portfolio-jump-investigation.md).
-                    if self._open_order_count("buy") >= self.cfg.demo_max_open_orders_per_side:
-                        buy_reason = "max_open_orders"
-                    elif buy_amount <= 1e-10:
+                    if buy_amount < self._min_tradable_size():
                         buy_reason = "insufficient_cash"
                     elif buy_locked_amount + snapshot.inventory + self.cfg.order_size >= self.cfg.inv_max:
                         buy_reason = "inventory_cap"
@@ -1497,14 +1501,12 @@ class SimpleMarketMaker:
                     bid_lvl = res["bid level"]
                     ask_lvl = res["ask level"]
     
-                    eps = 1e-10
-    
                     # Current locked totals from our open orders
                     buy_locked, sell_locked = self.get_open_order_totals()
     
                     # SELL: cap by available (inventory minus already-locked sells)
                     sell_size = max(0.0, min(self.cfg.order_size, (inv_current - sell_locked['amount']) - float(self.cfg.inv_min)))
-                    if sell_size > eps:
+                    if sell_size >= self._min_tradable_size():
                         sell_id = self.send_order(
                             order_type="sell",
                             srcCurrency=self.cfg.currency_1,
@@ -1526,7 +1528,7 @@ class SimpleMarketMaker:
                         buy_affordable_base = 0.0
     
                     buy_size = max(0.0, min(self.cfg.order_size, buy_affordable_base))
-                    if (buy_size > eps) and (buy_locked['amount'] + inv_current + self.cfg.order_size < self.cfg.inv_max):
+                    if (buy_size >= self._min_tradable_size()) and (buy_locked['amount'] + inv_current + self.cfg.order_size < self.cfg.inv_max):
                         buy_id = self.send_order(
                             order_type="buy",
                             srcCurrency=self.cfg.currency_1,
