@@ -39,7 +39,12 @@ class DemoResultStore:
         return connection
 
     @classmethod
-    def open_existing(cls, db_path):
+    def open_existing(cls, db_path, csv_export_path=None, csv_export_max_rows=10_000):
+        """Reopen a store an earlier process created, recovering its column
+        schema from the db itself. csv_export_path is NOT stored in the db --
+        pass it explicitly if this instance needs to call
+        export_bounded_csv(); omitted, exports silently no-op (csv_export_path
+        stays None), which is correct for read-only callers like dashboard.py."""
         path = Path(db_path)
         if not path.exists():
             raise FileNotFoundError(path)
@@ -49,7 +54,10 @@ class DemoResultStore:
             ).fetchone()
         if not record:
             raise ValueError(f"Demo result store has no column metadata: {path}")
-        return cls(path, json.loads(record[0]))
+        return cls(
+            path, json.loads(record[0]),
+            csv_export_path=csv_export_path, csv_export_max_rows=csv_export_max_rows,
+        )
 
     def _initialize(self) -> None:
         with self._connect() as connection:
@@ -224,6 +232,20 @@ class DemoResultStore:
                     (remove,),
                 )
         return remove
+
+    def delete_session(self, session_id: str) -> int:
+        """Permanently remove one session's round history. Returns the row
+        count removed. Caller is responsible for re-exporting the CSV
+        (export_bounded_csv) afterwards -- not done here so a caller
+        deleting several sessions in a row only re-exports once."""
+        with self._connect() as connection:
+            count = connection.execute(
+                "SELECT COUNT(*) FROM rounds WHERE session_id=?", (str(session_id),)
+            ).fetchone()[0]
+            connection.execute(
+                "DELETE FROM rounds WHERE session_id=?", (str(session_id),)
+            )
+        return int(count)
 
     def import_legacy_csv_once(self, csv_path) -> int:
         source = Path(csv_path)

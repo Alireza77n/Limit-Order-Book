@@ -802,3 +802,175 @@ def test_process_command_unknown_action_reports_error(tmp_path):
 def test_agent_leaves_user_audit_logging_to_admin_app():
     """One user action must produce exactly one audit record."""
     assert "append_audit" not in inspect.getsource(ca)
+
+
+# ---------- delete_session ----------
+
+def _seed_pair_rounds(paths, pair, session_id, *, rounds=3, symbol="BTCIRT"):
+    """Write a minimal but real DemoResultStore + CSV export for one pair,
+    matching the exact filename convention run.py/engine.py use, so
+    handle_delete_session's own path derivation is exercised for real."""
+    from result_store import DemoResultStore
+
+    csv_name = Path(config.demo_csv_path(config.TRADING_PROFILES[pair]["output_csv"])).name
+    csv_path = paths.results_dir / csv_name
+    db_path = paths.results_dir / f"{csv_path.stem}.sqlite3"
+    store = DemoResultStore(db_path, ["Session_id", "Round", "Crypto"], csv_export_path=csv_path)
+    for round_no in range(1, rounds + 1):
+        store.append_round({"Session_id": session_id, "Round": round_no, "Crypto": symbol})
+    store.export_bounded_csv()
+    return db_path, csv_path
+
+
+def _seed_no_quote_row(db_path, session_id, symbol):
+    from no_quote import NoQuoteMonitor
+    from result_store import DemoResultStore
+
+    store = DemoResultStore.open_existing(db_path)
+    monitor = NoQuoteMonitor(
+        store, session_id, symbol,
+        alert_rounds=1, alert_seconds=0, cooldown_seconds=0,
+    )
+    from datetime import datetime, timezone
+    monitor.record_no_quote(1, datetime(2026, 1, 1, tzinfo=timezone.utc), "no_quote", {})
+
+
+def test_delete_session_requires_confirmation(tmp_path):
+    paths = make_paths(tmp_path)
+    result = ca.handle_delete_session(paths, None, {"session_id": "s1"}, RecordingRunner())
+    assert result.ok is False
+
+
+@pytest.mark.parametrize("session_id", [None, "", "  ", "../etc", "a/b", "a\\b"])
+def test_delete_session_rejects_invalid_session_id(tmp_path, session_id):
+    paths = make_paths(tmp_path)
+    result = ca.handle_delete_session(
+        paths, None, {"confirm": "DELETE", "session_id": session_id}, RecordingRunner(),
+    )
+    assert result.ok is False
+    assert "session_id" in result.detail["error"]
+
+
+def test_delete_session_rejects_the_active_session(tmp_path):
+    paths = make_paths(tmp_path)
+    (paths.state_dir / "stack_session.json").write_text('{"session_id":"live"}')
+    result = ca.handle_delete_session(
+        paths, None, {"confirm": "DELETE", "session_id": "live"}, RecordingRunner(),
+    )
+    assert result.ok is False
+    assert "active" in result.detail["error"]
+
+
+def test_delete_session_reports_not_found_for_unknown_session(tmp_path):
+    paths = make_paths(tmp_path)
+    result = ca.handle_delete_session(
+        paths, None, {"confirm": "DELETE", "session_id": "never-existed"}, RecordingRunner(),
+    )
+    assert result.ok is False
+    assert result.detail["error"] == "session not found"
+
+
+def test_delete_session_removes_ledger_files_for_both_pairs_and_backs_up_first(tmp_path):
+    paths = make_paths(tmp_path)
+    (paths.state_dir / "paper_s1_btcirt.json").write_text('{"a":1}')
+    (paths.state_dir / "paper_s1_btcirt_archive.jsonl").write_text('{"a":1}\n')
+    (paths.state_dir / "paper_s1_usdtirt.json").write_text('{"a":1}')
+    (paths.state_dir / "paper_s2_btcirt.json").write_text('{"a":2}')  # different session -- must survive
+
+    result = ca.handle_delete_session(
+        paths, None, {"confirm": "DELETE", "session_id": "s1"}, RecordingRunner(),
+    )
+
+    assert result.ok is True
+    assert not (paths.state_dir / "paper_s1_btcirt.json").exists()
+    assert not (paths.state_dir / "paper_s1_btcirt_archive.jsonl").exists()
+    assert not (paths.state_dir / "paper_s1_usdtirt.json").exists()
+    assert (paths.state_dir / "paper_s2_btcirt.json").exists()
+    backup_dir = paths.backups_dir / result.detail["backup"]
+    assert (backup_dir / "paper_s1_btcirt.json").exists()
+
+
+def test_delete_session_removes_round_history_and_reexports_csv_without_it(tmp_path):
+    paths = make_paths(tmp_path)
+    _, btc_csv = _seed_pair_rounds(paths, "btc", "s1", rounds=3, symbol="BTCIRT")
+    # Same pair, different session -- lands in the same CSV/db (a pair's
+    # store accumulates every session ever run against it) and must survive.
+    _seed_pair_rounds(paths, "btc", "s2", rounds=2, symbol="BTCIRT")
+
+    result = ca.handle_delete_session(
+        paths, None, {"confirm": "DELETE", "session_id": "s1"}, RecordingRunner(),
+    )
+
+    assert result.ok is True
+    assert result.detail["removed_rounds"]["btc"] == 3
+    remaining = btc_csv.read_text()
+    assert "s1" not in remaining
+    assert "s2" in remaining
+
+
+def test_delete_session_removes_no_quote_state(tmp_path):
+    paths = make_paths(tmp_path)
+    db_path, _ = _seed_pair_rounds(paths, "usdt", "s1", rounds=1, symbol="USDTIRT")
+    _seed_no_quote_row(db_path, "s1", "USDTIRT")
+    import sqlite3
+    before = sqlite3.connect(db_path).execute(
+        "SELECT COUNT(*) FROM no_quote_state WHERE session_id=?", ("s1",)
+    ).fetchone()[0]
+    assert before == 1
+
+    result = ca.handle_delete_session(
+        paths, None, {"confirm": "DELETE", "session_id": "s1"}, RecordingRunner(),
+    )
+
+    assert result.ok is True
+    after = sqlite3.connect(db_path).execute(
+        "SELECT COUNT(*) FROM no_quote_state WHERE session_id=?", ("s1",)
+    ).fetchone()[0]
+    assert after == 0
+
+
+def test_delete_session_subtracts_fee_contribution_and_preserves_other_sessions(tmp_path):
+    paths = make_paths(tmp_path)
+    fee_path = paths.state_dir / "paper_fee_scopes.json"
+    fee_path.write_text(json.dumps({
+        "sessions": {
+            "s1": {"BTCIRT": 1000.0, "USDTIRT": 250.0},
+            "s2": {"BTCIRT": 500.0},
+        },
+        "all_time": {"BTCIRT": 1500.0, "USDTIRT": 250.0},
+        "order_high_watermarks": {
+            "s1:BTCIRT:buy-1": {"cumulative_amount": 1.0, "fee_quote": 1000.0},
+            "s2:BTCIRT:buy-1": {"cumulative_amount": 1.0, "fee_quote": 500.0},
+        },
+    }))
+    # Give the handler something else to find, so this isn't a "not found" no-op.
+    (paths.state_dir / "paper_s1_btcirt.json").write_text('{"a":1}')
+
+    result = ca.handle_delete_session(
+        paths, None, {"confirm": "DELETE", "session_id": "s1"}, RecordingRunner(),
+    )
+
+    assert result.ok is True
+    assert result.detail["removed_fee_contribution"] == {"BTCIRT": 1000.0, "USDTIRT": 250.0}
+    document = json.loads(fee_path.read_text())
+    assert "s1" not in document["sessions"]
+    assert document["sessions"]["s2"] == {"BTCIRT": 500.0}
+    assert document["all_time"] == {"BTCIRT": 500.0, "USDTIRT": 0.0}
+    assert "s1:BTCIRT:buy-1" not in document["order_high_watermarks"]
+    assert "s2:BTCIRT:buy-1" in document["order_high_watermarks"]
+
+
+def test_delete_session_never_calls_docker_or_stops_workers(tmp_path):
+    """Deleting an inactive session touches no worker lifecycle -- only the
+    active session is protected, and nothing else is running against an
+    already-closed session's files."""
+    paths = make_paths(tmp_path)
+    (paths.state_dir / "paper_s1_btcirt.json").write_text('{"a":1}')
+    runner = RecordingRunner()
+
+    result = ca.handle_delete_session(
+        paths, None, {"confirm": "DELETE", "session_id": "s1"}, runner,
+    )
+
+    assert result.ok is True
+    assert runner.calls == []

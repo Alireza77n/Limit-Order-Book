@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import os
 import shutil
 import sqlite3
@@ -39,7 +40,9 @@ from control_queue import (  # noqa: E402
     submit_command,  # noqa: F401  (re-exported for convenience/tests)
     write_result,
 )
-from config import TRADING_PROFILES  # noqa: E402
+from config import TRADING_PROFILES, demo_csv_path  # noqa: E402
+from result_store import DemoResultStore  # noqa: E402
+from no_quote import purge_session  # noqa: E402
 from demo_config import (  # noqa: E402
     OverlayLoadError,
     OverlayValidationError,
@@ -557,6 +560,141 @@ def handle_reset_demo(paths, pair, payload, run_argv):
     return AgentResult(True, {**operation_detail, "restarted": started})
 
 
+def _valid_session_id(session_id: Optional[str]) -> bool:
+    """session_id gets embedded directly into filenames (paper_<id>_<pair>.json)
+    -- reject anything that could escape the results/state directory. Mirrors
+    _safe_backup_dir's approach for the same class of risk."""
+    if not session_id or not isinstance(session_id, str):
+        return False
+    if "/" in session_id or "\\" in session_id or ".." in session_id:
+        return False
+    return session_id == session_id.strip() and bool(session_id)
+
+
+def _active_session_id(paths: AgentPaths) -> Optional[str]:
+    session_path = paths.state_dir / "stack_session.json"
+    if not session_path.exists():
+        return None
+    try:
+        document = json.loads(session_path.read_text())
+    except (OSError, ValueError):
+        return None
+    value = document.get("session_id") if isinstance(document, dict) else None
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _delete_session_ledger_files(paths: AgentPaths, session_id: str) -> List[str]:
+    removed = []
+    for source_dir in (paths.state_dir, paths.results_dir):
+        if not source_dir.exists():
+            continue
+        for pattern in (f"paper_{session_id}_*.json", f"paper_{session_id}_*_archive.jsonl"):
+            for target in source_dir.glob(pattern):
+                if target.is_file():
+                    target.unlink()
+                    removed.append(target.name)
+    return removed
+
+
+def _delete_session_rounds(paths: AgentPaths, session_id: str) -> Dict[str, int]:
+    """Remove one session's rows from each pair's round history + no-quote
+    state, then re-export the CSV from what remains. The CSV is a bounded
+    export of the SQLite `rounds` table (DemoResultStore.export_bounded_csv),
+    never edited directly -- see result_store.py."""
+    removed_rounds: Dict[str, int] = {}
+    for pair in PAIRS:
+        csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
+        db_path = paths.results_dir / f"{os.path.splitext(csv_name)[0]}.sqlite3"
+        if not db_path.exists():
+            continue
+        try:
+            store = DemoResultStore.open_existing(
+                db_path, csv_export_path=paths.results_dir / csv_name,
+            )
+        except (FileNotFoundError, ValueError):
+            continue
+        round_count = store.delete_session(session_id)
+        purge_session(db_path, session_id)
+        removed_rounds[pair] = round_count
+        if round_count:
+            store.export_bounded_csv()
+    return removed_rounds
+
+
+def _delete_session_fee_contribution(paths: AgentPaths, session_id: str) -> Dict[str, float]:
+    """all_time is a running sum of every session's per-symbol contribution
+    (paper.py's _record_shared_fee adds the same fee_quote to both `sessions`
+    and `all_time`), so subtracting this session's recorded share is an exact
+    reversal, not an approximation."""
+    fee_path = paths.state_dir / "paper_fee_scopes.json"
+    if not fee_path.exists():
+        return {}
+    try:
+        document = json.loads(fee_path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(document, dict):
+        return {}
+    sessions = document.get("sessions") or {}
+    session_fees = sessions.pop(session_id, None)
+    if not session_fees:
+        return {}
+    all_time = document.setdefault("all_time", {})
+    for symbol, amount in session_fees.items():
+        all_time[symbol] = max(0.0, float(all_time.get(symbol, 0.0)) - float(amount))
+    watermarks = document.get("order_high_watermarks") or {}
+    prefix = f"{session_id}:"
+    for key in [k for k in watermarks if k.startswith(prefix)]:
+        del watermarks[key]
+    _atomic_write_json(fee_path, document)
+    return {symbol: float(amount) for symbol, amount in session_fees.items()}
+
+
+def _atomic_write_json(path: Path, document: dict) -> None:
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(document, sort_keys=True, indent=2))
+    os.replace(tmp, path)
+
+
+def handle_delete_session(paths, pair, payload, run_argv):
+    payload = payload or {}
+    if payload.get("confirm") != "DELETE":
+        return AgentResult(False, {"error": "confirmation required"})
+    session_id = payload.get("session_id")
+    if not _valid_session_id(session_id):
+        return AgentResult(False, {"error": "invalid or missing session_id"})
+    active = _active_session_id(paths)
+    if session_id == active:
+        return AgentResult(False, {
+            "error": "cannot delete the active session; start a new session first",
+            "active_session_id": active,
+        })
+
+    backup_name = f"delete-session-{_stamp()}"
+    backup_files = create_backup(paths, backup_name)
+
+    removed_ledger_files = _delete_session_ledger_files(paths, session_id)
+    removed_rounds = _delete_session_rounds(paths, session_id)
+    removed_fees = _delete_session_fee_contribution(paths, session_id)
+
+    found_anything = bool(removed_ledger_files) or any(removed_rounds.values()) or bool(removed_fees)
+    if not found_anything:
+        return AgentResult(False, {
+            "error": "session not found",
+            "session_id": session_id,
+            "backup": backup_name,
+        })
+
+    return AgentResult(True, {
+        "session_id": session_id,
+        "backup": backup_name,
+        "backup_files": backup_files,
+        "removed_ledger_files": removed_ledger_files,
+        "removed_rounds": removed_rounds,
+        "removed_fee_contribution": removed_fees,
+    })
+
+
 def _safe_backup_dir(paths: AgentPaths, name: Optional[str]) -> Optional[Path]:
     if not name or "/" in name or "\\" in name or ".." in name:
         return None
@@ -672,6 +810,7 @@ HANDLERS: Dict[str, Callable] = {
     "reset_demo": handle_reset_demo,
     "restore_backup": handle_restore_backup,
     "recover_demo": handle_recover_demo,
+    "delete_session": handle_delete_session,
 }
 assert set(HANDLERS) == set(ACTIONS)  # every queue action has exactly one handler
 

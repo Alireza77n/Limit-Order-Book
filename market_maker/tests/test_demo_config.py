@@ -29,6 +29,7 @@ EXPECTED = {
     "cancel_after_minutes": "hot", "depth_max": "hot", "time_step": "hot",
     "demo_inv_initial": "new_session", "cash_initial": "new_session",
     "commission_perc": "new_session",
+    "exp_ret_min": "hot",
     "buy_locked_cash_limit_enabled": "hot", "buy_locked_cash_limit_ratio": "hot",
     "sell_locked_inventory_limit_enabled": "hot", "sell_locked_inventory_limit_ratio": "hot",
 }

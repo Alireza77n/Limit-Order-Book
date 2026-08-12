@@ -387,6 +387,12 @@ app.layout = html.Div([
                 html.Label("Session", style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY,
                                               "fontSize": "0.85rem", "fontWeight": 600}),
                 dcc.Dropdown(id="session", clearable=False),
+                html.Div(
+                    "To permanently delete a session and its history, use the "
+                    "Admin panel's Sessions page (this dashboard is read-only).",
+                    style={"color": MUTED, "fontFamily": FONT_FAMILY, "fontSize": "0.75rem",
+                           "marginTop": "0.35rem"},
+                ),
             ]),
             html.Div(id="status-badge", style={"display": "flex", "alignItems": "flex-end"}),
         ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr auto", "gap": "1.5rem",

@@ -24,7 +24,7 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session as flask_session, url_for
 from werkzeug.security import check_password_hash
@@ -674,6 +674,40 @@ def _recovery_html_response(app: Flask):
     )
 
 
+def _list_sessions(app: Flask):
+    """Every session recorded in either pair's round-history CSV, most
+    recent first. A pair's CSV accumulates rows from every session ever run
+    against it (see result_store.py) -- this aggregates both so a session
+    that only traded one pair, or traded both, is reported consistently."""
+    active = _session_id(app)
+    by_session: Dict[str, Dict[str, Any]] = {}
+    for pair in PAIRS:
+        csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
+        csv_path = os.path.join(app.config["RESULTS_DIR"], csv_name)
+        df = load_track(csv_path)
+        if df is None or df.empty or "Session_id" not in df.columns:
+            continue
+        for session_id, group in df.groupby("Session_id"):
+            if not session_id:
+                continue
+            entry = by_session.setdefault(session_id, {
+                "session_id": session_id, "is_active": session_id == active, "pairs": {},
+            })
+            timestamps = group["Timestamp"].dropna()
+            entry["pairs"][pair] = {
+                "rounds": int(len(group)),
+                "last_timestamp": str(timestamps.max()) if not timestamps.empty else None,
+            }
+    return sorted(by_session.values(), key=lambda entry: entry["session_id"], reverse=True)
+
+
+def _sessions_html_response(app: Flask):
+    return render_template(
+        "admin/sessions.html", sessions=_list_sessions(app),
+        csrf_token=get_csrf_token(), session_id=_session_id(app),
+    )
+
+
 def _register_routes(app: Flask) -> None:
     @app.route("/admin/health")
     def admin_health():
@@ -951,6 +985,45 @@ def _register_routes(app: Flask) -> None:
                 return _recovery_html_response(app), 502
             flash("Safe recovery applied.", "success")
             return _recovery_html_response(app)
+        return jsonify(result)
+
+    @app.route("/admin/sessions", methods=["GET"])
+    @login_required
+    def admin_sessions():
+        if _wants_html():
+            return _sessions_html_response(app)
+        return jsonify({"sessions": _list_sessions(app)})
+
+    @app.route("/admin/sessions/<session_id>/delete", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_sessions_delete(session_id):
+        if request.form.get("confirm") != "DELETE":
+            message = "Confirmation required: type DELETE exactly to confirm."
+            if _wants_html():
+                flash(message, "error")
+                return _sessions_html_response(app), 400
+            return (message, 400)
+        try:
+            result = enqueue_and_wait(
+                app, "delete_session", None,
+                payload={"session_id": session_id, "confirm": "DELETE"},
+            )
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
+            if _wants_html():
+                flash(message, "warning")
+                return _sessions_html_response(app), status
+            return (message, status)
+        if not result.get("ok"):
+            message = _command_failure_message(result)
+            if _wants_html():
+                flash(message, "error")
+                return _sessions_html_response(app), 502
+            return jsonify(result), 502
+        if _wants_html():
+            flash(f"Session {session_id} deleted.", "success")
+            return _sessions_html_response(app)
         return jsonify(result)
 
     @app.route("/admin/export", methods=["GET"])

@@ -17,6 +17,17 @@ class MMConfig:
     # Trading / market params
     commission_perc: float = 0.0025
     cancel_after_minutes: float = 10.0
+    # Minimum required profit margin ABOVE the round-trip commission, as a
+    # price fraction. Algorithm 1 only quotes when (ask-bid)/last exceeds
+    # commission_perc + exp_ret_min -- see strategy/algo1.py's spread_ok. If
+    # left None, engine.py's __init__ bootstraps it to commission_perc (a 2x
+    # commission bar), which is the value both profiles below now set
+    # explicitly, so adding the field to TRADING_PROFILES here changes
+    # nothing about current behavior. It is a real per-pair lever, though:
+    # BTC/IRT trades at a wide enough spread to clear a 2x-commission bar
+    # most rounds; USDT/IRT's spread rarely does, so lowering just its
+    # exp_ret_min (via Admin, hot-reloadable) is the intended way to make it
+    # quote more often without touching commission_perc or Algorithm 1 itself.
     exp_ret_min: Optional[float] = None
     algorithm_id: str = "default"           # if None, equals commission_perc
     depth_max: int = 15
@@ -122,6 +133,10 @@ def demo_csv_path(real_path: str) -> str:
 TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
     "btc": dict(
         commission_perc=0.0010,
+        # Matches commission_perc, i.e. today's actual bootstrap default
+        # (engine.py falls back to exp_ret_min=commission_perc when unset) --
+        # adding it here makes it Admin-editable without changing behavior.
+        exp_ret_min=0.0010,
         cancel_after_minutes=10,
         algorithm_id="1btc",
         depth_max=10,
@@ -147,6 +162,13 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
     ),
     "usdt": dict(
         commission_perc=0.0010,
+        # Matches commission_perc, i.e. today's actual bootstrap default --
+        # see the "btc" profile's exp_ret_min comment. USDT/IRT's spread
+        # rarely clears the resulting 2x-commission bar (see
+        # reports/live-session-audit-2026-08-10.md); lower this from Admin
+        # if more frequent USDT quoting is wanted. Left unchanged here so
+        # this commit does not itself alter trading behavior.
+        exp_ret_min=0.0010,
         cancel_after_minutes=10,
         algorithm_id="1usdt",
         depth_max=10,

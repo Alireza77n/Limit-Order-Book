@@ -29,6 +29,7 @@ ACTIONS = frozenset({
     "apply_config", "rollback_config",
     "new_session", "cancel_orders",
     "create_backup", "reset_demo", "restore_backup", "recover_demo",
+    "delete_session",
 })
 
 # Actions that operate on one pair; the rest are stack-wide (pair must be None).

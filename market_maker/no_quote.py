@@ -276,3 +276,20 @@ class NoQuoteMonitor:
         state["pending_kind"] = None
         state["pending_payload"] = {}
         self._save(state)
+
+
+def purge_session(db_path, session_id: str) -> None:
+    """Remove one session's no-quote tracking rows (both symbols share this
+    table). Safe against a db file whose no_quote_state table doesn't exist
+    yet -- e.g. a pair that was deleted before any worker for it ever ran."""
+    connection = sqlite3.connect(db_path, timeout=5.0)
+    try:
+        connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute(
+            "DELETE FROM no_quote_state WHERE session_id=?", (str(session_id),)
+        )
+        connection.commit()
+    except sqlite3.OperationalError:
+        pass  # table doesn't exist -- nothing to purge
+    finally:
+        connection.close()

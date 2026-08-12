@@ -109,6 +109,7 @@ def run_one_round(bot):
         ("cancel_after_minutes", 3.0),
         ("depth_max", 4),
         ("time_step", 2),
+        ("exp_ret_min", 0.0005),
         ("buy_locked_cash_limit_enabled", True),
         ("buy_locked_cash_limit_ratio", 0.4),
         ("sell_locked_inventory_limit_enabled", True),
@@ -504,3 +505,25 @@ def test_first_reload_error_rejects_stale_previous_session_snapshot(
         bot.exchange.ledger.commission_perc
     )
     assert snapshot["desired_digest"] != "stale-digest"
+
+
+def test_hot_exp_ret_min_reaches_the_live_algo1_strategy(runtime_bot):
+    """exp_ret_min is the lever for making a tight-spread pair (USDT/IRT)
+    quote more often without touching commission_perc or Algorithm 1 itself
+    -- see reports/live-session-audit-2026-08-10.md. This proves it reaches
+    the real Algo1Strategy instance the worker quotes with, not just cfg."""
+    bot, state_dir = runtime_bot
+    ob = make_orderbook()  # best bid 100, best ask 101 -> 1% top-of-book spread
+    strategy = bot.strategy  # the real Algo1Strategy, not a test double
+
+    # commission 0.3% + exp_ret_min 2% -> needs > 2.3%; book offers 1%.
+    save_desired(state_dir, commission_perc=0.003, exp_ret_min=0.02)
+    assert bot.config_sync.reload_at_round_boundary().ok
+    assert strategy.cfg is bot.cfg
+    assert strategy.spread_ok(ob, 0, 0) is False
+
+    # Same commission, exp_ret_min lowered to 0 -> needs > 0.3%; 1% clears it.
+    save_desired(state_dir, commission_perc=0.003, exp_ret_min=0.0)
+    assert bot.config_sync.reload_at_round_boundary().ok
+    assert strategy.spread_ok(ob, 0, 0) is True 
+

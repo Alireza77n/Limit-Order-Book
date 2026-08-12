@@ -1,0 +1,74 @@
+{% extends "admin/base.html" %}
+{% import "admin/confirmation.html" as confirm %}
+
+{% block title %}Sessions{% endblock %}
+
+{% macro cell(value) -%}
+  {%- if value is none -%}—{%- else -%}{{ value }}{%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header">
+    <h2>Demo Sessions</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">
+      Every Demo session recorded in either pair's round history. Deleting a
+      session permanently removes its ledgers, round history, and no-quote
+      tracking for BOTH pairs, and subtracts its share from the accumulated
+      fee totals. A backup is taken first, but this is otherwise irreversible.
+      The active session cannot be deleted here — start a new session from
+      the Workers page first.
+    </p>
+
+    {% if sessions %}
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Session ID</th>
+              <th>Status</th>
+              <th>BTC Rounds</th>
+              <th>BTC Last Activity</th>
+              <th>USDT Rounds</th>
+              <th>USDT Last Activity</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in sessions %}
+              <tr>
+                <td class="mono">{{ s.session_id }}</td>
+                <td>
+                  {% if s.is_active %}
+                    <span class="status-badge status-running">Active</span>
+                  {% else %}
+                    <span class="status-badge status-stopped">Closed</span>
+                  {% endif %}
+                </td>
+                <td class="mono text-right">{{ cell(s.pairs.btc.rounds if s.pairs.btc else none) }}</td>
+                <td class="mono">{{ cell(s.pairs.btc.last_timestamp if s.pairs.btc else none) }}</td>
+                <td class="mono text-right">{{ cell(s.pairs.usdt.rounds if s.pairs.usdt else none) }}</td>
+                <td class="mono">{{ cell(s.pairs.usdt.last_timestamp if s.pairs.usdt else none) }}</td>
+                <td>
+                  {% if s.is_active %}
+                    <span class="text-muted">Active — cannot delete</span>
+                  {% else %}
+                    {{ confirm.typed_confirm_form(
+                         url_for('admin_sessions_delete', session_id=s.session_id), "DELETE", "Delete",
+                         "Permanently delete session " ~ s.session_id ~ "? This removes its ledgers, round history, and fee contribution for both pairs. A backup is taken first. Type DELETE to confirm.",
+                         csrf_token, button_size="btn-sm") }}
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">No session history recorded yet.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -29,7 +29,7 @@ HTML = {"Accept": "text/html"}
 EXPECTED_CONFIG_FIELDS = {
     "order_size", "inv_max", "inv_min", "cancel_after_minutes",
     "depth_max", "time_step", "demo_inv_initial", "cash_initial",
-    "commission_perc",
+    "commission_perc", "exp_ret_min",
     "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
     "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
 }
@@ -827,3 +827,67 @@ def test_operation_in_progress_html_is_friendly(client, app, fake_agent):
         assert response.content_type.startswith("text/html")
     finally:
         lock.release()
+
+
+# ---------- Sessions: list + delete confirmation, active-session protection ----------
+
+SESSION_ROWS_BTC = [
+    {"Session_id": "s1", "Timestamp": "2026-08-01 12:00:00", "Round": 1},
+    {"Session_id": "s1", "Timestamp": "2026-08-01 12:00:10", "Round": 2},
+    {"Session_id": "s2", "Timestamp": "2026-08-02 09:00:00", "Round": 1},
+]
+
+
+@pytest.fixture
+def sessions_app(tmp_path):
+    for name in ("control", "state", "results", "backups"):
+        (tmp_path / name).mkdir()
+    csv_name = Path(demo_csv_path(TRADING_PROFILES["btc"]["output_csv"])).name
+    pd.DataFrame(SESSION_ROWS_BTC).to_csv(tmp_path / "results" / csv_name, index=False)
+    (tmp_path / "state" / "stack_session.json").write_text(json.dumps({"session_id": "s2"}))
+    return create_app({
+        "ADMIN_USERNAME": "admin",
+        "ADMIN_PASSWORD_HASH": generate_password_hash("correct horse", method="pbkdf2:sha256"),
+        "SECRET_KEY": "test-secret",
+        "CONTROL_DIR": str(tmp_path / "control"),
+        "STATE_DIR": str(tmp_path / "state"),
+        "RESULTS_DIR": str(tmp_path / "results"),
+        "BACKUPS_DIR": str(tmp_path / "backups"),
+        "TESTING": True,
+    })
+
+
+@pytest.fixture
+def sessions_client(sessions_app):
+    return sessions_app.test_client()
+
+
+def test_sessions_page_lists_sessions_most_recent_first(sessions_client):
+    _login(sessions_client)
+    html = _html(sessions_client.get("/admin/sessions", headers=HTML))
+    assert html.index("s2") < html.index("s1")
+
+
+def test_sessions_page_marks_active_session_and_withholds_its_delete_form(sessions_client):
+    _login(sessions_client)
+    html = _html(sessions_client.get("/admin/sessions", headers=HTML))
+    assert 'action="/admin/sessions/s2/delete"' not in html
+    assert 'action="/admin/sessions/s1/delete"' in html
+
+
+def test_sessions_json_reports_active_flag(sessions_client):
+    _login(sessions_client)
+    body = sessions_client.get("/admin/sessions").get_json()
+    by_id = {row["session_id"]: row for row in body["sessions"]}
+    assert by_id["s2"]["is_active"] is True
+    assert by_id["s1"]["is_active"] is False
+    assert by_id["s1"]["pairs"]["btc"]["rounds"] == 2
+
+
+def test_delete_session_html_rejects_without_exact_confirm(sessions_client, sessions_app):
+    token = _login(sessions_client)
+    response = sessions_client.post(
+        "/admin/sessions/s1/delete", data={"confirm": "nope", "csrf_token": token}, headers=HTML,
+    )
+    assert response.status_code == 400
+    assert response.content_type.startswith("text/html")

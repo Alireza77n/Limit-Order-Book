@@ -28,6 +28,7 @@
         <li><a href="{{ url_for('admin_config', pair='usdt') }}" class="{% if request.endpoint == 'admin_config' and request.view_args.pair == 'usdt' %}active{% endif %}">Config USDT</a></li>
         <li><a href="{{ url_for('admin_orders') }}" class="{% if request.endpoint == 'admin_orders' %}active{% endif %}">Orders</a></li>
         <li><a href="{{ url_for('admin_balances') }}" class="{% if request.endpoint == 'admin_balances' %}active{% endif %}">Balances</a></li>
+        <li><a href="{{ url_for('admin_sessions') }}" class="{% if request.endpoint == 'admin_sessions' %}active{% endif %}">Sessions</a></li>
         <li><a href="{{ url_for('admin_backups') }}" class="{% if request.endpoint == 'admin_backups' %}active{% endif %}">Backups</a></li>
         <li><a href="{{ url_for('admin_recover') }}" class="{% if request.endpoint == 'admin_recover' %}active{% endif %}">Recovery</a></li>
         <li><a href="{{ url_for('admin_logs') }}" class="{% if request.endpoint == 'admin_logs' %}active{% endif %}">Logs</a></li>

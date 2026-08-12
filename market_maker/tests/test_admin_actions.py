@@ -14,7 +14,7 @@ from demo_config import config_status, desired_digest, load_desired_config
 EXPECTED_FIELDS = {
     "order_size", "inv_max", "inv_min", "cancel_after_minutes",
     "depth_max", "time_step", "demo_inv_initial", "cash_initial",
-    "commission_perc",
+    "commission_perc", "exp_ret_min",
     "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
     "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
 }
@@ -606,3 +606,37 @@ def test_export_streams_zip_built_only_from_backups_dir(client, app, monkeypatch
     import zipfile
     archive = zipfile.ZipFile(__import__("io").BytesIO(response.get_data()))
     assert archive.namelist() == ["paper_x_btcirt.json"]
+
+
+def test_delete_session_rejected_without_exact_confirm(client, app, fake_agent):
+    token = _login(client)
+    response = client.post(
+        "/admin/sessions/s1/delete", data={"confirm": "yes", "csrf_token": token},
+    )
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+
+
+def test_delete_session_accepted_with_exact_confirm(client, app, fake_agent):
+    token = _login(client)
+    response = client.post(
+        "/admin/sessions/s1/delete", data={"confirm": "DELETE", "csrf_token": token},
+    )
+    assert response.status_code == 200
+    written = _commands_written(app)
+    assert len(written) == 1
+    assert written[0]["action"] == "delete_session"
+    assert written[0]["pair"] is None
+    assert written[0]["payload"] == {"session_id": "s1", "confirm": "DELETE"}
+
+
+def test_delete_session_failure_reports_502(client, app, monkeypatch):
+    def failing_await(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        return {"command_id": command_id, "ok": False, "detail": {"error": "session not found"}, "finished_at": "now"}
+
+    monkeypatch.setattr(admin_app_module, "await_result", failing_await)
+    token = _login(client)
+    response = client.post(
+        "/admin/sessions/never-existed/delete", data={"confirm": "DELETE", "csrf_token": token},
+    )
+    assert response.status_code == 502
