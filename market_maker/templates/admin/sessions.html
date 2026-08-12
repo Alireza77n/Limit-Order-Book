@@ -1,5 +1,4 @@
 {% extends "admin/base.html" %}
-{% import "admin/confirmation.html" as confirm %}
 
 {% block title %}Sessions{% endblock %}
 
@@ -23,10 +22,33 @@
     </p>
 
     {% if sessions %}
+      {# Bulk-delete form carries no visible fields of its own -- the
+         per-row checkboxes and the toolbar button below associate with it
+         by id (the "form" attribute), since they live outside it in the DOM
+         to avoid nesting a form inside each table row's own delete form. #}
+      <form id="bulk-delete-sessions" method="post"
+            action="{{ url_for('admin_sessions_delete_bulk') }}"
+            data-confirm="Permanently delete the selected sessions? This removes their ledgers, round history, and fee contribution for both pairs. A backup is taken first.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="confirm" value="DELETE">
+      </form>
+
+      <div class="btn-group mb-md" style="align-items: center; gap: var(--spacing-md);">
+        <label style="display: flex; align-items: center; gap: 0.4rem; font-weight: 600; cursor: pointer;">
+          <input type="checkbox" id="select-all-sessions">
+          Select all
+        </label>
+        <button type="submit" form="bulk-delete-sessions" id="bulk-delete-btn"
+                class="btn btn-danger btn-sm" disabled>
+          Delete selected (<span id="bulk-delete-count">0</span>)
+        </button>
+      </div>
+
       <div class="table-wrapper">
         <table class="table">
           <thead>
             <tr>
+              <th></th>
               <th>Session ID</th>
               <th>Status</th>
               <th>BTC Rounds</th>
@@ -39,6 +61,13 @@
           <tbody>
             {% for s in sessions %}
               <tr>
+                <td>
+                  {% if not s.is_active %}
+                    <input type="checkbox" class="session-select-checkbox" name="session_ids"
+                           value="{{ s.session_id }}" form="bulk-delete-sessions"
+                           aria-label="Select session {{ s.session_id }}">
+                  {% endif %}
+                </td>
                 <td class="mono">{{ s.session_id }}</td>
                 <td>
                   {% if s.is_active %}
@@ -55,10 +84,13 @@
                   {% if s.is_active %}
                     <span class="text-muted">Active — cannot delete</span>
                   {% else %}
-                    {{ confirm.typed_confirm_form(
-                         url_for('admin_sessions_delete', session_id=s.session_id), "DELETE", "Delete",
-                         "Permanently delete session " ~ s.session_id ~ "? This removes its ledgers, round history, and fee contribution for both pairs. A backup is taken first. Type DELETE to confirm.",
-                         csrf_token, button_size="btn-sm") }}
+                    <form method="post" action="{{ url_for('admin_sessions_delete', session_id=s.session_id) }}"
+                          class="inline-form"
+                          data-confirm="Permanently delete session {{ s.session_id }}? This removes its ledgers, round history, and fee contribution for both pairs. A backup is taken first.">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="confirm" value="DELETE">
+                      <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
                   {% endif %}
                 </td>
               </tr>

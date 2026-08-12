@@ -640,3 +640,59 @@ def test_delete_session_failure_reports_502(client, app, monkeypatch):
         "/admin/sessions/never-existed/delete", data={"confirm": "DELETE", "csrf_token": token},
     )
     assert response.status_code == 502
+
+
+def test_delete_sessions_bulk_rejected_without_exact_confirm(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/sessions/delete", data={
+        "session_ids": ["s1", "s2"], "confirm": "yes", "csrf_token": token,
+    })
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+
+
+def test_delete_sessions_bulk_rejected_when_none_selected(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/sessions/delete", data={
+        "confirm": "DELETE", "csrf_token": token,
+    })
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+
+
+def test_delete_sessions_bulk_enqueues_one_command_per_selected_session(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/sessions/delete", data={
+        "session_ids": ["s1", "s2", "s3"], "confirm": "DELETE", "csrf_token": token,
+    })
+    assert response.status_code == 200
+    written = _commands_written(app)
+    assert len(written) == 3
+    assert {w["payload"]["session_id"] for w in written} == {"s1", "s2", "s3"}
+    assert all(w["action"] == "delete_session" for w in written)
+    assert all(w["pair"] is None for w in written)
+    assert all(w["payload"]["confirm"] == "DELETE" for w in written)
+
+
+def test_delete_sessions_bulk_partial_failure_reports_502_but_processes_every_session(
+    client, app, monkeypatch,
+):
+    calls = []
+
+    def selective_failure(control_dir, command_id, timeout=30.0, poll_interval=0.1):
+        calls.append(command_id)
+        # Fail every other one, so the batch has a genuine mix of outcomes.
+        ok = len(calls) % 2 == 1
+        return {
+            "command_id": command_id, "ok": ok,
+            "detail": {} if ok else {"error": "session not found"},
+            "finished_at": "now",
+        }
+
+    monkeypatch.setattr(admin_app_module, "await_result", selective_failure)
+    token = _login(client)
+    response = client.post("/admin/sessions/delete", data={
+        "session_ids": ["s1", "s2"], "confirm": "DELETE", "csrf_token": token,
+    })
+    assert response.status_code == 502
+    assert len(calls) == 2  # both were attempted despite the first result

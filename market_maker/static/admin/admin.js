@@ -43,8 +43,11 @@
       : '⚠️ This action will modify the demo state.';
     warningEl.className = 'confirm-dialog__warning' + (warningType === 'danger' ? ' danger' : '');
 
-    // Check if form has a confirm input field
-    const confirmInput = form.querySelector('input[name="confirm"]');
+    // Only a VISIBLE confirm field means "the operator must type this exactly"
+    // (RESET/RESTORE). A hidden confirm field is a fixed value the form
+    // already carries for the server's own safety check -- not something to
+    // prompt the operator to retype, so it must not select here.
+    const confirmInput = form.querySelector('input[type="text"][name="confirm"]');
     if (confirmInput) {
       currentConfirmInput = confirmInput;
       fieldsEl.innerHTML = `
@@ -111,7 +114,7 @@
 
   function handleFormSubmit(e) {
     const confirmMessage = this.getAttribute('data-confirm');
-    const isDangerous = confirmMessage.includes('RESET') || confirmMessage.includes('RESTORE');
+    const isDangerous = confirmMessage.includes('RESET') || confirmMessage.includes('RESTORE') || confirmMessage.includes('DELETE');
     showConfirmDialog(this, confirmMessage, isDangerous ? 'danger' : 'warning');
     e.preventDefault();
   }
@@ -172,6 +175,44 @@
   });
 
   observer.observe(document.body, { childList: true, subtree: true });
+
+  // Sessions page: "select all" + live count/enable for the bulk-delete
+  // button. No-op on every other page -- these elements only exist on
+  // admin/sessions.html.
+  function initSessionSelection() {
+    const selectAll = document.getElementById('select-all-sessions');
+    const rowCheckboxes = document.querySelectorAll('.session-select-checkbox');
+    const bulkButton = document.getElementById('bulk-delete-btn');
+    const countEl = document.getElementById('bulk-delete-count');
+    if (!selectAll || !rowCheckboxes.length || !bulkButton) {
+      return;
+    }
+
+    function refresh() {
+      const checked = Array.prototype.filter.call(rowCheckboxes, function(cb) { return cb.checked; });
+      if (countEl) {
+        countEl.textContent = String(checked.length);
+      }
+      bulkButton.disabled = checked.length === 0;
+      selectAll.checked = checked.length === rowCheckboxes.length;
+      selectAll.indeterminate = checked.length > 0 && checked.length < rowCheckboxes.length;
+    }
+
+    selectAll.addEventListener('change', function() {
+      rowCheckboxes.forEach(function(cb) { cb.checked = selectAll.checked; });
+      refresh();
+    });
+    rowCheckboxes.forEach(function(cb) {
+      cb.addEventListener('change', refresh);
+    });
+    refresh();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initSessionSelection);
+  } else {
+    initSessionSelection();
+  }
 
   // Export for testing
   window.AdminUI = {

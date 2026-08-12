@@ -832,6 +832,7 @@ def test_operation_in_progress_html_is_friendly(client, app, fake_agent):
 # ---------- Sessions: list + delete confirmation, active-session protection ----------
 
 SESSION_ROWS_BTC = [
+    {"Session_id": "s0", "Timestamp": "2026-07-31 08:00:00", "Round": 1},
     {"Session_id": "s1", "Timestamp": "2026-08-01 12:00:00", "Round": 1},
     {"Session_id": "s1", "Timestamp": "2026-08-01 12:00:10", "Round": 2},
     {"Session_id": "s2", "Timestamp": "2026-08-02 09:00:00", "Round": 1},
@@ -891,3 +892,48 @@ def test_delete_session_html_rejects_without_exact_confirm(sessions_client, sess
     )
     assert response.status_code == 400
     assert response.content_type.startswith("text/html")
+
+
+def test_delete_session_row_form_does_not_require_typing_to_confirm(sessions_client):
+    """The operator must not have to type DELETE for a single-row delete --
+    only a hidden, pre-filled confirm field (server-side safety net) plus a
+    plain click-through JS dialog (admin.js only prompts for typing when the
+    confirm input is type="text", which this deliberately is not)."""
+    _login(sessions_client)
+    html = _html(sessions_client.get("/admin/sessions", headers=HTML))
+    row_form_start = html.index('action="/admin/sessions/s1/delete"')
+    row_form = html[row_form_start:row_form_start + 600]
+    assert 'type="hidden" name="confirm" value="DELETE"' in row_form
+    assert 'type="text" name="confirm"' not in row_form
+
+
+def test_sessions_page_has_bulk_delete_form_with_checkboxes_for_closed_sessions_only(sessions_client):
+    _login(sessions_client)
+    html = _html(sessions_client.get("/admin/sessions", headers=HTML))
+    assert 'id="bulk-delete-sessions"' in html
+    assert 'action="/admin/sessions/delete"' in html
+    assert 'value="s0" form="bulk-delete-sessions"' in html
+    assert 'value="s1" form="bulk-delete-sessions"' in html
+    assert 'value="s2" form="bulk-delete-sessions"' not in html  # s2 is active
+    assert 'id="select-all-sessions"' in html
+    assert 'id="bulk-delete-btn"' in html
+
+
+def test_delete_sessions_bulk_html_rejects_without_confirm(sessions_client):
+    token = _login(sessions_client)
+    response = sessions_client.post(
+        "/admin/sessions/delete",
+        data={"session_ids": ["s0", "s1"], "confirm": "nope", "csrf_token": token},
+        headers=HTML,
+    )
+    assert response.status_code == 400
+    assert response.content_type.startswith("text/html")
+
+
+def test_delete_sessions_bulk_html_rejects_empty_selection(sessions_client):
+    token = _login(sessions_client)
+    response = sessions_client.post(
+        "/admin/sessions/delete", data={"confirm": "DELETE", "csrf_token": token}, headers=HTML,
+    )
+    assert response.status_code == 400
+    assert "no sessions selected" in _html(response).lower()

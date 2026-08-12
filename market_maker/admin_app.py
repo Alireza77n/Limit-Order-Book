@@ -215,6 +215,30 @@ def enqueue_batch(app: Flask, action: str, pairs, payload=None):
     return results
 
 
+def enqueue_session_batch(app: Flask, session_ids, *, confirm):
+    """Like enqueue_batch, but the varying dimension is session_id inside the
+    payload rather than pair (delete_session is a stack-wide action -- pair
+    is always None). One delete_session command per session, one audit entry
+    per completed sub-action, all under a single held control lock so a
+    concurrent Admin action can't interleave mid-batch."""
+    control_dir = app.config["CONTROL_DIR"]
+    requested_by = flask_session.get("user", "unknown")
+    results = []
+    with ControlLock(control_dir):
+        for session_id in session_ids:
+            command_id = submit_command(
+                control_dir, "delete_session", None, requested_by=requested_by,
+                payload={"session_id": session_id, "confirm": confirm},
+            )
+            result = await_result(control_dir, command_id, timeout=app.config["COMMAND_TIMEOUT"])
+            control_queue.append_audit(control_dir, {
+                "command_id": command_id, "action": "delete_session",
+                "pair": None, "requested_by": requested_by, "ok": result.get("ok"),
+            })
+            results.append(dict(result, session_id=session_id))
+    return results
+
+
 def _control_error(exc: Exception):
     """Map a control-queue failure to (status_code, message). ResultTimeout
     means no control agent picked up the command -- distinct from
@@ -999,7 +1023,7 @@ def _register_routes(app: Flask) -> None:
     @csrf_protected
     def admin_sessions_delete(session_id):
         if request.form.get("confirm") != "DELETE":
-            message = "Confirmation required: type DELETE exactly to confirm."
+            message = "Confirmation required."
             if _wants_html():
                 flash(message, "error")
                 return _sessions_html_response(app), 400
@@ -1025,6 +1049,42 @@ def _register_routes(app: Flask) -> None:
             flash(f"Session {session_id} deleted.", "success")
             return _sessions_html_response(app)
         return jsonify(result)
+
+    @app.route("/admin/sessions/delete", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_sessions_delete_bulk():
+        session_ids = [value for value in request.form.getlist("session_ids") if value]
+        if request.form.get("confirm") != "DELETE":
+            message = "Confirmation required."
+            if _wants_html():
+                flash(message, "error")
+                return _sessions_html_response(app), 400
+            return (message, 400)
+        if not session_ids:
+            message = "No sessions selected."
+            if _wants_html():
+                flash(message, "error")
+                return _sessions_html_response(app), 400
+            return (message, 400)
+        try:
+            results = enqueue_session_batch(app, session_ids, confirm="DELETE")
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
+            if _wants_html():
+                flash(message, "warning")
+                return _sessions_html_response(app), status
+            return (message, status)
+        failed = [result for result in results if not result.get("ok")]
+        if _wants_html():
+            if failed:
+                flash(_command_failure_message({"results": failed}), "error")
+                return _sessions_html_response(app), 502
+            flash(f"Deleted {len(session_ids)} session(s).", "success")
+            return _sessions_html_response(app)
+        if failed:
+            return jsonify({"results": results}), 502
+        return jsonify({"results": results})
 
     @app.route("/admin/export", methods=["GET"])
     @login_required
