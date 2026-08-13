@@ -214,12 +214,16 @@ class PaperTelegramReporter:
             return "Candidates: none"
         lines = []
         for index, candidate in enumerate(candidates, start=1):
-            lines.append(
+            line = (
                 f"Candidate {index}: "
                 f"bid={candidate.get('bid_price')} "
                 f"ask={candidate.get('ask_price')} "
                 f"spread={candidate.get('spread')}"
             )
+            net_return = candidate.get('net_return')
+            if net_return is not None:
+                line += f" net={net_return}"
+            lines.append(line)
         return "\n".join(lines)
 
     @classmethod

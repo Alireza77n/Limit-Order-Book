@@ -57,7 +57,7 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "demo_inv_initial": FieldDefinition(float, 0, None, ApplicationMode.NEW_SESSION, "Starting inventory for a new Demo session."),
     "cash_initial": FieldDefinition(float, 0, None, ApplicationMode.NEW_SESSION, "Starting quote cash for a new Demo session."),
     "commission_perc": FieldDefinition(float, 0, 1, ApplicationMode.NEW_SESSION, "Simulated fee fraction for a new Demo session."),
-    "exp_ret_min": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Minimum required profit margin above commission before Algorithm 1 will quote; spread must exceed commission_perc + this value."),
+    "exp_ret_min": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Minimum expected round-trip NET return; Algorithm 1 quotes when the fee-adjusted return on the submitted buy price exceeds this value."),
     "buy_locked_cash_limit_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Reject new BUY orders that would push locked cash past the ratio below."),
     "buy_locked_cash_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total quote cash (free + already locked in BUY orders) locked in resting BUY orders, 0-1."),
     "sell_locked_inventory_limit_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Reject new SELL orders that would push locked inventory past the ratio below."),

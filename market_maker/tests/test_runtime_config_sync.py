@@ -511,18 +511,28 @@ def test_hot_exp_ret_min_reaches_the_live_algo1_strategy(runtime_bot):
     """exp_ret_min is the lever for making a tight-spread pair (USDT/IRT)
     quote more often without touching commission_perc or Algorithm 1 itself
     -- see reports/live-session-audit-2026-08-10.md. This proves it reaches
-    the real Algo1Strategy instance the worker quotes with, not just cfg."""
+    the real Algo1Strategy instance the worker quotes with, not just cfg.
+    The bar is the fee-adjusted round-trip net return on the submitted
+    prices (USDTIRT tick 10), so the book is IRT-denominated and realistic;
+    a 100/101 synthetic book would be crossed after the tick adjustment."""
     bot, state_dir = runtime_bot
-    ob = make_orderbook()  # best bid 100, best ask 101 -> 1% top-of-book spread
+    # best bid 2,000,000, best ask 2,020,000 -> ~1% top-of-book spread.
+    ob = {
+        "bids": [[str(2_000_000 - 20_000 * level), "10"] for level in range(12)],
+        "asks": [[str(2_020_000 + 20_000 * level), "10"] for level in range(12)],
+        "lastTradePrice": "2000000",
+    }
     strategy = bot.strategy  # the real Algo1Strategy, not a test double
 
-    # commission 0.3% + exp_ret_min 2% -> needs > 2.3%; book offers 1%.
+    # commission 0.1% (pending new session) + exp_ret_min 2% -> needs net
+    # return > 2%; the book's net(0,0) ~ 0.79% does not clear it.
     save_desired(state_dir, commission_perc=0.003, exp_ret_min=0.02)
     assert bot.config_sync.reload_at_round_boundary().ok
     assert strategy.cfg is bot.cfg
     assert strategy.spread_ok(ob, 0, 0) is False
 
-    # Same commission, exp_ret_min lowered to 0 -> needs > 0.3%; 1% clears it.
+    # Same commission, exp_ret_min lowered to 0 -> needs net return > 0.1%;
+    # the ~0.79% net return clears it.
     save_desired(state_dir, commission_perc=0.003, exp_ret_min=0.0)
     assert bot.config_sync.reload_at_round_boundary().ok
     assert strategy.spread_ok(ob, 0, 0) is True 

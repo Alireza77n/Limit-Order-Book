@@ -21,7 +21,9 @@ def test_zero_inventory_usdt_diagnostic_classifies_depth_fallback(monkeypatch, t
     assert diagnostic["candidate_pairs"] == [[5, 10], [4, 9], [3, 8], [2, 7], [1, 6]]
     assert diagnostic["commission_perc"] == 0.001
     assert diagnostic["exp_ret_min"] == 0.001
-    assert diagnostic["required_threshold"] == 0.002
+    assert diagnostic["required_threshold"] == 0.001
+    assert diagnostic["min_required_return"] == 0.001
+    assert diagnostic["mid_price"] == 100.05
     assert diagnostic["selected_bid_level"] is None
     assert diagnostic["selected_ask_level"] is None
     assert diagnostic["fallback_bid_level"] == 10
@@ -31,7 +33,13 @@ def test_zero_inventory_usdt_diagnostic_classifies_depth_fallback(monkeypatch, t
     assert diagnostic["candidate_results"][0]["bid_price"] == 100.0
     assert diagnostic["candidate_results"][0]["ask_price"] == 100.1
     assert diagnostic["candidate_results"][0]["last_price"] == 100.0
-    assert diagnostic["candidate_results"][0]["required_threshold"] == 0.002
+    assert diagnostic["candidate_results"][0]["required_threshold"] == 0.001
+    assert diagnostic["candidate_results"][0]["min_required_return"] == 0.001
+    # USDTIRT tick = 10: one tick inside a 100/100.1 book is crossed, so the
+    # submitted prices carry a negative net return and the candidate fails.
+    assert diagnostic["candidate_results"][0]["submitted_bid_price"] == 110.0
+    assert diagnostic["candidate_results"][0]["submitted_ask_price"] == 90.1
+    assert diagnostic["candidate_results"][0]["net_return"] < 0
 
 
 def test_shallow_book_diagnostic_documents_unexpressible_inventory_skew(monkeypatch, tmp_path):
@@ -55,11 +63,20 @@ def test_actual_candidate_selection_is_not_classified_as_fallback(monkeypatch, t
     cfg.commission_perc = 0.0001
     cfg.exp_ret_min = 0.0001
     bot = make_bot(cfg)
-    book = make_orderbook(n=11, last=100)
+    # USDTIRT ticks are 10.0, so the 100/101 book used elsewhere is crossed
+    # after the one-tick adjustment (bid 110 > ask 91) and would yield no
+    # candidate at all. Use a realistic IRT-denominated book whose top-of-book
+    # spread (~1%) clears the fee-adjusted net-return bar.
+    book = {
+        "bids": [[str(2_000_000 - 20_000 * i), "1"] for i in range(11)],
+        "asks": [[str(2_020_000 + 20_000 * i), "1"] for i in range(11)],
+        "lastTradePrice": "2000000",
+    }
 
     quote = bot.strategy.decide_order(book, 0.0)
     diagnostic = bot.strategy.diagnostics(book, 0.0, round_no=2, session_id=cfg.session)
 
+    assert quote is not None
     assert diagnostic["fallback_detected"] is False
     assert diagnostic["selection_reason"] == "candidate_selected"
     assert diagnostic["selected_bid_level"] == quote["bid level"]

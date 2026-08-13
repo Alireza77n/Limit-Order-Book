@@ -33,9 +33,14 @@ def _narrow_book():
     """Book where the loosest d_q=-5 skewed candidate (5,10) fails, but the
     unskewed (10,10) fallback -- never a real candidate at d_q=-5 -- would
     have passed. Verified against the actual historical mechanism: this is
-    exactly the shape that produced the recorded level-10 BUY quote."""
+    exactly the shape that produced the recorded level-10 BUY quote.
+
+    The ask gap was widened from 200 to 500 IRT so the pair still satisfies
+    BOTH profitability semantics (old raw (ask-bid)/last > 0.002 and the new
+    fee-adjusted net return on submitted prices > 0.001): net(5,10) ~
+    0.000996 < 0.001 fails while net(10,10) ~ 0.001496 > 0.001 passes."""
     bids = [[str(2_000_000 - 200 * i), "1.0"] for i in range(11)]
-    asks = [[str(2_000_020 + 200 * i), "1.0"] for i in range(11)]
+    asks = [[str(2_000_020 + 500 * i), "1.0"] for i in range(11)]
     return {"bids": bids, "asks": asks, "lastTradePrice": "2000010"}
 
 
@@ -94,7 +99,9 @@ def test_normal_zero_inventory_case_still_reaches_level_one():
 def test_normal_scan_breaking_partway_still_selects_last_feasible_pair():
     """Positive control for the general case (not the trap): the scan should
     still stop at the last feasible pair and return it, unaffected by the
-    fix, whenever at least one candidate passes."""
+    fix, whenever at least one candidate passes. Under the fee-adjusted
+    net-return bar the break now sits at (8,8) instead of (5,5): net(8,8) ~
+    6.9% clears the 10% bar while net(7,7) ~ 4.8% does not."""
     strategy = Algo1Strategy(MMConfig(
         depth_max=10, inv_min=0.0, inv_max=1.0,
         commission_perc=0.05, exp_ret_min=0.05, pair="BTCUSDT",
@@ -105,8 +112,8 @@ def test_normal_scan_breaking_partway_still_selects_last_feasible_pair():
 
     quote = strategy.decide_order(ob, 0.5)
     assert quote is not None
-    assert quote["bid level"] == 5
-    assert quote["ask level"] == 5
+    assert quote["bid level"] == 8
+    assert quote["ask level"] == 8
 
 
 def test_level1_order_still_fast_fills_after_the_fix():

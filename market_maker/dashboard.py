@@ -60,6 +60,8 @@ ACTIVITY_COLUMNS = [
     "No Quote Consecutive Count", "No Quote Episode Seconds",
     "No Quote Alert State", "No Quote Candidate Diagnostics",
     "Bid Level", "Ask Level", "Bid Price", "Ask Price",
+    "Mid Price", "Relative Quoted Spread", "Gross Return", "Net Return",
+    "Min Required Return",
     "Buy Order ID", "Buy Status", "Buy Not Sent Reason",
     "Buy Original Amount", "Buy Matched Amount", "Buy Remaining Amount",
     "Buy Fill Reason", "Buy Locked Cash", "Buy Telegram Message ID",
@@ -580,7 +582,10 @@ def refresh_dashboard(track_key, session_id, _):
     inv_fig = _line_chart(df, ["inv_current"], "Inventory (base currency)")
     cash_fig = _line_chart(df, ["cash_current"], "Cash (quote currency)")
     levels_fig = _line_chart(df, ["Bid Level", "Ask Level"], "Selected depth levels")
-    spreads_fig = _line_chart(df, ["Bid Spread", "Ask Spread"], "Quoted spreads")
+    spread_series = ["Bid Spread", "Ask Spread"]
+    if "Relative Quoted Spread" in df.columns:
+        spread_series.append("Relative Quoted Spread")
+    spreads_fig = _line_chart(df, spread_series, "Quoted spreads")
 
     activity = activity_records(df)
     status = f"{len(df)} rows" + ("" if comparing else f" — session {session_id}")

@@ -17,11 +17,15 @@ class MMConfig:
     # Trading / market params
     commission_perc: float = 0.0025
     cancel_after_minutes: float = 10.0
-    # Minimum required profit margin ABOVE the round-trip commission, as a
-    # price fraction. Algorithm 1 only quotes when (ask-bid)/last exceeds
-    # commission_perc + exp_ret_min -- see strategy/algo1.py's spread_ok. If
-    # left None, engine.py's __init__ bootstraps it to commission_perc (a 2x
-    # commission bar), which is the value both profiles below now set
+    # Minimum expected round-trip NET return, as a fraction of the capital
+    # deployed at the submitted buy price. Algorithm 1 only quotes a
+    # (bid, ask) pair when its fee-adjusted round-trip return
+    #     R_net = (A_q(1-fb)(1-fs) - B_q) / B_q
+    # strictly exceeds this value -- see strategy/algo1.py's spread_ok.
+    # The last traded price is never used as a return denominator; the
+    # market's relative quoted spread is described by the mid-price instead.
+    # If left None, engine.py's __init__ bootstraps it to commission_perc (a
+    # 2x-commission bar), which is the value both profiles below now set
     # explicitly, so adding the field to TRADING_PROFILES here changes
     # nothing about current behavior. It is a real per-pair lever, though:
     # BTC/IRT trades at a wide enough spread to clear a 2x-commission bar

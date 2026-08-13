@@ -332,7 +332,8 @@ class SimpleMarketMaker:
                 "round": int(round_no),
                 "commission_perc": float(self.cfg.commission_perc),
                 "exp_ret_min": float(exp_ret_min),
-                "required_threshold": float(self.cfg.commission_perc + exp_ret_min),
+                "required_threshold": float(exp_ret_min),
+                "min_required_return": float(exp_ret_min),
                 "candidate_results": [],
             }
         return diagnostic_method(
@@ -438,11 +439,21 @@ class SimpleMarketMaker:
         buy_sent: int, buy_size_value: float, bid_price_sent: Optional[float], buy_id: Optional[str],
         sell_sent: int, sell_size_value: float, ask_price_sent: Optional[float], sell_id: Optional[str],
         round_fee_irt: float, symbol_total_fee_irt: float, combined_total_fee_irt: float,
+        quote: Optional[Dict[str, Any]] = None,
     ) -> str:
         quote_line = (
             f"Bid: {bid_price:,.2f} (lvl {bid_lvl})   Ask: {ask_price:,.2f} (lvl {ask_lvl})"
             if bid_price is not None and ask_price is not None else "No quote this round"
         )
+        economics_line = ""
+        if quote is not None:
+            net_return = quote.get("net return")
+            relative_spread = quote.get("relative quoted spread")
+            if net_return is not None and relative_spread is not None:
+                economics_line = (
+                    f"Rel. quoted spread: {relative_spread:.2%}   "
+                    f"Net return (after fees): {net_return:.3%}\n"
+                )
         buy_line = (
             f"\U0001F7E2 Buy sent: {buy_size_value:.8f} @ {bid_price_sent:,.2f} (id {buy_id})"
             if buy_sent else "\U0001F7E2 Buy: not sent"
@@ -459,7 +470,8 @@ class SimpleMarketMaker:
             f"<b>Market</b>\n"
             f"Best Bid: {best_bid:,.2f}\n"
             f"Best Ask: {best_ask:,.2f}\n"
-            f"Last: {last_price:,.2f}\n\n"
+            f"Last: {last_price:,.2f}\n"
+            f"{economics_line}"
             f"<b>Portfolio</b>\n"
             f"Inventory: {inv_current:.8f}\n"
             f"Cash: {cash_current:,.2f}\n"
@@ -736,6 +748,8 @@ class SimpleMarketMaker:
         "inv_current", "cash_current", "Locked Cash", "Locked Inventory",
         "Available Cash", "Available Inventory", "Portfolio Wealth",
         "Best Bid", "Best Ask", "Last Price", "Bid Price", "Ask Price",
+        "Mid Price", "Relative Quoted Spread", "Gross Return", "Net Return",
+        "Min Required Return",
         "Buy Order ID", "Buy Status", "Buy Not Sent Reason", "Buy Original Amount",
         "Buy Matched Amount", "Buy Processed Matched Amount", "Buy Remaining Amount",
         "Buy Fill Reason", "Buy Selected Level", "Buy Limit Price", "Buy Locked Cash",
@@ -920,14 +934,21 @@ class SimpleMarketMaker:
                 "ask_level": candidate.get("ask_level"),
                 "bid_price": candidate.get("bid_price"),
                 "ask_price": candidate.get("ask_price"),
+                "submitted_bid_price": candidate.get("submitted_bid_price"),
+                "submitted_ask_price": candidate.get("submitted_ask_price"),
                 "last_price": candidate.get("last_price"),
+                "mid_price": candidate.get("mid_price"),
                 "spread": candidate.get("spread_ratio"),
+                "relative_quoted_spread": candidate.get("relative_quoted_spread"),
+                "gross_return": candidate.get("gross_return"),
+                "net_return": candidate.get("net_return"),
                 "passed": candidate.get("passed"),
             })
         return {
             "commission": document.get("commission_perc"),
             "exp_ret_min": document.get("exp_ret_min"),
             "required_threshold": document.get("required_threshold"),
+            "min_required_return": document.get("min_required_return"),
             "candidates": candidates,
         }
 
@@ -1334,6 +1355,7 @@ class SimpleMarketMaker:
                     round_fee,
                     scopes.pair_all_time,
                     scopes.all_symbols_all_time,
+                    quote=quote,
                 )
                 round_parent_id = self._safe_reporter_call(
                     "round_summary", round_message
@@ -1377,6 +1399,15 @@ class SimpleMarketMaker:
                     "Last Price": last_price,
                     "Bid Price": bid_price,
                     "Ask Price": ask_price,
+                    "Mid Price": quote.get("mid price") if quote else None,
+                    "Relative Quoted Spread": (
+                        quote.get("relative quoted spread") if quote else None
+                    ),
+                    "Gross Return": quote.get("gross return") if quote else None,
+                    "Net Return": quote.get("net return") if quote else None,
+                    "Min Required Return": (
+                        quote.get("min required return") if quote else None
+                    ),
                     "Round Fee": round_fee,
                     "Session Pair Fee": scopes.session_pair,
                     "Session All Symbols Fee": scopes.session_all_symbols,

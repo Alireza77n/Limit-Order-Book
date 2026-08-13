@@ -7,6 +7,11 @@ values were captured by running the existing code against synthetic order
 books -- they are not independently re-derived from the README formulas, so
 any existing quirks or edge-case behavior are intentionally preserved here.
 
+The profitability rework (net return on submitted prices instead of the
+raw (ask-bid)/last ratio) deliberately changes the Scenario C break points;
+Scenario A and B outcomes are unchanged. See test_algo1_profitability.py
+for the new semantics.
+
 Scope: only the pure, I/O-free quoting methods are exercised. `run()`,
 `send_order`, `save_to_db`, and anything touching the live Nobitex API or
 MySQL are out of scope -- they cannot be safely exercised in a test
@@ -87,7 +92,7 @@ def test_spread_ok_bad_index_returns_false():
 
 
 def test_spread_ok_true_case():
-    bot = make_bot(MMConfig(commission_perc=0.05, exp_ret_min=0.05))
+    bot = make_bot(MMConfig(commission_perc=0.05, exp_ret_min=0.05, pair="BTCUSDT"))
     ob = make_orderbook(last=100.0)
     assert bot._spread_ok(ob, 10, 10) is True
 
@@ -156,13 +161,18 @@ def _cfg_scenario_c():
 
 
 @pytest.mark.parametrize("q,bid_level,ask_level,bid,ask", [
-    (0.5, 5, 5, 95.01, 105.99),
-    (0.0, 3, 8, 97.01, 108.99),
-    (1.0, 8, 3, 92.01, 103.99),
+    (0.5, 8, 8, 92.01, 108.99),
+    (0.0, 5, 10, 95.01, 110.99),
+    (1.0, 10, 5, 90.01, 105.99),
 ])
 def test_algo1_prices_scenario_breaks_partway(q, bid_level, ask_level, bid, ask):
     """Mid-range commission threshold: the scan is feasible for the deepest
-    pairs and stops partway through -- exercises the `else: break` branch."""
+    pairs and stops partway through -- exercises the `else: break` branch.
+
+    The profitability bar is the fee-adjusted round-trip net return on the
+    submitted prices (R_net = (1-c)^2 * A_q/B_q - 1), so the break point sits
+    deeper than under the old (ask-bid)/last check: e.g. at q=0.5 the pair
+    (8,8) clears the 10% bar (net ~6.9%) while (7,7) does not (net ~4.8%)."""
     bot = make_bot(_cfg_scenario_c())
     ob = make_orderbook(last=100.0)
     result = bot._algo1_bid_ask_prices(ob, q)
