@@ -41,6 +41,8 @@ from demo_config import (
 )
 from result_store import DemoResultStore
 from session import SessionError, load_stack_session
+from validation.validation_engine import create_validation_engine
+from validation.reports import generate_validation_report, format_metric_card
 
 # Every track this project can produce, explicitly labeled real vs demo so
 # they're never confused with each other in the UI. Sourced directly from
@@ -357,6 +359,57 @@ def _card(*children) -> html.Div:
     })
 
 
+def _tab_style() -> dict:
+    return {
+        "padding": "0.75rem 1.5rem",
+        "fontFamily": FONT_FAMILY,
+        "fontSize": "0.9rem",
+        "fontWeight": 500,
+        "color": TEXT_SECONDARY,
+        "backgroundColor": PAGE,
+        "border": f"1px solid {GRIDLINE}",
+        "borderBottom": "none",
+        "borderRadius": "8px 8px 0 0",
+        "marginRight": "0.25rem",
+    }
+
+
+def _tab_selected_style() -> dict:
+    return {
+        "padding": "0.75rem 1.5rem",
+        "fontFamily": FONT_FAMILY,
+        "fontSize": "0.9rem",
+        "fontWeight": 600,
+        "color": TEXT_PRIMARY,
+        "backgroundColor": SURFACE,
+        "border": f"1px solid {GRIDLINE}",
+        "borderBottom": f"2px solid {SERIES[0]}",
+        "borderRadius": "8px 8px 0 0",
+        "marginRight": "0.25rem",
+    }
+
+
+def _metric_card(label: str, value: str, color: str = TEXT_PRIMARY) -> html.Div:
+    """Create a metric card for the validation dashboard."""
+    return html.Div([
+        html.Div(label, style={
+            "fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY,
+            "fontSize": "0.75rem", "fontWeight": 500,
+            "textTransform": "uppercase", "letterSpacing": "0.05em",
+            "marginBottom": "0.25rem",
+        }),
+        html.Div(value, style={
+            "fontFamily": FONT_FAMILY, "color": color,
+            "fontSize": "1.5rem", "fontWeight": 600,
+        }),
+    ], style={
+        "background": SURFACE, "border": f"1px solid {GRIDLINE}",
+        "borderRadius": "10px", "padding": "1rem 1.25rem",
+        "boxShadow": "0 1px 2px rgba(11,11,11,0.04)",
+        "minWidth": "140px", "textAlign": "center",
+    })
+
+
 # ---------- Dash app ----------
 
 app = Dash(__name__)
@@ -438,38 +491,19 @@ app.layout = html.Div([
         id="effective-config-panel",
     ),
 
-    _card(dcc.Graph(id="wealth-chart", config={"displaylogo": False})),
-
-    html.Div([
-        _card(dcc.Graph(id="inventory-chart", config={"displaylogo": False})),
-        _card(dcc.Graph(id="cash-chart", config={"displaylogo": False})),
-    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1.25rem"}),
-
-    html.Div([
-        _card(dcc.Graph(id="levels-chart", config={"displaylogo": False})),
-        _card(dcc.Graph(id="spreads-chart", config={"displaylogo": False})),
-    ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1.25rem"}),
-
-    _card(
-        html.H3("Order activity", style={
-            "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.1rem", "marginTop": 0,
-        }),
-        dash_table.DataTable(
-            id="activity-table",
-            columns=[{"name": c, "id": c} for c in ACTIVITY_COLUMNS],
-            page_size=20,
-            sort_action="native",
-            filter_action="native",
-            style_table={"overflowX": "auto"},
-            style_header={"backgroundColor": PAGE, "fontWeight": 600, "color": TEXT_PRIMARY,
-                           "fontFamily": FONT_FAMILY, "border": f"1px solid {GRIDLINE}"},
-            style_cell={"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.85rem",
-                        "border": f"1px solid {GRIDLINE}", "padding": "0.5rem"},
-            style_data_conditional=[
-                {"if": {"row_index": "odd"}, "backgroundColor": PAGE},
-            ],
-        ),
+    dcc.Tabs(
+        id="main-tabs",
+        value="overview",
+        children=[
+            dcc.Tab(label="Overview", value="overview", style=_tab_style(), selected_style=_tab_selected_style()),
+            dcc.Tab(label="Order Book", value="orderbook", style=_tab_style(), selected_style=_tab_selected_style()),
+            dcc.Tab(label="Trading", value="trading", style=_tab_style(), selected_style=_tab_selected_style()),
+            dcc.Tab(label="Validation", value="validation", style=_tab_style(), selected_style=_tab_selected_style()),
+        ],
+        style={"marginBottom": "1.25rem"},
     ),
+
+    html.Div(id="tab-content"),
 
     dcc.Interval(id="tick", interval=20_000, n_intervals=0),  # auto-refresh every 20s
 ], style={"background": PAGE, "padding": "1.5rem 2rem", "minHeight": "100vh"})
@@ -592,6 +626,235 @@ def refresh_dashboard(track_key, session_id, _):
     status += no_quote_summary(df)
 
     return status, wealth_fig, inv_fig, cash_fig, levels_fig, spreads_fig, activity
+
+
+@app.callback(
+    Output("tab-content", "children"),
+    Input("main-tabs", "value"),
+    Input("track", "value"),
+    Input("session", "value"),
+    Input("tick", "n_intervals"),
+)
+def render_tab_content(active_tab, track_key, session_id, _):
+    """Render content for the active tab."""
+    track = TRACKS[track_key]
+    waiting = _empty_fig("Waiting for data...")
+    
+    df = load_track(track["path"])
+    if df is None:
+        return _no_data_message(track["label"], track["path"])
+    
+    df = filter_session(df, session_id)
+    if df.empty:
+        return _no_data_message("selected session", "")
+    
+    df = with_derived_spreads(df).sort_values("Timestamp")
+    comparing = session_id in (None, "all")
+    
+    if active_tab == "overview":
+        return _render_overview_tab(df, comparing)
+    elif active_tab == "orderbook":
+        return _render_orderbook_tab(df, comparing)
+    elif active_tab == "trading":
+        return _render_trading_tab(df, comparing)
+    elif active_tab == "validation":
+        return _render_validation_tab(df, track_key, session_id)
+    
+    return html.Div("Unknown tab")
+
+
+def _no_data_message(label: str, path: str) -> html.Div:
+    """Return a standardized no-data message."""
+    msg = f"No data yet for {label}" + (f" ({path})" if path else ".")
+    return html.Div([
+        _card(html.P(msg, style={"color": MUTED, "fontFamily": FONT_FAMILY, "textAlign": "center", "padding": "2rem"})),
+    ])
+
+
+def _render_overview_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
+    """Render the Overview tab (wealth, inventory, cash)."""
+    wealth_fig = _line_chart(df, ["Portfolio Wealth"], "Portfolio wealth",
+                              color_by="Session_id" if comparing else None)
+    inv_fig = _line_chart(df, ["inv_current"], "Inventory (base currency)")
+    cash_fig = _line_chart(df, ["cash_current"], "Cash (quote currency)")
+    
+    return html.Div([
+        _card(dcc.Graph(id="wealth-chart", figure=wealth_fig, config={"displaylogo": False})),
+        html.Div([
+            _card(dcc.Graph(id="inventory-chart", figure=inv_fig, config={"displaylogo": False})),
+            _card(dcc.Graph(id="cash-chart", figure=cash_fig, config={"displaylogo": False})),
+        ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1.25rem"}),
+    ])
+
+
+def _render_orderbook_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
+    """Render the Order Book tab (levels, spreads)."""
+    levels_fig = _line_chart(df, ["Bid Level", "Ask Level"], "Selected depth levels")
+    spread_series = ["Bid Spread", "Ask Spread"]
+    if "Relative Quoted Spread" in df.columns:
+        spread_series.append("Relative Quoted Spread")
+    spreads_fig = _line_chart(df, spread_series, "Quoted spreads")
+    
+    return html.Div([
+        html.Div([
+            _card(dcc.Graph(id="levels-chart", figure=levels_fig, config={"displaylogo": False})),
+            _card(dcc.Graph(id="spreads-chart", figure=spreads_fig, config={"displaylogo": False})),
+        ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1.25rem"}),
+    ])
+
+
+def _render_trading_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
+    """Render the Trading tab (activity table)."""
+    activity = activity_records(df)
+    
+    return html.Div([
+        _card(
+            html.H3("Order activity", style={
+                "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.1rem", "marginTop": 0,
+            }),
+            dash_table.DataTable(
+                id="activity-table",
+                columns=[{"name": c, "id": c} for c in ACTIVITY_COLUMNS],
+                data=activity,
+                page_size=20,
+                sort_action="native",
+                filter_action="native",
+                style_table={"overflowX": "auto"},
+                style_header={"backgroundColor": PAGE, "fontWeight": 600, "color": TEXT_PRIMARY,
+                               "fontFamily": FONT_FAMILY, "border": f"1px solid {GRIDLINE}"},
+                style_cell={"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.85rem",
+                            "border": f"1px solid {GRIDLINE}", "padding": "0.5rem"},
+                style_data_conditional=[
+                    {"if": {"row_index": "odd"}, "backgroundColor": PAGE},
+                ],
+            ),
+        ),
+    ])
+
+
+def _render_validation_tab(df: pd.DataFrame, track_key: str, session_id) -> html.Div:
+    """Render the Validation tab with all metrics and charts."""
+    # Run validation
+    engine = create_validation_engine()
+    result = engine.validate_from_csv(df)
+    report = generate_validation_report(result)
+    
+    metrics = report["summary"]
+    charts = report["charts"]
+    
+    # Determine colors for metric cards
+    def metric_color(value, higher_is_better=True):
+        if value is None:
+            return MUTED
+        if higher_is_better:
+            return STATUS_GOOD if value > 0 else STATUS_CRITICAL
+        return STATUS_CRITICAL if value > 0 else STATUS_GOOD
+    
+    # Build equity and drawdown charts from validation result
+    equity_df = pd.DataFrame({
+        "Timestamp": result.equity_curve.index,
+        "Equity": result.equity_curve.values
+    })
+    equity_fig = _line_chart(equity_df, ["Equity"], "Equity Curve")
+    
+    drawdown_df = pd.DataFrame({
+        "Timestamp": result.drawdown_curve.index,
+        "Drawdown": result.drawdown_curve.values
+    })
+    drawdown_fig = _line_chart(drawdown_df, ["Drawdown"], "Drawdown Curve")
+    # Make drawdown area chart
+    drawdown_fig.data[0].fill = "tozeroy"
+    drawdown_fig.data[0].fillcolor = "rgba(208, 59, 59, 0.15)"
+    drawdown_fig.data[0].line.color = STATUS_CRITICAL
+    
+    # Inventory chart
+    if not result.snapshots_df.empty and "inventory" in result.snapshots_df.columns:
+        inv_df = result.snapshots_df.sort_values("timestamp")
+        inv_fig = _line_chart(inv_df, ["inventory"], "Inventory Over Time")
+    else:
+        inv_fig = _empty_fig("No inventory data available")
+    
+    # Inventory distribution histogram
+    if not result.snapshots_df.empty and "inventory" in result.snapshots_df.columns:
+        inv_hist = go.Figure()
+        inv_hist.add_trace(go.Histogram(
+            x=result.snapshots_df["inventory"].dropna(),
+            nbinsx=30,
+            marker_color=SERIES[2],
+            opacity=0.75,
+        ))
+        inv_hist = _style(inv_hist, "Inventory Distribution")
+    else:
+        inv_hist = _empty_fig("No inventory data available")
+    
+    return html.Div([
+        # Section 1: Performance Summary
+        _card(
+            html.H3("Performance Summary", style={
+                "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.1rem", "marginTop": 0, "marginBottom": "1rem",
+            }),
+            html.Div([
+                _metric_card("Total Return", f"{metrics['total_return_pct']:+.2f}%", 
+                           metric_color(metrics['total_return_pct'] / 100)),
+                _metric_card("Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}" if metrics['sharpe_ratio'] else "N/A",
+                           metric_color(metrics['sharpe_ratio'] or 0)),
+                _metric_card("Sortino Ratio", f"{metrics['sortino_ratio']:.2f}" if metrics['sortino_ratio'] else "N/A",
+                           metric_color(metrics['sortino_ratio'] or 0)),
+            ], style={"display": "flex", "gap": "1rem", "flexWrap": "wrap"}),
+        ),
+        
+        # Section 2: Risk Analysis
+        _card(
+            html.H3("Risk Analysis", style={
+                "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.1rem", "marginTop": 0, "marginBottom": "1rem",
+            }),
+            html.Div([
+                _card(dcc.Graph(figure=equity_fig, config={"displaylogo": False})),
+                _card(dcc.Graph(figure=drawdown_fig, config={"displaylogo": False})),
+            ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1.25rem"}),
+            html.Div([
+                _metric_card("Max Drawdown", f"{metrics['max_drawdown_pct']:.2f}%",
+                           metric_color(metrics['max_drawdown_pct'] / 100, higher_is_better=False)),
+                _metric_card("Calmar Ratio", f"{metrics['calmar_ratio']:.2f}" if metrics['calmar_ratio'] else "N/A",
+                           metric_color(metrics['calmar_ratio'] or 0)),
+            ], style={"display": "flex", "gap": "1rem", "flexWrap": "wrap", "marginTop": "1rem"}),
+        ),
+        
+        # Section 3: Trading Statistics
+        _card(
+            html.H3("Trading Statistics", style={
+                "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.1rem", "marginTop": 0, "marginBottom": "1rem",
+            }),
+            html.Div([
+                _metric_card("Win Rate", f"{metrics['win_rate_pct']:.2f}%",
+                           metric_color(metrics['win_rate_pct'] / 100)),
+                _metric_card("Profit Factor", f"{metrics['profit_factor']:.2f}" if metrics['profit_factor'] else "∞",
+                           metric_color(metrics['profit_factor'] or 0)),
+                _metric_card("Expected Value", f"{metrics['expected_value']:.4f}",
+                           metric_color(metrics['expected_value'])),
+                _metric_card("Avg Trade PnL", f"{metrics['avg_trade_pnl']:.4f}",
+                           metric_color(metrics['avg_trade_pnl'])),
+            ], style={"display": "flex", "gap": "1rem", "flexWrap": "wrap"}),
+        ),
+        
+        # Section 4: Inventory Analysis
+        _card(
+            html.H3("Inventory Analysis", style={
+                "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.1rem", "marginTop": 0, "marginBottom": "1rem",
+            }),
+            html.Div([
+                _card(dcc.Graph(figure=inv_fig, config={"displaylogo": False})),
+                _card(dcc.Graph(figure=inv_hist, config={"displaylogo": False})),
+            ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1.25rem"}),
+            html.Div([
+                _metric_card("Avg Inventory", f"{metrics['avg_inventory']:.6f}", MUTED),
+                _metric_card("Max Inventory", f"{metrics['max_inventory']:.6f}", MUTED),
+                _metric_card("Inventory Volatility", f"{metrics['inventory_volatility']:.6f}", MUTED),
+                _metric_card("Avg Holding Time", f"{metrics['average_holding_time_seconds']:.0f}s" 
+                           if metrics['average_holding_time_seconds'] else "N/A", MUTED),
+            ], style={"display": "flex", "gap": "1rem", "flexWrap": "wrap", "marginTop": "1rem"}),
+        ),
+    ])
 
 
 if __name__ == "__main__":

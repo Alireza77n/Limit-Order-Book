@@ -50,6 +50,8 @@ from demo_config import (
 )
 from config import TRADING_PROFILES, demo_csv_path
 from dashboard import activity_records, filter_session, load_track
+from validation.validation_engine import create_validation_engine
+from validation.reports import generate_validation_report, format_metric_card
 
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
 PAIRS = ("btc", "usdt")
@@ -1230,6 +1232,57 @@ def _register_routes(app: Flask) -> None:
             return render_template("admin/audit.html", audit=audit, limit=limit,
                                     csrf_token=get_csrf_token(), session_id=_session_id(app))
         return jsonify({"audit": audit})
+
+    @app.route("/admin/validation/metrics")
+    @login_required
+    def admin_validation_metrics():
+        """API endpoint for validation metrics.
+        
+        Query params:
+            - pair: btc or usdt (default: btc)
+            - session: session_id or "all" (default: current active session)
+            - track: real or demo (default: demo)
+        """
+        pair = request.args.get("pair", "btc")
+        if pair not in PAIRS:
+            return jsonify({"error": "Unknown pair"}), 400
+        
+        session_id = request.args.get("session")
+        track_type = request.args.get("track", "demo")
+        
+        # Load the appropriate CSV
+        if track_type == "demo":
+            csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
+            csv_path = os.path.join(app.config["RESULTS_DIR"], csv_name)
+        else:
+            csv_path = TRADING_PROFILES[pair]["output_csv"]
+        
+        df = load_track(csv_path)
+        if df is None or df.empty:
+            return jsonify({"error": "No data available"}), 404
+        
+        # Filter by session if specified
+        if session_id and session_id != "all":
+            df = filter_session(df, session_id)
+            if df.empty:
+                return jsonify({"error": "No data for selected session"}), 404
+        
+        # Run validation
+        engine = create_validation_engine()
+        result = engine.validate_from_csv(df)
+        
+        # Generate report
+        report = generate_validation_report(result)
+        
+        if _wants_html():
+            # Return formatted for HTML rendering
+            return jsonify({
+                "metrics": report["summary"],
+                "details": report["details"],
+                "charts": report["charts"],
+            })
+        
+        return jsonify(report)
 
 
 @csrf_protected
