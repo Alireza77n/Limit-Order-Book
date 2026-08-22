@@ -449,8 +449,22 @@ app.layout = html.Div([
                            "marginTop": "0.35rem"},
                 ),
             ]),
+            html.Div([
+                html.Label("Risk-free rate % (annual, Validation tab)",
+                           style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY,
+                                  "fontSize": "0.85rem", "fontWeight": 600}),
+                dcc.Input(id="risk-free-rate-pct", type="number", value=0.0, step=0.1,
+                          style={"width": "100%"}),
+            ]),
+            html.Div([
+                html.Label("Target return % (annual, Sortino MAR)",
+                           style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY,
+                                  "fontSize": "0.85rem", "fontWeight": 600}),
+                dcc.Input(id="target-return-pct", type="number", value=0.0, step=0.1,
+                          style={"width": "100%"}),
+            ]),
             html.Div(id="status-badge", style={"display": "flex", "alignItems": "flex-end"}),
-        ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr auto", "gap": "1.5rem",
+        ], style={"display": "grid", "gridTemplateColumns": "1fr 1fr auto auto auto", "gap": "1.5rem",
                    "alignItems": "start"}),
         html.Div(id="status-text", style={
             "color": MUTED, "fontFamily": FONT_FAMILY, "fontSize": "0.85rem", "marginTop": "0.75rem",
@@ -634,8 +648,10 @@ def refresh_dashboard(track_key, session_id, _):
     Input("track", "value"),
     Input("session", "value"),
     Input("tick", "n_intervals"),
+    Input("risk-free-rate-pct", "value"),
+    Input("target-return-pct", "value"),
 )
-def render_tab_content(active_tab, track_key, session_id, _):
+def render_tab_content(active_tab, track_key, session_id, _, risk_free_rate_pct, target_return_pct):
     """Render content for the active tab."""
     track = TRACKS[track_key]
     waiting = _empty_fig("Waiting for data...")
@@ -658,7 +674,11 @@ def render_tab_content(active_tab, track_key, session_id, _):
     elif active_tab == "trading":
         return _render_trading_tab(df, comparing)
     elif active_tab == "validation":
-        return _render_validation_tab(df, track_key, session_id)
+        return _render_validation_tab(
+            df, track_key, session_id,
+            risk_free_rate=(risk_free_rate_pct or 0.0) / 100.0,
+            target_return=(target_return_pct or 0.0) / 100.0,
+        )
     
     return html.Div("Unknown tab")
 
@@ -732,10 +752,15 @@ def _render_trading_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
     ])
 
 
-def _render_validation_tab(df: pd.DataFrame, track_key: str, session_id) -> html.Div:
+def _render_validation_tab(
+    df: pd.DataFrame, track_key: str, session_id,
+    risk_free_rate: float = 0.0, target_return: float = 0.0,
+) -> html.Div:
     """Render the Validation tab with all metrics and charts."""
     # Run validation
-    engine = create_validation_engine()
+    engine = create_validation_engine(
+        risk_free_rate=risk_free_rate, target_return=target_return
+    )
     result = engine.validate_from_csv(df)
     report = generate_validation_report(result)
     

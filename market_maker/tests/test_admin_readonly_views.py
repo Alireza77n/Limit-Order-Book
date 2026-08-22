@@ -124,3 +124,29 @@ def test_readonly_routes_require_login(client):
     for path in ("/admin/orders", "/admin/balances", "/admin/logs", "/admin/audit"):
         response = client.get(path)
         assert response.status_code == 302
+
+
+def test_validation_metrics_route_uses_risk_free_rate_query_param(client, app):
+    # A growing equity curve with a higher risk-free rate should score a
+    # lower Sharpe ratio than the same curve at the default 0% rate --
+    # proves the query param actually reaches ValidationEngine instead of
+    # being silently dropped in favor of the hardcoded default.
+    rows = [
+        {**ROW, "Timestamp": f"2026-08-01 12:0{i}:00", "Portfolio Wealth": 100.0 + i,
+         "cash_current": 100.0, "inv_current": 0.0}
+        for i in range(5)
+    ]
+    pd.DataFrame(rows).to_csv(app.config["_demo_csv_path"], index=False)
+    _login(client)
+
+    baseline = client.get("/admin/validation/metrics?pair=btc&risk_free_rate=0").get_json()
+    elevated = client.get("/admin/validation/metrics?pair=btc&risk_free_rate=5").get_json()
+
+    assert baseline["summary"]["sharpe_ratio"] is not None
+    assert elevated["summary"]["sharpe_ratio"] < baseline["summary"]["sharpe_ratio"]
+
+
+def test_validation_metrics_route_rejects_non_numeric_risk_params(client, app):
+    _login(client)
+    response = client.get("/admin/validation/metrics?pair=btc&risk_free_rate=not-a-number")
+    assert response.status_code == 400

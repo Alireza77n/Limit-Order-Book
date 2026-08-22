@@ -1237,19 +1237,28 @@ def _register_routes(app: Flask) -> None:
     @login_required
     def admin_validation_metrics():
         """API endpoint for validation metrics.
-        
+
         Query params:
             - pair: btc or usdt (default: btc)
             - session: session_id or "all" (default: current active session)
             - track: real or demo (default: demo)
+            - risk_free_rate: annual risk-free rate, decimal (default: 0.0)
+            - target_return: annual target/minimum acceptable return for
+              Sortino, decimal (default: 0.0)
         """
         pair = request.args.get("pair", "btc")
         if pair not in PAIRS:
             return jsonify({"error": "Unknown pair"}), 400
-        
+
         session_id = request.args.get("session")
         track_type = request.args.get("track", "demo")
-        
+
+        try:
+            risk_free_rate = float(request.args.get("risk_free_rate", 0.0))
+            target_return = float(request.args.get("target_return", 0.0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "risk_free_rate and target_return must be numbers"}), 400
+
         # Load the appropriate CSV
         if track_type == "demo":
             csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
@@ -1268,7 +1277,9 @@ def _register_routes(app: Flask) -> None:
                 return jsonify({"error": "No data for selected session"}), 404
         
         # Run validation
-        engine = create_validation_engine()
+        engine = create_validation_engine(
+            risk_free_rate=risk_free_rate, target_return=target_return
+        )
         result = engine.validate_from_csv(df)
         
         # Generate report
