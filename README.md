@@ -1079,8 +1079,10 @@ Algorithm 1 has now returned prices and levels. The engine decides **whether and
 how much** to send. Demo path, `engine.py:1129-1186`:
 
 ```python
+buy_target, sell_target = _inventory_sized_order_targets(snapshot.inventory)
+
 # SELL
-sell_amount = max(0.0, min(order_size, snapshot.available_inventory - inv_min))
+sell_amount = max(0.0, min(sell_target, snapshot.available_inventory - inv_min))
 if   self._open_order_count("sell") >= cfg.demo_max_open_orders_per_side:
                                         sell_reason = "max_open_orders"
 elif sell_amount > 1e-10:               → SEND
@@ -1088,22 +1090,37 @@ else:                                   sell_reason = "insufficient_inventory"
 
 # BUY
 affordable  = snapshot.available_cash / bid_price   if bid_price > 0 else 0.0
-buy_amount  = max(0.0, min(order_size, affordable))
+buy_amount  = max(0.0, min(buy_target, affordable))
 if   self._open_order_count("buy") >= cfg.demo_max_open_orders_per_side:
                                         buy_reason = "max_open_orders"
 elif buy_amount <= 1e-10:               buy_reason = "insufficient_cash"
-elif buy_locked_amount + snapshot.inventory + order_size >= cfg.inv_max:
+elif buy_locked_amount + snapshot.inventory + buy_amount > cfg.inv_max:
                                         buy_reason = "inventory_cap"
 else:                                   → SEND
 ```
 
 Note the **asymmetry**: the `inv_max` cap applies to buys only — selling reduces
-inventory and is instead bounded by `available_inventory` and `inv_min`. The cap
-uses `order_size` (not `buy_amount`) and is a strict `>=`.
+inventory and is instead bounded by `available_inventory` and `inv_min`.
 
 `_open_order_count` (`engine.py:768`) counts resting orders on one side; the cap
 exists because unbounded accumulation let a single price touch fill many orders
 at once.
+
+When `inventory_sizing_enabled` is on, the target size is skewed before the
+cash/inventory caps above:
+
+```text
+inventory_fraction = clamp((inventory - inv_min) / (inv_max - inv_min), 0, 1)
+inventory_pressure = 2 * inventory_fraction - 1
+buy_target  = order_size * clamp(1 - strength * inventory_pressure,
+                                 min_fraction, 1 + strength)
+sell_target = order_size * clamp(1 + strength * inventory_pressure,
+                                 min_fraction, 1 + strength)
+```
+
+High inventory shrinks buy orders and grows sell orders; low inventory does the
+opposite. Defaults keep it disabled, with `inventory_sizing_strength = 0.75`
+and `inventory_sizing_min_fraction = 0.25` ready for Admin tuning.
 
 ### When both sides, one side, or nothing is submitted
 
@@ -1111,7 +1128,8 @@ at once.
 |---|---|---|---|
 | Healthy, mid inventory | ✅ | ✅ | — |
 | `q = 0` (flat) | ❌ | ✅ | `insufficient_inventory` |
-| `q = 49.5`, `inv_max = 50` | ✅ | ❌ | `inventory_cap` (`0+49.5+1.0 ≥ 50`) |
+| `q = 49.5`, `inv_max = 50`, `buy_amount = 0.5` | ✅ | ✅ | — |
+| `q = 49.6`, `inv_max = 50`, `buy_amount = 1.0` | ✅ | ❌ | `inventory_cap` (`0+49.6+1.0 > 50`) |
 | Cash committed to resting buys | ✅ | ❌ | `insufficient_cash` |
 | 3 resting orders on a side | ❌/✅ | ✅/❌ | `max_open_orders` |
 | Spread unprofitable | ❌ | ❌ | `no_quote` + `profitability_threshold` |
@@ -1171,11 +1189,22 @@ Fill triggers, in order of precedence:
 
 1. `level1_fast_fill` — level 1, after `level1_fill_delay_seconds`
 2. `trade_cross` — a reported trade price crossed the limit
-3. `price_touch` — `best_ask ≤ buy_limit` (or `best_bid ≥ sell_limit`)
-4. `queue_consumed` — when `queue_enabled`, orders ahead consume budget first
+3. `adverse_price_touch` — when `demo_adverse_fill_enabled` and the touch moves
+   against the maker order
+4. `price_touch` — `best_ask ≤ buy_limit` (or `best_bid ≥ sell_limit`)
+5. `queue_consumed` — when `queue_enabled`, orders ahead consume budget first
 
 Buy and sell budgets are **independent** — a resting buy is filled by incoming
 sell flow and vice versa.
+
+Admin can now tune two execution safeguards without restarting the Demo worker:
+
+- `demo_queue_enabled` plus `demo_max_fill_per_observation_orders` makes touches
+  volume-budgeted and queue-aware. If the feed reports trade volume, that volume
+  is used; otherwise the synthetic budget is `order_size * multiplier`.
+- `demo_adverse_fill_enabled`, `demo_adverse_fill_probability`, and
+  `demo_non_adverse_fill_probability` add a probability gate so adverse touches
+  can be modeled separately from non-adverse trade crosses.
 
 ## Stage 10 — accounting
 
@@ -1285,8 +1314,10 @@ the code.
 ### W6 — execution probability is a placeholder
 
 `"bid exec prob": 1.0, "ask exec prob": 1.0` (`algo1.py:121-122`) are hardcoded
-and unused. The strategy has **no fill-probability model**, so it cannot
-distinguish a level that fills often from one that never does.
+and unused. The strategy still has **no learned fill-probability model**, so it
+cannot distinguish a level that fills often from one that never does. Demo
+execution now has Admin-tunable queue/volume and adverse-fill gates, but those
+are simulator safeguards rather than strategy inputs.
 
 ### W7 — no volatility, imbalance or trade-flow input
 
@@ -1589,7 +1620,7 @@ A comprehensive, live-updating history dashboard (`python dashboard.py`) covers 
 * **Persistence (`save_to_db`, the MySQL connection in `__init__`) is not behind an interface** — `SimpleMarketMaker` still requires a live MySQL server to be constructed at all. Extracting a `TradeLogStore` interface (mirroring `ExchangeClient`) is the natural next seam.
 * **`portfolio.py`'s `Nobitex_portfolio` is not behind `ExchangeClient`** — `run.py`'s `--exchange` flag today only changes order execution/quotes, not portfolio valuation.
 * **Git history contains the original hardcoded secrets** (the Nobitex token and MySQL password, from commits predating the `.env` migration). Moving them to `.env` stops new exposure but doesn't erase history — rotating both credentials is recommended and is a team/repo-owner decision.
-* **Demo mode's fills are still an approximation, not a matching engine** — `--mode demo` now runs a deterministic open-first paper-order lifecycle (level-1 delay/fraction, price touch, explicit trade evidence, optional queue-ahead, and partial fills) against real market data, rather than instant full fills. It does not model Nobitex's real slippage or true queue priority. Transaction cost *is* simulated realistically from `commission_perc`, tracked per-symbol and combined across symbols, and reported via optional Telegram notifications. See usage.md §1b/§1.7/§6.8.
+* **Demo mode's fills are still an approximation, not a matching engine** — `--mode demo` now runs a paper-order lifecycle with level-1 delay/fraction, explicit trade evidence, finite per-observation fill budgets, optional queue-ahead consumption, adverse/non-adverse fill probabilities, and partial fills against real market data. It does not model Nobitex's real slippage or true queue priority. Transaction cost *is* simulated realistically from `commission_perc`, tracked per-symbol and combined across symbols, and reported via optional Telegram notifications. See usage.md §1b/§1.7/§6.8.
 * **Algorithm 2 has no real implementation**, only a stub and this README's math — see [Algorithm 2](#algorithm-2-avellaneda-stoikov-model).
 
 ---

@@ -148,6 +148,13 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
                 level1_fill_delay_seconds=cfg.demo_level1_fill_delay_seconds,
                 level1_fill_fraction=cfg.demo_level1_fill_fraction,
                 queue_enabled=cfg.demo_queue_enabled,
+                max_fill_per_observation=(
+                    float(cfg.order_size)
+                    * float(cfg.demo_max_fill_per_observation_orders)
+                ),
+                adverse_fill_enabled=cfg.demo_adverse_fill_enabled,
+                adverse_fill_probability=cfg.demo_adverse_fill_probability,
+                non_adverse_fill_probability=cfg.demo_non_adverse_fill_probability,
                 state_path=cfg.demo_state_path,
                 fee_state_path=cfg.demo_fee_state_path,
                 archive_path=cfg.demo_archive_path,

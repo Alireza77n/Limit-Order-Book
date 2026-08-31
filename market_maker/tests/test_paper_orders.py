@@ -193,6 +193,130 @@ def test_queue_volume_is_consumed_before_our_order_fills():
     assert second[0].reason == "queue_consumed"
 
 
+def test_price_touch_consumes_queue_ahead_before_filling_with_synthetic_budget():
+    ledger = make_ledger(queue_enabled=True, max_fill_per_observation=10.0)
+    ledger.submit_order(
+        side="buy", limit_price=100.0, amount=10.0, selected_level=1,
+        client_order_id="touch-queued-buy", now=T0, queue_ahead=6.0,
+    )
+
+    events = ledger.process_market(
+        best_bid=99, best_ask=100, last_price=100,
+        now=T0 + timedelta(seconds=1),
+    )
+
+    assert events[0].new_fill == pytest.approx(4.0)
+    assert events[0].reason == "queue_consumed"
+    order = ledger.get_order("touch-queued-buy")
+    assert order.queue_ahead == pytest.approx(0.0)
+    assert order.remaining_amount == pytest.approx(6.0)
+
+
+def test_synthetic_observation_budget_limits_price_touch_fill_without_reported_volume():
+    ledger = make_ledger(max_fill_per_observation=3.0)
+    ledger.submit_order(
+        side="sell", limit_price=100.0, amount=8.0, selected_level=1,
+        client_order_id="budgeted-sell", now=T0,
+    )
+
+    events = ledger.process_market(
+        best_bid=100, best_ask=101, last_price=100,
+        now=T0 + timedelta(seconds=1),
+    )
+
+    assert events[0].new_fill == pytest.approx(3.0)
+    assert events[0].reason == "price_touch"
+    assert ledger.get_order("budgeted-sell").remaining_amount == pytest.approx(5.0)
+
+
+def test_observation_budget_is_shared_by_same_side_orders_in_price_time_priority():
+    ledger = make_ledger(max_fill_per_observation=6.0)
+    ledger.submit_order(
+        side="buy", limit_price=99.0, amount=5.0, selected_level=2,
+        client_order_id="older-worse-buy", now=T0,
+    )
+    ledger.submit_order(
+        side="buy", limit_price=100.0, amount=5.0, selected_level=1,
+        client_order_id="newer-better-buy", now=T0 + timedelta(milliseconds=1),
+    )
+
+    events = ledger.process_market(
+        best_bid=99, best_ask=99, last_price=99,
+        now=T0 + timedelta(seconds=1),
+    )
+
+    assert [(event.order_id, event.new_fill) for event in events] == [
+        ("newer-better-buy", 5.0),
+        ("older-worse-buy", 1.0),
+    ]
+    assert ledger.get_order("newer-better-buy").status == "filled"
+    assert ledger.get_order("older-worse-buy").status == "partially_filled"
+
+
+def test_adverse_fill_probability_allows_adverse_touch():
+    ledger = make_ledger(
+        level1_fast_fill_enabled=False,
+        adverse_fill_enabled=True,
+        adverse_fill_probability=1.0,
+        non_adverse_fill_probability=0.0,
+    )
+    ledger.submit_order(
+        side="buy", limit_price=100.0, amount=2.0, selected_level=1,
+        client_order_id="adverse-buy", now=T0,
+    )
+
+    events = ledger.process_market(
+        best_bid=99, best_ask=100, last_price=99,
+        now=T0 + timedelta(seconds=1),
+    )
+
+    assert events[0].order_id == "adverse-buy"
+    assert events[0].reason == "adverse_price_touch"
+    assert ledger.get_order("adverse-buy").status == "filled"
+
+
+def test_non_adverse_fill_probability_can_leave_trade_cross_open():
+    ledger = make_ledger(
+        level1_fast_fill_enabled=False,
+        adverse_fill_enabled=True,
+        adverse_fill_probability=1.0,
+        non_adverse_fill_probability=0.0,
+    )
+    ledger.submit_order(
+        side="buy", limit_price=100.0, amount=2.0, selected_level=1,
+        client_order_id="non-adverse-buy", now=T0,
+    )
+
+    events = ledger.process_market(
+        best_bid=100, best_ask=101, last_price=100, trade_price=100,
+        traded_volume=10, now=T0 + timedelta(seconds=1),
+    )
+
+    assert events == []
+    assert ledger.get_order("non-adverse-buy").status == "open"
+
+
+def test_disabled_adverse_model_preserves_trade_cross_fill():
+    ledger = make_ledger(
+        level1_fast_fill_enabled=False,
+        adverse_fill_enabled=False,
+        adverse_fill_probability=0.0,
+        non_adverse_fill_probability=0.0,
+    )
+    ledger.submit_order(
+        side="buy", limit_price=100.0, amount=2.0, selected_level=1,
+        client_order_id="normal-buy", now=T0,
+    )
+
+    events = ledger.process_market(
+        best_bid=100, best_ask=101, last_price=100, trade_price=100,
+        traded_volume=10, now=T0 + timedelta(seconds=1),
+    )
+
+    assert events[0].order_id == "normal-buy"
+    assert events[0].reason == "trade_cross"
+
+
 def test_cancel_preserves_matched_amount_and_releases_remaining_lock():
     ledger = make_ledger()
     ledger.submit_order(

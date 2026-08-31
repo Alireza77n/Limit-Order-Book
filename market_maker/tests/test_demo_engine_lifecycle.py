@@ -212,6 +212,65 @@ def test_buy_clamped_above_the_floor_still_sends_a_partial_order(monkeypatch, tm
     assert frame["Buy Original Amount"].iloc[0] == pytest.approx(0.5)
 
 
+def test_inventory_sizing_changes_submitted_buy_and_sell_amounts(monkeypatch, tmp_path):
+    monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_enabled", True)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_strength", 0.75)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_min_fraction", 0.25)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "order_size", 10.0)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inv_max", 100.0)
+    cfg = run.make_cfg("usdt", mode="demo", session_id="inventory-sizing-session")
+    cfg.output_csv = str(tmp_path / "sizing.csv")
+    cfg.demo_state_path = str(tmp_path / "sizing-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "sizing-fees.json")
+    cfg.demo_result_db_path = str(tmp_path / "sizing.sqlite3")
+    cfg.demo_inv_initial = cfg.inv_initial = 75.0
+    cfg.cash_initial = 1_000_000.0
+    cfg.max_rounds = 1
+    cfg.time_step = 0
+    cfg.demo_level1_fast_fill_enabled = False
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    bot.now_provider = lambda: T0
+    bot.sleep_fn = lambda seconds: None
+
+    frame = bot.run()
+
+    assert frame["Buy Original Amount"].iloc[0] == pytest.approx(6.25)
+    assert frame["Sell Original Amount"].iloc[0] == pytest.approx(13.75)
+
+
+def test_buy_inventory_cap_uses_actual_clamped_buy_amount(monkeypatch, tmp_path):
+    monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    cfg = run.make_cfg("usdt", mode="demo", session_id="buy-cap-session")
+    cfg.output_csv = str(tmp_path / "buy-cap.csv")
+    cfg.demo_state_path = str(tmp_path / "buy-cap-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "buy-cap-fees.json")
+    cfg.demo_result_db_path = str(tmp_path / "buy-cap.sqlite3")
+    cfg.demo_inv_initial = cfg.inv_initial = 49.6
+    cfg.inv_max = 50.0
+    cfg.cash_initial = 27.0
+    cfg.order_size = 1.0
+    cfg.max_rounds = 1
+    cfg.time_step = 0
+    cfg.demo_level1_fast_fill_enabled = False
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    bot.now_provider = lambda: T0
+    bot.sleep_fn = lambda seconds: None
+
+    frame = bot.run()
+
+    assert frame["Buy Status"].iloc[0] != "not_sent_inventory_cap"
+    assert frame["Buy Original Amount"].iloc[0] == pytest.approx(0.3)
+
+
 def test_fully_locked_inventory_is_not_reported_as_insufficient(monkeypatch, tmp_path):
     """Holding stock whose every unit is already committed to resting sells is
     not the same as holding nothing. Calling both 'insufficient_inventory' sent
@@ -426,11 +485,11 @@ def test_demo_queue_ahead_uses_displayed_selected_level_volume(monkeypatch, tmp_
 
 def test_demo_engine_submits_selected_level_queue_and_round(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "demo_queue_enabled", True)
     cfg = run.make_cfg("usdt", mode="demo", session_id="queue-session")
     cfg.output_csv = str(tmp_path / "queue.csv")
     cfg.demo_state_path = str(tmp_path / "queue-state.json")
     cfg.demo_fee_state_path = str(tmp_path / "queue-fees.json")
-    cfg.demo_queue_enabled = True
     cfg.cash_initial = 1_000.0
     cfg.order_size = 1.0
     cfg.max_rounds = 1

@@ -32,6 +32,14 @@ EXPECTED = {
     "exp_ret_min": "hot",
     "buy_locked_cash_limit_enabled": "hot", "buy_locked_cash_limit_ratio": "hot",
     "sell_locked_inventory_limit_enabled": "hot", "sell_locked_inventory_limit_ratio": "hot",
+    "demo_queue_enabled": "hot",
+    "demo_max_fill_per_observation_orders": "hot",
+    "demo_adverse_fill_enabled": "hot",
+    "demo_adverse_fill_probability": "hot",
+    "demo_non_adverse_fill_probability": "hot",
+    "inventory_sizing_enabled": "hot",
+    "inventory_sizing_strength": "hot",
+    "inventory_sizing_min_fraction": "hot",
 }
 
 
@@ -81,8 +89,27 @@ def test_validate_rejects_unknown_field():
     {"depth_max": 0},
     {"time_step": 0},
     {"order_size": -1},
+    {"demo_max_fill_per_observation_orders": 0},
+    {"demo_adverse_fill_probability": -0.01},
+    {"demo_adverse_fill_probability": 1.01},
+    {"demo_non_adverse_fill_probability": -0.01},
+    {"demo_non_adverse_fill_probability": 1.01},
+    {"inventory_sizing_strength": -0.01},
+    {"inventory_sizing_strength": 1.01},
+    {"inventory_sizing_min_fraction": -0.01},
+    {"inventory_sizing_min_fraction": 1.01},
 ])
 def test_validate_rejects_out_of_range(payload):
+    with pytest.raises(OverlayValidationError):
+        validate_overrides(payload, pair="btc", profiles=PROFILES)
+
+
+@pytest.mark.parametrize("payload", [
+    {"demo_queue_enabled": 1},
+    {"demo_adverse_fill_enabled": "true"},
+    {"inventory_sizing_enabled": 0},
+])
+def test_validate_rejects_bool_control_non_booleans(payload):
     with pytest.raises(OverlayValidationError):
         validate_overrides(payload, pair="btc", profiles=PROFILES)
 

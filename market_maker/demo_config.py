@@ -62,6 +62,14 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "buy_locked_cash_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total quote cash (free + already locked in BUY orders) locked in resting BUY orders, 0-1."),
     "sell_locked_inventory_limit_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Reject new SELL orders that would push locked inventory past the ratio below."),
     "sell_locked_inventory_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total base inventory (free + already locked in SELL orders) locked in resting SELL orders, 0-1."),
+    "demo_queue_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Use displayed queue depth and trade volume before a Demo order can fill."),
+    "demo_max_fill_per_observation_orders": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Synthetic per-observation fill budget as a multiple of order_size when no traded volume is reported."),
+    "demo_adverse_fill_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Gate Demo fills through adverse/non-adverse fill probabilities."),
+    "demo_adverse_fill_probability": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Fill probability for touches that move against the maker order, 0-1."),
+    "demo_non_adverse_fill_probability": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Fill probability for non-adverse touches, 0-1."),
+    "inventory_sizing_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Skew buy/sell order sizes inversely with current inventory."),
+    "inventory_sizing_strength": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "How strongly inventory changes side-specific order sizes, 0-1."),
+    "inventory_sizing_min_fraction": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Minimum side-specific order size as a fraction of order_size, 0-1."),
 })
 
 ALLOWED_FIELDS = frozenset(FIELD_DEFINITIONS)
@@ -73,7 +81,6 @@ LEGACY_REMOVED_FIELDS = frozenset({
     "demo_level1_fast_fill_enabled",
     "demo_level1_fill_delay_seconds",
     "demo_level1_fill_fraction",
-    "demo_queue_enabled",
     "no_quote_alert_rounds",
     "no_quote_alert_seconds",
     "no_quote_alert_cooldown_seconds",
@@ -108,6 +115,11 @@ def _validate_desired_values(values: Mapping[str, Any]) -> None:
         raise OverlayValidationError("inv_min must be < inv_max")
     if "order_size" in values and values["order_size"] <= 0:
         raise OverlayValidationError("order_size must be > 0")
+    if (
+        "demo_max_fill_per_observation_orders" in values
+        and values["demo_max_fill_per_observation_orders"] <= 0
+    ):
+        raise OverlayValidationError("demo_max_fill_per_observation_orders must be > 0")
 
 
 def _validate_field(key: str, raw_value: Any, definition: FieldDefinition) -> Any:
@@ -658,18 +670,48 @@ class RuntimeConfigSynchronizer:
         previous_hot_values = {
             field: getattr(self.cfg, field) for field in hot_values
         }
-        previous_max_fill = getattr(self.ledger, "max_fill_per_observation", None)
-        update_max_fill = (
-            "order_size" in changed_fields
-            and hasattr(self.cfg, "demo_max_fill_per_observation_orders")
-            and hasattr(self.ledger, "max_fill_per_observation")
+        ledger_runtime_fields = (
+            "queue_enabled",
+            "max_fill_per_observation",
+            "adverse_fill_enabled",
+            "adverse_fill_probability",
+            "non_adverse_fill_probability",
         )
+        previous_ledger_values = {
+            field: getattr(self.ledger, field)
+            for field in ledger_runtime_fields
+            if hasattr(self.ledger, field)
+        }
         for field, value in hot_values.items():
             setattr(self.cfg, field, value)
-        if update_max_fill:
+        if hasattr(self.ledger, "queue_enabled") and hasattr(self.cfg, "demo_queue_enabled"):
+            self.ledger.queue_enabled = bool(self.cfg.demo_queue_enabled)
+        if (
+            hasattr(self.ledger, "max_fill_per_observation")
+            and hasattr(self.cfg, "demo_max_fill_per_observation_orders")
+        ):
             self.ledger.max_fill_per_observation = (
                 float(self.cfg.order_size)
                 * float(self.cfg.demo_max_fill_per_observation_orders)
+            )
+        if (
+            hasattr(self.ledger, "adverse_fill_enabled")
+            and hasattr(self.cfg, "demo_adverse_fill_enabled")
+        ):
+            self.ledger.adverse_fill_enabled = bool(self.cfg.demo_adverse_fill_enabled)
+        if (
+            hasattr(self.ledger, "adverse_fill_probability")
+            and hasattr(self.cfg, "demo_adverse_fill_probability")
+        ):
+            self.ledger.adverse_fill_probability = float(
+                self.cfg.demo_adverse_fill_probability
+            )
+        if (
+            hasattr(self.ledger, "non_adverse_fill_probability")
+            and hasattr(self.cfg, "demo_non_adverse_fill_probability")
+        ):
+            self.ledger.non_adverse_fill_probability = float(
+                self.cfg.demo_non_adverse_fill_probability
             )
 
         snapshot = self._snapshot(
@@ -683,8 +725,8 @@ class RuntimeConfigSynchronizer:
         except (OSError, OverlayValidationError) as error:
             for field, value in previous_hot_values.items():
                 setattr(self.cfg, field, value)
-            if update_max_fill:
-                self.ledger.max_fill_per_observation = previous_max_fill
+            for field, value in previous_ledger_values.items():
+                setattr(self.ledger, field, value)
             return self._publish_error(error)
         self._desired_digest = digest
         return RuntimeReloadResult(

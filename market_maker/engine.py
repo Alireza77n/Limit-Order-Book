@@ -808,6 +808,49 @@ class SimpleMarketMaker:
         return max(1e-10, abs(float(self.cfg.order_size)) * MIN_ORDER_SIZE_FRACTION)
 
     @staticmethod
+    def _clamp(value: float, lower: float, upper: float) -> float:
+        return max(lower, min(upper, value))
+
+    def _inventory_sized_order_targets(self, inventory: float) -> Tuple[float, float]:
+        base_size = float(self.cfg.order_size)
+        if not getattr(self.cfg, "inventory_sizing_enabled", False):
+            return base_size, base_size
+
+        inv_min = float(self.cfg.inv_min)
+        inv_max = float(self.cfg.inv_max)
+        inventory_band = inv_max - inv_min
+        if inventory_band <= 0:
+            return base_size, base_size
+
+        strength = self._clamp(
+            float(getattr(self.cfg, "inventory_sizing_strength", 0.0)),
+            0.0,
+            1.0,
+        )
+        min_fraction = self._clamp(
+            float(getattr(self.cfg, "inventory_sizing_min_fraction", 0.0)),
+            0.0,
+            1.0,
+        )
+        inventory_fraction = self._clamp(
+            (float(inventory) - inv_min) / inventory_band,
+            0.0,
+            1.0,
+        )
+        inventory_pressure = 2.0 * inventory_fraction - 1.0
+        buy_multiplier = self._clamp(
+            1.0 - strength * inventory_pressure,
+            min_fraction,
+            1.0 + strength,
+        )
+        sell_multiplier = self._clamp(
+            1.0 + strength * inventory_pressure,
+            min_fraction,
+            1.0 + strength,
+        )
+        return base_size * buy_multiplier, base_size * sell_multiplier
+
+    @staticmethod
     def _locked_exposure_ratio(projected_locked: float, resource_total: float) -> float:
         """projected_locked / resource_total, safe when resource_total is 0.
 
@@ -1255,9 +1298,12 @@ class SimpleMarketMaker:
                 buy_order = sell_order = None
                 buy_reason = sell_reason = "no_quote" if quote is None else None
                 if quote is not None:
+                    buy_target, sell_target = self._inventory_sized_order_targets(
+                        snapshot.inventory
+                    )
                     sell_amount = max(
                         0.0,
-                        min(self.cfg.order_size, snapshot.available_inventory - float(self.cfg.inv_min)),
+                        min(sell_target, snapshot.available_inventory - float(self.cfg.inv_min)),
                     )
                     sell_locked_reason = None
                     if sell_amount >= self._min_tradable_size() and (
@@ -1300,11 +1346,11 @@ class SimpleMarketMaker:
                         if order.side == "buy"
                     )
                     affordable = snapshot.available_cash / bid_price if bid_price and bid_price > 0 else 0.0
-                    buy_amount = max(0.0, min(self.cfg.order_size, affordable))
+                    buy_amount = max(0.0, min(buy_target, affordable))
                     buy_locked_cash_reason = None
                     if buy_amount < self._min_tradable_size():
                         buy_reason = "insufficient_cash"
-                    elif buy_locked_amount + snapshot.inventory + self.cfg.order_size >= self.cfg.inv_max:
+                    elif buy_locked_amount + snapshot.inventory + buy_amount > self.cfg.inv_max:
                         buy_reason = "inventory_cap"
                     elif (buy_locked_cash_reason := self._locked_cash_guard_reason(
                         locked_buy_cash=snapshot.locked_cash,
@@ -1640,9 +1686,12 @@ class SimpleMarketMaker:
     
                     # Current locked totals from our open orders
                     buy_locked, sell_locked = self.get_open_order_totals()
+                    buy_target, sell_target = self._inventory_sized_order_targets(
+                        float(inv_current)
+                    )
     
                     # SELL: cap by available (inventory minus already-locked sells)
-                    sell_size = max(0.0, min(self.cfg.order_size, (inv_current - sell_locked['amount']) - float(self.cfg.inv_min)))
+                    sell_size = max(0.0, min(sell_target, (inv_current - sell_locked['amount']) - float(self.cfg.inv_min)))
                     if sell_size >= self._min_tradable_size() and self._locked_inventory_guard_reason(
                         locked_sell_inventory=sell_locked['amount'],
                         new_order_amount=sell_size,
@@ -1670,14 +1719,14 @@ class SimpleMarketMaker:
                     else:
                         buy_affordable_base = 0.0
     
-                    buy_size = max(0.0, min(self.cfg.order_size, buy_affordable_base))
+                    buy_size = max(0.0, min(buy_target, buy_affordable_base))
                     if buy_size >= self._min_tradable_size() and self._locked_cash_guard_reason(
                         locked_buy_cash=buy_locked['cash'],
                         new_order_cash=buy_size * bid_price,
                         cash_base=cash_current,
                     ) is not None:
                         buy_size = 0.0  # blocked by the locked-cash guard; do not submit
-                    if (buy_size >= self._min_tradable_size()) and (buy_locked['amount'] + inv_current + self.cfg.order_size < self.cfg.inv_max):
+                    if (buy_size >= self._min_tradable_size()) and (buy_locked['amount'] + inv_current + buy_size <= self.cfg.inv_max):
                         buy_id = self.send_order(
                             order_type="buy",
                             srcCurrency=self.cfg.currency_1,

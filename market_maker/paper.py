@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import random
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -112,6 +113,10 @@ class PaperLedger:
         level1_fill_delay_seconds: float = 0.0,
         level1_fill_fraction: float = 1.0,
         queue_enabled: bool = False,
+        max_fill_per_observation: Optional[float] = None,
+        adverse_fill_enabled: bool = False,
+        adverse_fill_probability: float = 1.0,
+        non_adverse_fill_probability: float = 1.0,
         state_path=None,
         fee_state_path=None,
         archive_path=None,
@@ -133,6 +138,17 @@ class PaperLedger:
         self.level1_fill_delay_seconds = float(level1_fill_delay_seconds)
         self.level1_fill_fraction = float(level1_fill_fraction)
         self.queue_enabled = bool(queue_enabled)
+        self.max_fill_per_observation = (
+            None if max_fill_per_observation is None
+            else max(0.0, float(max_fill_per_observation))
+        )
+        self.adverse_fill_enabled = bool(adverse_fill_enabled)
+        self.adverse_fill_probability = self._clamp_probability(
+            adverse_fill_probability
+        )
+        self.non_adverse_fill_probability = self._clamp_probability(
+            non_adverse_fill_probability
+        )
         self.state_path = Path(state_path) if state_path is not None else None
         self.fee_state_path = Path(fee_state_path) if fee_state_path is not None else None
         if archive_path is not None:
@@ -188,6 +204,10 @@ class PaperLedger:
                 "level1_fill_delay_seconds": self.level1_fill_delay_seconds,
                 "level1_fill_fraction": self.level1_fill_fraction,
                 "queue_enabled": self.queue_enabled,
+                "max_fill_per_observation": self.max_fill_per_observation,
+                "adverse_fill_enabled": self.adverse_fill_enabled,
+                "adverse_fill_probability": self.adverse_fill_probability,
+                "non_adverse_fill_probability": self.non_adverse_fill_probability,
                 "fee_state_path": str(self.fee_state_path) if self.fee_state_path else None,
                 "archive_path": str(self.archive_path) if self.archive_path else None,
                 "hot_terminal_order_limit": self.hot_terminal_order_limit,
@@ -231,6 +251,12 @@ class PaperLedger:
             level1_fill_delay_seconds=config["level1_fill_delay_seconds"],
             level1_fill_fraction=config["level1_fill_fraction"],
             queue_enabled=config["queue_enabled"],
+            max_fill_per_observation=config.get("max_fill_per_observation"),
+            adverse_fill_enabled=config.get("adverse_fill_enabled", False),
+            adverse_fill_probability=config.get("adverse_fill_probability", 1.0),
+            non_adverse_fill_probability=config.get(
+                "non_adverse_fill_probability", 1.0
+            ),
             state_path=path,
             fee_state_path=config.get("fee_state_path"),
             archive_path=config.get("archive_path"),
@@ -641,6 +667,35 @@ class PaperLedger:
             wealth_after=snap.wealth,
         )
 
+    @staticmethod
+    def _fill_priority(order: PaperOrder) -> tuple:
+        price_rank = -order.limit_price if order.side == "buy" else order.limit_price
+        return (order.side, price_rank, order.created_at, order.client_order_id)
+
+    @staticmethod
+    def _clamp_probability(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    def _observation_budget(self, traded_volume: Optional[float]) -> Optional[float]:
+        if traded_volume is not None:
+            return max(0.0, float(traded_volume))
+        if self.max_fill_per_observation is None:
+            return None
+        return max(0.0, float(self.max_fill_per_observation))
+
+    def _passes_fill_probability(self, *, adverse: bool) -> bool:
+        if not self.adverse_fill_enabled:
+            return True
+        probability = (
+            self.adverse_fill_probability
+            if adverse else self.non_adverse_fill_probability
+        )
+        if probability >= 1.0:
+            return True
+        if probability <= 0.0:
+            return False
+        return random.random() <= probability
+
     def process_market(
         self,
         *,
@@ -653,9 +708,13 @@ class PaperLedger:
     ) -> List[PaperEvent]:
         self.valuation_price = float(last_price)
         events: List[PaperEvent] = []
-        for order_id in list(self.active_orders):
-            order = self.active_orders.get(order_id)
-            if order is None:
+        side_budgets = {
+            "buy": self._observation_budget(traded_volume),
+            "sell": self._observation_budget(traded_volume),
+        }
+        active_orders = sorted(self.active_orders.values(), key=self._fill_priority)
+        for order in active_orders:
+            if order.client_order_id not in self.active_orders:
                 continue
             elapsed = (now - order.created_at).total_seconds()
             if (
@@ -665,7 +724,7 @@ class PaperLedger:
             ):
                 amount = min(order.remaining_amount, order.original_amount * self.level1_fill_fraction)
                 event = self.apply_cumulative_fill(
-                    order_id,
+                    order.client_order_id,
                     cumulative_matched=order.matched_amount + amount,
                     fill_price=order.limit_price,
                     reason="level1_fast_fill",
@@ -686,22 +745,39 @@ class PaperLedger:
             if not trade_eligible and not touch_eligible:
                 continue
 
+            if not self._passes_fill_probability(adverse=touch_eligible):
+                continue
+
             reason = "trade_cross" if trade_eligible else "price_touch"
-            fill_amount = order.remaining_amount
+            if self.adverse_fill_enabled and touch_eligible:
+                reason = "adverse_price_touch"
             fill_price = float(trade_price) if trade_eligible else order.limit_price
-            if self.queue_enabled and trade_eligible and traded_volume is not None:
-                volume = max(0.0, float(traded_volume))
-                consumed = min(order.queue_ahead, volume)
-                order.queue_ahead -= consumed
-                volume -= consumed
-                if volume <= EPSILON:
-                    self._persist()
+            budget = side_budgets[order.side]
+            fill_amount = order.remaining_amount
+            if budget is not None:
+                if budget <= EPSILON:
                     continue
-                fill_amount = min(order.remaining_amount, volume)
-                reason = "queue_consumed"
+                if self.queue_enabled:
+                    consumed = min(order.queue_ahead, budget)
+                    if consumed > EPSILON:
+                        order.queue_ahead -= consumed
+                        budget -= consumed
+                        side_budgets[order.side] = budget
+                    if budget <= EPSILON:
+                        self._persist()
+                        continue
+                    reason = "queue_consumed"
+                fill_amount = min(order.remaining_amount, budget)
+                side_budgets[order.side] = max(0.0, budget - fill_amount)
+            elif self.queue_enabled and order.queue_ahead > EPSILON:
+                continue
+
+            if fill_amount <= EPSILON:
+                self._persist()
+                continue
 
             event = self.apply_cumulative_fill(
-                order_id,
+                order.client_order_id,
                 cumulative_matched=order.matched_amount + fill_amount,
                 fill_price=fill_price,
                 reason=reason,
