@@ -11,6 +11,11 @@ from telegram_lifecycle import PaperTelegramReporter, TelegramClient
 NOW = datetime(2026, 8, 1, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _telegram_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("LOB_TELEGRAM_DISABLED", raising=False)
+
+
 class _Response:
     def __init__(self, status_code=200, body=None, json_error=None):
         self.status_code = status_code
