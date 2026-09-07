@@ -794,7 +794,9 @@ def _render_validation_tab(
     
     # Inventory chart
     if not result.snapshots_df.empty and "inventory" in result.snapshots_df.columns:
-        inv_df = result.snapshots_df.sort_values("timestamp")
+        inv_df = result.snapshots_df.sort_values("timestamp").rename(
+            columns={"timestamp": "Timestamp"}
+        )
         inv_fig = _line_chart(inv_df, ["inventory"], "Inventory Over Time")
     else:
         inv_fig = _empty_fig("No inventory data available")

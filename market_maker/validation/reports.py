@@ -37,6 +37,8 @@ def generate_validation_report(result: ValidationResult) -> Dict[str, Any]:
             "avg_inventory": round(metrics.average_inventory, 6),
             "max_inventory": round(metrics.max_inventory, 6),
             "inventory_volatility": round(metrics.inventory_volatility, 6),
+            "average_holding_time_seconds": round(metrics.average_holding_time, 2)
+            if metrics.average_holding_time is not None else None,
         },
         "details": {
             "performance": {

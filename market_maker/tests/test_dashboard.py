@@ -6,7 +6,14 @@ import json
 import pandas as pd
 import pytest
 
-from dashboard import activity_records, filter_session, load_track, session_ids, with_derived_spreads
+from dashboard import (
+    _render_validation_tab,
+    activity_records,
+    filter_session,
+    load_track,
+    session_ids,
+    with_derived_spreads,
+)
 from config import TRADING_PROFILES
 from demo_config import desired_digest, load_desired_config
 from result_store import DemoResultStore
@@ -256,6 +263,30 @@ def test_no_quote_summary_tolerates_legacy_csv_without_the_column(tmp_path):
     from dashboard import no_quote_summary
 
     assert no_quote_summary(pd.DataFrame([{"Portfolio Wealth": 1.0}])) == ""
+
+
+def test_validation_tab_renders_inventory_chart_from_snapshot_timestamp():
+    frame = pd.DataFrame([
+        {
+            "Timestamp": "2026-08-01 12:00:00",
+            "Session_id": "session-1",
+            "Portfolio Wealth": 1000.0,
+            "cash_current": 900.0,
+            "inv_current": 1.0,
+        },
+        {
+            "Timestamp": "2026-08-01 12:01:00",
+            "Session_id": "session-1",
+            "Portfolio Wealth": 1001.0,
+            "cash_current": 901.0,
+            "inv_current": 1.0,
+        },
+    ])
+    frame["Timestamp"] = pd.to_datetime(frame["Timestamp"])
+
+    rendered = _render_validation_tab(frame, "btc_demo", "session-1")
+
+    assert rendered is not None
 
 
 # ---------- Session selector: must survive auto-refresh ticks ----------
