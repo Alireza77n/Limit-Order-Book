@@ -95,7 +95,7 @@ services:
       # unique credentials. `$$` escapes Compose interpolation so Werkzeug
       # receives the required single `$` hash separators.
       ADMIN_USERNAME: admin
-      ADMIN_PASSWORD_HASH: "pbkdf2:sha256:1000000$$zJIa0qrinUjVXew5$$7c096d955aaa98980a78de5cd26efc4c4b3411ccf5013268247c792e600e20da"
+      ADMIN_PASSWORD_HASH: "pbkdf2:sha256:1000000$$Ny6yz2RscFqwoCia$$01c9dfea1ecb1a7272c8d30a48f28d5a3fa5ed1a3a8ab071100a2a5c1095a4be"
       ADMIN_SESSION_SECRET: local-demo-admin-session-secret
       # admin_app.py's own defaults are runtime/results, runtime/state, etc
       # (matching the production layout) -- point it at the same shared
