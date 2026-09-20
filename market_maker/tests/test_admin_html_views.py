@@ -32,11 +32,6 @@ EXPECTED_CONFIG_FIELDS = {
     "commission_perc", "exp_ret_min",
     "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
     "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
-    "demo_queue_enabled", "demo_max_fill_per_observation_orders",
-    "demo_adverse_fill_enabled", "demo_adverse_fill_probability",
-    "demo_non_adverse_fill_probability",
-    "inventory_sizing_enabled", "inventory_sizing_strength",
-    "inventory_sizing_min_fraction",
 }
 REMOVED_CONFIG_FIELDS = {
     "max_rounds", "demo_level1_fast_fill_enabled",
@@ -44,6 +39,11 @@ REMOVED_CONFIG_FIELDS = {
     "no_quote_alert_rounds", "no_quote_alert_seconds",
     "no_quote_alert_cooldown_seconds", "no_quote_recovery_alert",
     "algo1_diagnostics_enabled",
+    "demo_queue_enabled", "demo_max_fill_per_observation_orders",
+    "demo_adverse_fill_enabled", "demo_adverse_fill_probability",
+    "demo_non_adverse_fill_probability",
+    "inventory_sizing_enabled", "inventory_sizing_strength",
+    "inventory_sizing_min_fraction",
 }
 
 
@@ -432,6 +432,20 @@ def test_config_apply_html_validation_error_rerenders_with_error(client, app, fa
     assert response.content_type.startswith("text/html")
     body = _html(response)
     assert "commission_perc" in body
+    assert _commands_written(app) == []
+
+
+def test_config_apply_html_rejects_hidden_safe_default_fields(client, app, fake_agent):
+    token = _login(client)
+
+    response = client.post("/admin/config/btc", data={
+        "demo_queue_enabled": "true",
+        "csrf_token": token,
+    }, headers=HTML)
+
+    assert response.status_code == 400
+    body = _html(response)
+    assert "unknown field: demo_queue_enabled" in body
     assert _commands_written(app) == []
 
 

@@ -62,14 +62,6 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "buy_locked_cash_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total quote cash (free + already locked in BUY orders) locked in resting BUY orders, 0-1."),
     "sell_locked_inventory_limit_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Reject new SELL orders that would push locked inventory past the ratio below."),
     "sell_locked_inventory_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total base inventory (free + already locked in SELL orders) locked in resting SELL orders, 0-1."),
-    "demo_queue_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Use displayed queue depth and trade volume before a Demo order can fill."),
-    "demo_max_fill_per_observation_orders": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Synthetic per-observation fill budget as a multiple of order_size when no traded volume is reported."),
-    "demo_adverse_fill_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Gate Demo fills through adverse/non-adverse fill probabilities."),
-    "demo_adverse_fill_probability": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Fill probability for touches that move against the maker order, 0-1."),
-    "demo_non_adverse_fill_probability": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Fill probability for non-adverse touches, 0-1."),
-    "inventory_sizing_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Skew buy/sell order sizes inversely with current inventory."),
-    "inventory_sizing_strength": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "How strongly inventory changes side-specific order sizes, 0-1."),
-    "inventory_sizing_min_fraction": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Minimum side-specific order size as a fraction of order_size, 0-1."),
 })
 
 ALLOWED_FIELDS = frozenset(FIELD_DEFINITIONS)
@@ -86,6 +78,14 @@ LEGACY_REMOVED_FIELDS = frozenset({
     "no_quote_alert_cooldown_seconds",
     "no_quote_recovery_alert",
     "algo1_diagnostics_enabled",
+    "demo_queue_enabled",
+    "demo_max_fill_per_observation_orders",
+    "demo_adverse_fill_enabled",
+    "demo_adverse_fill_probability",
+    "demo_non_adverse_fill_probability",
+    "inventory_sizing_enabled",
+    "inventory_sizing_strength",
+    "inventory_sizing_min_fraction",
 })
 
 FORBIDDEN_FIELDS = frozenset({

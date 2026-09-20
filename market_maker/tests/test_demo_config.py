@@ -32,14 +32,17 @@ EXPECTED = {
     "exp_ret_min": "hot",
     "buy_locked_cash_limit_enabled": "hot", "buy_locked_cash_limit_ratio": "hot",
     "sell_locked_inventory_limit_enabled": "hot", "sell_locked_inventory_limit_ratio": "hot",
-    "demo_queue_enabled": "hot",
-    "demo_max_fill_per_observation_orders": "hot",
-    "demo_adverse_fill_enabled": "hot",
-    "demo_adverse_fill_probability": "hot",
-    "demo_non_adverse_fill_probability": "hot",
-    "inventory_sizing_enabled": "hot",
-    "inventory_sizing_strength": "hot",
-    "inventory_sizing_min_fraction": "hot",
+}
+
+HIDDEN_SAFE_DEFAULT_FIELDS = {
+    "demo_queue_enabled",
+    "demo_max_fill_per_observation_orders",
+    "demo_adverse_fill_enabled",
+    "demo_adverse_fill_probability",
+    "demo_non_adverse_fill_probability",
+    "inventory_sizing_enabled",
+    "inventory_sizing_strength",
+    "inventory_sizing_min_fraction",
 }
 
 
@@ -57,6 +60,7 @@ def test_obsolete_and_continuous_only_fields_are_not_editable():
 
     assert "no_quote_recovery_alert" not in editable_schema("btc", config.TRADING_PROFILES)
     assert "max_rounds" not in editable_schema("btc", config.TRADING_PROFILES)
+    assert HIDDEN_SAFE_DEFAULT_FIELDS.isdisjoint(editable_schema("btc", config.TRADING_PROFILES))
 
 
 def test_field_definitions_are_read_only():
@@ -89,29 +93,16 @@ def test_validate_rejects_unknown_field():
     {"depth_max": 0},
     {"time_step": 0},
     {"order_size": -1},
-    {"demo_max_fill_per_observation_orders": 0},
-    {"demo_adverse_fill_probability": -0.01},
-    {"demo_adverse_fill_probability": 1.01},
-    {"demo_non_adverse_fill_probability": -0.01},
-    {"demo_non_adverse_fill_probability": 1.01},
-    {"inventory_sizing_strength": -0.01},
-    {"inventory_sizing_strength": 1.01},
-    {"inventory_sizing_min_fraction": -0.01},
-    {"inventory_sizing_min_fraction": 1.01},
 ])
 def test_validate_rejects_out_of_range(payload):
     with pytest.raises(OverlayValidationError):
         validate_overrides(payload, pair="btc", profiles=PROFILES)
 
 
-@pytest.mark.parametrize("payload", [
-    {"demo_queue_enabled": 1},
-    {"demo_adverse_fill_enabled": "true"},
-    {"inventory_sizing_enabled": 0},
-])
-def test_validate_rejects_bool_control_non_booleans(payload):
-    with pytest.raises(OverlayValidationError):
-        validate_overrides(payload, pair="btc", profiles=PROFILES)
+@pytest.mark.parametrize("field", sorted(HIDDEN_SAFE_DEFAULT_FIELDS))
+def test_validate_rejects_hidden_safe_default_fields(field):
+    with pytest.raises(OverlayValidationError, match=f"unknown field: {field}"):
+        validate_overrides({field: PROFILES["btc"][field]}, pair="btc", profiles=PROFILES)
 
 
 def test_validate_rejects_wrong_type():
@@ -216,6 +207,27 @@ def test_known_legacy_keys_are_removed_while_unknown_keys_fail_closed(tmp_path):
     path.write_text('{"not_a_real_field": 4}')
     with pytest.raises(OverlayValidationError, match="unknown field"):
         load_desired_config("btc", tmp_path, PROFILES)
+
+
+def test_hidden_safe_default_fields_are_removed_from_existing_overlays(tmp_path):
+    path = overlay_path(tmp_path, "btc")
+    path.write_text(
+        """
+        {
+          "order_size": 0.25,
+          "demo_queue_enabled": true,
+          "demo_adverse_fill_enabled": true,
+          "inventory_sizing_enabled": true
+        }
+        """
+    )
+
+    desired = load_desired_config("btc", tmp_path, PROFILES)
+
+    assert desired["order_size"] == 0.25
+    assert HIDDEN_SAFE_DEFAULT_FIELDS.isdisjoint(desired)
+    loaded = load_overrides(path, pair="btc", profiles=PROFILES)
+    assert loaded == {"order_size": 0.25}
 
 
 def test_write_preserves_existing_overlay_only_after_strict_pair_validation(tmp_path):

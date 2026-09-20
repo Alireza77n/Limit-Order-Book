@@ -17,11 +17,6 @@ EXPECTED_FIELDS = {
     "commission_perc", "exp_ret_min",
     "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
     "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
-    "demo_queue_enabled", "demo_max_fill_per_observation_orders",
-    "demo_adverse_fill_enabled", "demo_adverse_fill_probability",
-    "demo_non_adverse_fill_probability",
-    "inventory_sizing_enabled", "inventory_sizing_strength",
-    "inventory_sizing_min_fraction",
 }
 
 
@@ -174,6 +169,14 @@ def test_config_apply_valid_enqueues_apply_config(client, app, fake_agent):
     "no_quote_alert_cooldown_seconds",
     "no_quote_recovery_alert",
     "algo1_diagnostics_enabled",
+    "demo_queue_enabled",
+    "demo_max_fill_per_observation_orders",
+    "demo_adverse_fill_enabled",
+    "demo_adverse_fill_probability",
+    "demo_non_adverse_fill_probability",
+    "inventory_sizing_enabled",
+    "inventory_sizing_strength",
+    "inventory_sizing_min_fraction",
     "not_a_real_config_field",
 ])
 def test_config_submission_outside_pair_schema_is_rejected_without_enqueue(

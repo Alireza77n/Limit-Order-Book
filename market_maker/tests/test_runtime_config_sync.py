@@ -114,14 +114,6 @@ def run_one_round(bot):
         ("buy_locked_cash_limit_ratio", 0.4),
         ("sell_locked_inventory_limit_enabled", True),
         ("sell_locked_inventory_limit_ratio", 0.6),
-        ("demo_queue_enabled", True),
-        ("demo_max_fill_per_observation_orders", 2.0),
-        ("demo_adverse_fill_enabled", True),
-        ("demo_adverse_fill_probability", 0.9),
-        ("demo_non_adverse_fill_probability", 0.2),
-        ("inventory_sizing_enabled", True),
-        ("inventory_sizing_strength", 0.5),
-        ("inventory_sizing_min_fraction", 0.2),
     ],
 )
 def test_hot_field_updates_existing_engine(field, value, runtime_bot):
@@ -150,39 +142,12 @@ def test_hot_order_size_changes_next_round_order_amount(runtime_bot):
 
 def test_hot_order_size_updates_demo_fill_budget_at_round_boundary(runtime_bot):
     bot, state_dir = runtime_bot
-    save_desired(state_dir, order_size=2.0, demo_max_fill_per_observation_orders=1.5)
+    save_desired(state_dir, order_size=2.0)
 
     result = bot.config_sync.reload_at_round_boundary()
 
     assert result.ok
-    assert bot.exchange.ledger.max_fill_per_observation == 3.0
-
-
-def test_hot_demo_queue_toggle_updates_ledger_at_round_boundary(runtime_bot):
-    bot, state_dir = runtime_bot
-    save_desired(state_dir, demo_queue_enabled=True)
-
-    result = bot.config_sync.reload_at_round_boundary()
-
-    assert result.ok
-    assert bot.exchange.ledger.queue_enabled is True
-
-
-def test_hot_adverse_fill_settings_update_ledger_at_round_boundary(runtime_bot):
-    bot, state_dir = runtime_bot
-    save_desired(
-        state_dir,
-        demo_adverse_fill_enabled=True,
-        demo_adverse_fill_probability=0.7,
-        demo_non_adverse_fill_probability=0.3,
-    )
-
-    result = bot.config_sync.reload_at_round_boundary()
-
-    assert result.ok
-    assert bot.exchange.ledger.adverse_fill_enabled is True
-    assert bot.exchange.ledger.adverse_fill_probability == 0.7
-    assert bot.exchange.ledger.non_adverse_fill_probability == 0.3
+    assert bot.exchange.ledger.max_fill_per_observation == 2.0
 
 
 def test_hot_inventory_bounds_change_strategy_skew(runtime_bot):
