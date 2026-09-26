@@ -72,7 +72,7 @@ Before deployment, the current application tree, systemd units, Nginx configurat
 
 Services will be restarted in dependency order and checked with `systemctl`, journal logs, listening sockets, and HTTP probes. Existing Demo health checks must pass after deployment.
 
-The three forward services may run automatically, but no BTC or USDT live worker will be started automatically. Placing real orders requires a separate authenticated start action with the existing confirmation phrase.
+The three forward services may run automatically. After all deployment and no-order checks pass, the rollout will explicitly start both BTC/IRT and USDT/IRT live workers using the teammate implementation's existing order sizes, timing, inventory bounds, and exposure-guard behavior. The initial real-trading validation will be monitored for 10 minutes and both workers will then be stopped through the normal control path so shutdown cancellation and lock cleanup are exercised. Any authentication, DNS, balance, order, or cancellation error stops the validation immediately.
 
 If verification fails, services and configuration will be restored from the backup and the previous deployment restarted.
 
@@ -89,4 +89,4 @@ Acceptance requires:
 7. Existing Demo services remain healthy.
 8. Admin and dashboard endpoints respond through Nginx on the approved hostname.
 9. Wallet reads succeed, while no real order is placed during deployment verification.
-
+10. A final 10-minute monitored real-trading validation starts BTC/IRT and USDT/IRT with the teammate configuration, records observed order/fill/fee behavior, stops both workers, confirms owned open orders are cancelled, and confirms worker locks are removed.
