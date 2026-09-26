@@ -198,6 +198,10 @@ services:
       - ../runtime/state:/app/runtime/state:ro
       - /var/lib/market-maker-forward/results:/app/runtime/forward/results:ro
     environment:
+      # Docker's host port proxy cannot reach a process bound to the
+      # container loopback interface.  The published host port remains
+      # loopback-only, so this does not expose the dashboard directly.
+      DASHBOARD_HOST: 0.0.0.0
       LOB_FORWARD_RESULTS_DIR: /app/runtime/forward/results
     group_add:
       - "${FORWARD_CONTROL_GID:-986}"
