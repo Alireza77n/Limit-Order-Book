@@ -25,6 +25,12 @@ FORWARD_FIELDS = frozenset({
     "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
 })
 
+# The authenticated Nobitex account reports a 0.25% IRT fee for both maker
+# and taker orders.  A forward run has a buy and a sell leg, so never allow a
+# live configuration to understate either leg's commission.  Demo profiles
+# intentionally remain independently configurable.
+FORWARD_MIN_COMMISSION_PERC = 0.0025
+
 
 def config_dir() -> Path:
     return Path(os.environ.get("LOB_FORWARD_CONFIG_DIR", "runtime/forward/config"))
@@ -47,6 +53,12 @@ def desired_config(pair, profiles, directory=None):
             raise OverlayLoadError("forward config must be a JSON object")
         loaded = validate_overrides(values, pair=pair, profiles=profiles)
         base.update({key: value for key, value in loaded.items() if key in FORWARD_FIELDS})
+    base["commission_perc"] = max(
+        float(base.get("commission_perc", 0.0)), FORWARD_MIN_COMMISSION_PERC
+    )
+    base["exp_ret_min"] = max(
+        float(base.get("exp_ret_min", 0.0)), FORWARD_MIN_COMMISSION_PERC
+    )
     base["buy_locked_cash_limit_enabled"] = bool(base.get("buy_locked_cash_limit_enabled"))
     base["sell_locked_inventory_limit_enabled"] = bool(base.get("sell_locked_inventory_limit_enabled"))
     base["buy_locked_cash_limit_ratio"] = min(float(base.get("buy_locked_cash_limit_ratio", 0.25)), 0.25)
@@ -70,6 +82,14 @@ def validate_forward_config(values, pair, profiles, directory=None):
         raise OverlayValidationError("order_size must be greater than zero")
     if merged["inv_min"] >= merged["inv_max"]:
         raise OverlayValidationError("inv_min must be less than inv_max")
+    if merged["commission_perc"] < FORWARD_MIN_COMMISSION_PERC:
+        raise OverlayValidationError(
+            "live forward testing requires commission_perc of at least 0.0025"
+        )
+    if merged["exp_ret_min"] < FORWARD_MIN_COMMISSION_PERC:
+        raise OverlayValidationError(
+            "live forward testing requires exp_ret_min of at least 0.0025"
+        )
     if not merged["buy_locked_cash_limit_enabled"]:
         raise OverlayValidationError("live forward testing requires the BUY exposure limit")
     if not merged["sell_locked_inventory_limit_enabled"]:

@@ -48,6 +48,35 @@
   </div>
 </div>
 
+<div class="card mb-lg">
+  <div class="card-header">
+    <h2>Live Forward Test — isolated from Demo</h2>
+  </div>
+  <div class="card-body">
+    <p>
+      {% if forward_trading_enabled %}
+        <span class="status-badge status-warning">Live orders enabled</span>
+      {% else %}
+        <span class="status-badge status-stopped">Live orders disabled</span>
+      {% endif %}
+      Forward workers use separate controls, configuration, locks, and results.
+    </p>
+    <div class="grid grid-2">
+      <div><strong>BTC/IRT:</strong>
+        {% if forward_workers.btc %}<span class="status-badge status-running">Running</span>{% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
+      </div>
+      <div><strong>USDT/IRT:</strong>
+        {% if forward_workers.usdt %}<span class="status-badge status-running">Running</span>{% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
+      </div>
+    </div>
+    <div class="btn-group" style="margin-top: var(--spacing-md);">
+      <a href="{{ url_for('admin_forward_page') }}" class="btn btn-primary">Live Forward Controls</a>
+      <a href="{{ url_for('admin_forward_config', pair='btc') }}" class="btn btn-secondary">BTC Live Config</a>
+      <a href="{{ url_for('admin_forward_config', pair='usdt') }}" class="btn btn-secondary">USDT Live Config</a>
+    </div>
+  </div>
+</div>
+
 <div class="grid grid-2">
   <div class="card">
     <div class="card-header">
@@ -98,6 +127,7 @@
     <div class="card-body">
       <div class="btn-group" style="flex-direction: column; gap: var(--spacing-sm);">
         <a href="{{ url_for('admin_workers_page') }}" class="btn btn-primary">Worker Controls</a>
+        <a href="{{ url_for('admin_forward_page') }}" class="btn btn-secondary">Live Forward Test</a>
         <a href="{{ url_for('admin_config', pair='btc') }}" class="btn btn-secondary">Configure BTC</a>
         <a href="{{ url_for('admin_config', pair='usdt') }}" class="btn btn-secondary">Configure USDT</a>
         <a href="{{ url_for('admin_backups') }}" class="btn btn-secondary">Backups</a>

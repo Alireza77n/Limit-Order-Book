@@ -30,7 +30,7 @@ import plotly.graph_objects as go
 from dash import Dash, dash_table, dcc, html
 from dash.dependencies import Input, Output, State
 
-from config import DEMO_STATE_DIR, TRADING_PROFILES, demo_csv_path
+from config import DEMO_STATE_DIR, RESULTS_DIR, TRADING_PROFILES, demo_csv_path
 from demo_config import (
     CONFIG_STATUS_LABELS,
     OverlayLoadError,
@@ -50,10 +50,22 @@ from validation.reports import generate_validation_report, format_metric_card
 # config.TRADING_PROFILES -- the same dict run.py builds MMConfig from --
 # so the dashboard always agrees with run.py about where results live.
 TRACKS = {
-    "btc_real": {"label": "BTC — Real", "path": TRADING_PROFILES["btc"]["output_csv"], "status": "real"},
+    "btc_real": {
+        "label": "BTC — Live Forward Test",
+        "path": os.path.join(
+            os.environ.get("LOB_FORWARD_RESULTS_DIR", RESULTS_DIR), "btc_track.csv"
+        ),
+        "status": "real",
+    },
     "btc_demo": {"label": "BTC — Demo (paper trading)",
                  "path": demo_csv_path(TRADING_PROFILES["btc"]["output_csv"]), "status": "demo"},
-    "usdt_real": {"label": "USDT — Real", "path": TRADING_PROFILES["usdt"]["output_csv"], "status": "real"},
+    "usdt_real": {
+        "label": "USDT — Live Forward Test",
+        "path": os.path.join(
+            os.environ.get("LOB_FORWARD_RESULTS_DIR", RESULTS_DIR), "usdt_track.csv"
+        ),
+        "status": "real",
+    },
     "usdt_demo": {"label": "USDT — Demo (paper trading)",
                   "path": demo_csv_path(TRADING_PROFILES["usdt"]["output_csv"]), "status": "demo"},
 }
@@ -422,8 +434,8 @@ app.layout = html.Div([
             "fontFamily": FONT_FAMILY, "color": TEXT_PRIMARY, "fontSize": "1.5rem", "margin": 0,
         }),
         html.P(
-            "Real Nobitex market data, Algorithm 1 quoting decisions, and every "
-            "round's outcome -- real and demo runs always clearly labeled.",
+            "Demo and live-forward Nobitex results, Algorithm 1 quoting decisions, "
+            "and every round's outcome — modes are always clearly labeled.",
             style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "marginTop": "0.4rem"},
         ),
     ], style={"marginBottom": "1.5rem"}),

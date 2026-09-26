@@ -813,6 +813,8 @@ def _register_routes(app: Flask) -> None:
             "session_id": _session_id(app),
             "control_lock_held": _control_lock_held(app),
             "workers": {pair: _worker_running(app, pair) for pair in PAIRS},
+            "forward_workers": {pair: _forward_worker_running(app, pair) for pair in PAIRS},
+            "forward_trading_enabled": app.config["FORWARD_TRADING_ENABLED"],
             "recent_audit": _recent_audit(app),
         }
         if _wants_html():

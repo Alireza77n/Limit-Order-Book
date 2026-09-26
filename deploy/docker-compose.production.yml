@@ -191,6 +191,11 @@ services:
     volumes:
       - ../runtime/results:/app/runtime/results:ro
       - ../runtime/state:/app/runtime/state:ro
+      - /var/lib/market-maker-forward/results:/app/runtime/forward/results:ro
+    environment:
+      LOB_FORWARD_RESULTS_DIR: /app/runtime/forward/results
+    group_add:
+      - "${FORWARD_CONTROL_GID:-986}"
     restart: unless-stopped
     stop_grace_period: 20s
     pids_limit: 128
@@ -225,6 +230,8 @@ services:
       - demo.env
       - path: admin.env
         required: false
+      - path: admin-forward.env
+        required: false
     command:
       - python
       - demo_entrypoint.py
@@ -238,6 +245,15 @@ services:
       - ../runtime/results:/app/runtime/results:ro
       - ../runtime/backups:/app/runtime/backups:ro
       - ../runtime/control:/app/runtime/control
+      - /var/lib/market-maker-forward/control:/app/runtime/forward/control
+      - /var/lib/market-maker-forward/config:/app/runtime/forward/config
+      - /var/lib/market-maker-forward/locks:/app/runtime/forward/locks:ro
+    environment:
+      LOB_FORWARD_CONTROL_DIR: /app/runtime/forward/control
+      LOB_FORWARD_CONFIG_DIR: /app/runtime/forward/config
+      LOB_FORWARD_LOCK_DIR: /app/runtime/forward/locks
+    group_add:
+      - "${FORWARD_CONTROL_GID:-986}"
     ports:
       - "127.0.0.1:8653:8051"
     restart: unless-stopped
