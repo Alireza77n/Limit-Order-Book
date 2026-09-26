@@ -76,7 +76,7 @@ def test_validate_accepts_known_fields():
     assert validated == {"order_size": 5.0, "depth_max": 2}
 
 
-@pytest.mark.parametrize("key", ["pair", "token", "url_send_order", "algorithm_id"])
+@pytest.mark.parametrize("key", ["pair", "token", "api_key", "secret_key", "url_send_order", "algorithm_id"])
 def test_validate_rejects_identity_and_secret_fields(key):
     with pytest.raises(OverlayValidationError):
         validate_overrides({key: "x"}, pair="btc", profiles=PROFILES)

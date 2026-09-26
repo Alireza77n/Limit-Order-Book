@@ -1,0 +1,64 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Live Configuration {{ pair.upper() }}{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-header"><h2>Live Forward Configuration: {{ pair.upper() }}</h2></div>
+  <div class="card-body">
+    <div class="flash flash-warning">These values affect real orders. BUY and SELL exposure limits are required and capped at 25% of available resources in the forward-test defaults. Cash and base-asset inventory are read from the selected Nobitex spot wallets whenever a live worker starts; they are not manually configured here. If either balance cannot be read, live startup stops before any order is sent. Saved settings apply after the worker is stopped and started.</div>
+    {% if error %}<div class="flash flash-error">{{ error }}</div>{% endif %}
+    {% if success %}<div class="flash flash-success">{{ success }}</div>{% endif %}
+    <section class="card mb-lg" aria-label="Current Nobitex wallet balances">
+      <div class="card-header"><h3>Current Nobitex wallet balances</h3></div>
+      <div class="card-body">
+        <p class="text-muted">Read-only balances from the main Nobitex account. RLS is the cash wallet for both IRT pairs. Inv Min and Inv Max below are strategy limits, not the current account inventory. Refresh this page to read balances again.</p>
+        {% if wallet_error %}
+          <div class="flash flash-warning">Balances unavailable: {{ wallet_error }}</div>
+        {% elif wallet_snapshot %}
+          <div class="grid grid-3">
+            {% for currency, label in [('rls', 'Cash (RLS)'), ('btc', 'BTC inventory'), ('usdt', 'USDT inventory')] %}
+              <div class="card">
+                <div class="card-body">
+                  <h4>{{ label }}{% if currency == pair %} · selected pair{% endif %}</h4>
+                  <p class="mono">{{ "{:,.8f}".format(wallet_snapshot["balances"][currency]).rstrip("0").rstrip(".") }} {{ currency.upper() }}</p>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+          <p class="text-muted">Read at {{ wallet_snapshot["read_at"] }} (UTC).</p>
+        {% endif %}
+        <a class="btn btn-secondary btn-sm" href="{{ url_for('admin_forward_config', pair=pair) }}">Refresh balances</a>
+      </div>
+    </section>
+    <form method="post" class="config-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="grid grid-2">
+      {% for field_name, definition in schema.items() %}
+        {% set current_value = values.get(field_name) %}
+        <div class="form-group">
+          <label for="{{ field_name }}" class="form-label">{{ field_name.replace('_', ' ').title() }}
+          {% if definition.value_type.__name__ != 'bool' %}<span class="text-muted">({{ definition.value_type.__name__ }}{% if definition.minimum is not none %}; min {{ definition.minimum }}{% endif %}{% if definition.maximum is not none %}; max {{ definition.maximum }}{% endif %})</span>{% endif %}</label>
+          {% if definition.value_type.__name__ == 'bool' %}
+            <div class="form-check">
+              <input type="checkbox" id="{{ field_name }}" name="{{ field_name }}" value="true" class="form-check-input" {% if current_value %}checked{% endif %}>
+              <label for="{{ field_name }}" class="form-check-label">Enabled (required for live start)</label>
+              <input type="hidden" name="{{ field_name }}" value="false">
+            </div>
+          {% elif definition.value_type.__name__ == 'int' %}
+            <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value }}" step="1" {% if definition.minimum is not none %}min="{{ definition.minimum }}"{% endif %} {% if definition.maximum is not none %}max="{{ definition.maximum }}"{% endif %}>
+          {% else %}
+            <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value }}" step="any" {% if definition.minimum is not none %}min="{{ definition.minimum }}"{% endif %} {% if 'locked_' in field_name %}max="0.25"{% elif definition.maximum is not none %}max="{{ definition.maximum }}"{% endif %}>
+          {% endif %}
+          <div class="form-help">{{ definition.help_text }}</div>
+        </div>
+      {% endfor %}
+      </div>
+      <button type="submit" class="btn btn-primary">Save live configuration</button>
+      <a href="{{ url_for('admin_forward_page') }}" class="btn btn-ghost">Back to forward test</a>
+    </form>
+    <h3 class="mt-lg">Current desired values</h3>
+    <pre class="mono" style="white-space:pre-wrap">{{ values|tojson(indent=2) }}</pre>
+  </div>
+</div>
+{% endblock %}

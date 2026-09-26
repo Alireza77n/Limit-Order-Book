@@ -345,6 +345,37 @@ class SimpleMarketMaker:
     def wallet_balance(self, currency: str) -> Optional[float]:
         return self.exchange.wallet_balance(currency)
 
+    def _load_live_starting_balances(self) -> Tuple[float, float]:
+        """Seed a live session from the current Nobitex spot-wallet balances.
+
+        Static profile values are useful as historical defaults, but must not
+        define the capital available to a real forward run. Refuse to start if
+        either authenticated balance lookup fails so the worker cannot trade
+        using stale or guessed cash/inventory values.
+        """
+        currencies = (self.cfg.currency_1, self.cfg.currency_2)
+        balances = []
+        for currency in currencies:
+            value = self.wallet_balance(currency)
+            if value is None or not math.isfinite(float(value)) or float(value) < 0:
+                raise RuntimeError(
+                    f"Unable to read a valid live Nobitex balance for {currency}; "
+                    "refusing to start real trading."
+                )
+            balances.append(float(value))
+
+        self.inv_initial, self.cash_initial = balances
+        print(json.dumps({
+            "event": "live_wallet_snapshot",
+            "pair": self.pair,
+            "base_currency": currencies[0],
+            "base_balance": self.inv_initial,
+            "quote_currency": currencies[1],
+            "quote_balance": self.cash_initial,
+            "timestamp": self.now_provider().isoformat(),
+        }, sort_keys=True), flush=True)
+        return self.inv_initial, self.cash_initial
+
     # ---------- Telegram notifications ----------
     def _notify_telegram(self, text: str) -> bool:
         """Best-effort push to Telegram. No-ops if unconfigured; never
@@ -1545,6 +1576,11 @@ class SimpleMarketMaker:
 
         if not hasattr(self, "session"):
             self.session = int(datetime.now().timestamp())
+
+        # Use a fresh exchange snapshot for each live session. The configured
+        # profile's historical seeds must never become real-account capital.
+        if self.mode_label != "demo":
+            self._load_live_starting_balances()
 
         self._notify_startup()
 

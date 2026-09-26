@@ -1,0 +1,30 @@
+[Unit]
+Description=Market Maker Forward Test Admin UI
+After=network.target
+
+[Service]
+Type=simple
+User=marketmaker-admin
+Group=marketmaker-control
+WorkingDirectory=/opt/market-maker-forward/market_maker
+EnvironmentFile=/etc/market-maker-forward-admin.env
+Environment=LOB_RESULTS_DIR=/var/lib/market-maker-forward/results
+Environment=LOB_DISABLE_DOTENV=1
+Environment=LOB_FORWARD_CONFIG_DIR=/var/lib/market-maker-forward/config
+Environment=LOB_FORWARD_LOCK_DIR=/var/lib/market-maker-forward/locks
+Environment=LOB_FORWARD_CONTROL_DIR=/var/lib/market-maker-forward/control
+Environment=HOME=/run/market-maker-forward-admin
+RuntimeDirectory=market-maker-forward-admin
+RuntimeDirectoryMode=0700
+ExecStart=/opt/market-maker-forward/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:18653 --timeout 45 "admin_app:create_app()"
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/market-maker-forward/control
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

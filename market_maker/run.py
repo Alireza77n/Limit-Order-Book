@@ -7,8 +7,8 @@ means adding a TRADING_PROFILES entry in config.py; adding a new algorithm
 or exchange means adding one STRATEGIES/EXCHANGES entry below -- no new
 files either way.
 
-    python run.py --profile btc                # real trading, equivalent to the old `python demo_btc.py`
-    python run.py --profile usdt               # real trading, equivalent to the old `python demo_usdt.py`
+    python run.py --profile btc --mode real    # live trading (explicit mode required)
+    python run.py --profile usdt --mode real   # live trading (explicit mode required)
     python run.py --profile btc --mode demo    # paper trading: real market data, simulated fills, no real orders
 
 See usage.md for the full real-vs-demo breakdown.
@@ -45,6 +45,7 @@ from demo_config import (
     apply_overrides,
     load_desired_config,
 )
+from forward_config import desired_config as load_forward_desired
 
 STRATEGIES = {
     "algo1": Algo1Strategy,
@@ -107,6 +108,12 @@ def make_cfg(
         # Demo mode only, applied last so it can tune the profile above.
         desired = load_desired_config(profile, DEMO_STATE_DIR, TRADING_PROFILES)
         apply_overrides(cfg, desired)
+    elif os.environ.get("LOB_FORWARD_CONFIG_DIR"):
+        # Live forward overlays are deliberately separate from Demo state.
+        # They are loaded only when an explicitly configured forward runtime
+        # is used by the operator's worker service.
+        desired = load_forward_desired(profile, TRADING_PROFILES)
+        apply_overrides(cfg, desired)
     return cfg
 
 
@@ -115,11 +122,14 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
     """Build the SimpleMarketMaker for an already-constructed cfg (see
     make_cfg). Also pulled out of main() so it can be reused verbatim."""
     is_demo = mode == "demo"
+    is_forward = bool(os.environ.get("LOB_FORWARD_CONFIG_DIR"))
 
-    adapter_token = None if is_demo else cfg.token
-    nobi_portfo = Nobitex_portfolio(adapter_token)
+    adapter_api_key = None if is_demo else cfg.api_key
+    adapter_secret_key = None if is_demo else cfg.secret_key
+    nobi_portfo = Nobitex_portfolio(adapter_api_key, adapter_secret_key)
     real_exchange = EXCHANGES[exchange_name](
-        token=adapter_token,
+        api_key=adapter_api_key,
+        secret_key=adapter_secret_key,
         url_send_order=None if is_demo else cfg.url_send_order,
         url_wallet_balance=None if is_demo else cfg.url_wallet_balance,
         algorithm_id=cfg.algorithm_id,
@@ -172,7 +182,14 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
     strategy = STRATEGIES[algorithm](cfg)
 
     bot = SimpleMarketMaker(
-        cfg, nobi_portfo, exchange, strategy=strategy, persist_to_db=not is_demo
+        cfg,
+        nobi_portfo,
+        exchange,
+        strategy=strategy,
+        # The isolated forward-test stack persists its rounds to its own CSV
+        # result directory.  It must not require or connect to the legacy
+        # production MySQL database.
+        persist_to_db=not (is_demo or is_forward),
     )
     if is_demo:
         bot.config_sync = RuntimeConfigSynchronizer(
@@ -194,8 +211,8 @@ def main():
                          help="Quoting strategy to use (default: algo1).")
     parser.add_argument("--exchange", choices=sorted(EXCHANGES), default="nobitex",
                          help="Exchange to trade on (default: nobitex).")
-    parser.add_argument("--mode", choices=["real", "demo"], default="real",
-                         help="real: places real orders, needs live MySQL (default). "
+    parser.add_argument("--mode", choices=["real", "demo"], required=True,
+                         help="real: places real orders; the isolated forward runtime uses CSV without MySQL. "
                               "demo: real market data, simulated fills, no real orders, "
                               "no MySQL, writes to a separate _demo.csv.")
     parser.add_argument(
@@ -217,7 +234,13 @@ def main():
                 bot._record_config_reload_error(initial_reload.error)
             bot.run()
     else:
-        bot.run()
+        lock_dir = os.environ.get("LOB_FORWARD_LOCK_DIR")
+        if lock_dir:
+            lease_path = os.path.join(lock_dir, f".worker_live_{cfg.pair.lower()}.lock")
+            with WorkerLease(lease_path, identity=f"{cfg.pair}-live"):
+                bot.run()
+        else:
+            bot.run()
 
 
 if __name__ == "__main__":

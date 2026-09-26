@@ -1,0 +1,92 @@
+"""Isolated live-forward configuration helpers.
+
+Live settings are kept separately from paper-trading overlays so a dashboard
+change cannot alter an existing Demo session.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from demo_config import (
+    OverlayLoadError,
+    OverlayValidationError,
+    _atomic_write,
+    editable_schema,
+    validate_overrides,
+)
+
+
+FORWARD_FIELDS = frozenset({
+    "order_size", "inv_max", "inv_min", "cancel_after_minutes", "depth_max",
+    "time_step", "commission_perc", "exp_ret_min",
+    "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
+    "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
+})
+
+
+def config_dir() -> Path:
+    return Path(os.environ.get("LOB_FORWARD_CONFIG_DIR", "runtime/forward/config"))
+
+
+def config_path(pair: str, directory=None) -> Path:
+    return Path(directory or config_dir()) / f"forward_config_{pair}.json"
+
+
+def desired_config(pair, profiles, directory=None):
+    schema = editable_schema(pair, profiles)
+    base = {key: profiles[pair][key] for key in schema if key in FORWARD_FIELDS}
+    path = config_path(pair, directory)
+    if path.exists():
+        try:
+            values = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise OverlayLoadError(f"unable to read forward config {path}") from exc
+        if not isinstance(values, dict):
+            raise OverlayLoadError("forward config must be a JSON object")
+        loaded = validate_overrides(values, pair=pair, profiles=profiles)
+        base.update({key: value for key, value in loaded.items() if key in FORWARD_FIELDS})
+    base["buy_locked_cash_limit_enabled"] = bool(base.get("buy_locked_cash_limit_enabled"))
+    base["sell_locked_inventory_limit_enabled"] = bool(base.get("sell_locked_inventory_limit_enabled"))
+    base["buy_locked_cash_limit_ratio"] = min(float(base.get("buy_locked_cash_limit_ratio", 0.25)), 0.25)
+    base["sell_locked_inventory_limit_ratio"] = min(float(base.get("sell_locked_inventory_limit_ratio", 0.25)), 0.25)
+    # Real runs default to conservative exposure limits even though the
+    # historical Demo/CLI profiles keep these switches off.
+    base["buy_locked_cash_limit_enabled"] = True
+    base["sell_locked_inventory_limit_enabled"] = True
+    return validate_overrides(base, pair=pair, profiles=profiles)
+
+
+def validate_forward_config(values, pair, profiles, directory=None):
+    validated = {
+        key: value
+        for key, value in validate_overrides(values, pair=pair, profiles=profiles).items()
+        if key in FORWARD_FIELDS
+    }
+    merged = desired_config(pair, profiles, directory)
+    merged.update(validated)
+    if merged["order_size"] <= 0:
+        raise OverlayValidationError("order_size must be greater than zero")
+    if merged["inv_min"] >= merged["inv_max"]:
+        raise OverlayValidationError("inv_min must be less than inv_max")
+    if not merged["buy_locked_cash_limit_enabled"]:
+        raise OverlayValidationError("live forward testing requires the BUY exposure limit")
+    if not merged["sell_locked_inventory_limit_enabled"]:
+        raise OverlayValidationError("live forward testing requires the SELL exposure limit")
+    if merged["buy_locked_cash_limit_ratio"] > 0.25 or merged["sell_locked_inventory_limit_ratio"] > 0.25:
+        raise OverlayValidationError("live exposure limits must be at most 0.25")
+    return merged
+
+
+def save_config(values, pair, profiles, directory=None):
+    validated = validate_overrides(values, pair=pair, profiles=profiles)
+    merged = desired_config(pair, profiles, directory)
+    merged.update(validated)
+    merged = validate_forward_config(merged, pair, profiles, directory)
+    path = config_path(pair, directory)
+    previous = path.with_name(path.name + ".previous")
+    if path.exists():
+        previous.write_bytes(path.read_bytes())
+    _atomic_write(path, merged)
+    return merged

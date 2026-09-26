@@ -9,7 +9,8 @@ from typing import Optional, Dict, Any, Tuple, List
 import pandas as pd
 from dotenv import load_dotenv
 
-load_dotenv()
+if os.environ.get("LOB_DISABLE_DOTENV") != "1":
+    load_dotenv()
 
 
 @dataclass
@@ -105,12 +106,12 @@ class MMConfig:
     demo_config_state_dir: Optional[str] = None
 
 
-    # API auth endpoints (required to read balances / place orders)
-    # Token comes from the environment (.env) -- see .env.example. No secret
-    # is hardcoded here; if NOBITEX_API_TOKEN is unset this is None, and the
-    # existing "endpoints not configured" checks in NobitexExchangeClient
-    # degrade gracefully instead of crashing.
-    token: Optional[str] = field(default_factory=lambda: os.environ.get("NOBITEX_API_TOKEN"))
+    # API-key authentication (required to read balances / place orders).
+    # Both values come from the environment (.env); no credentials are
+    # hardcoded in source. If either value is unset, authenticated exchange
+    # calls degrade gracefully instead of attempting a malformed request.
+    api_key: Optional[str] = field(default_factory=lambda: os.environ.get("NOBITEX_API_KEY"))
+    secret_key: Optional[str] = field(default_factory=lambda: os.environ.get("NOBITEX_SECRET_KEY"))
     url_send_order: Optional[str] = "https://apiv2.nobitex.ir/market/orders/add"
     url_wallet_balance: Optional[str] = "https://apiv2.nobitex.ir/users/wallets/balance"
 

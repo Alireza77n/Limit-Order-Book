@@ -1,0 +1,24 @@
+[Unit]
+Description=Market Maker Forward Test Charts
+After=network.target
+
+[Service]
+Type=simple
+User=marketmaker-admin
+Group=marketmaker-control
+WorkingDirectory=/opt/market-maker-forward/market_maker
+Environment=LOB_RESULTS_DIR=/var/lib/market-maker-forward/results
+Environment=LOB_DISABLE_DOTENV=1
+Environment=DASHBOARD_HOST=127.0.0.1
+Environment=DASHBOARD_PORT=18652
+ExecStart=/opt/market-maker-forward/venv/bin/python dashboard.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadOnlyPaths=/var/lib/market-maker-forward/results
+
+[Install]
+WantedBy=multi-user.target

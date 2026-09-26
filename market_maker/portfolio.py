@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation, getcontext
 from typing import Dict, Any, Iterable, Optional, List
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from exchange.nobitex_auth import compact_json, signed_headers
 
 
 
@@ -47,13 +48,16 @@ def _symbol_to_pair(base: str, quote: str = "IRT") -> Optional[str]:
         return None
     return f"{b}{q}"
 
-def _build_retrying_session(token: str, user_agent: str, timeout: int = 15) -> requests.Session:
-    """Session with retries + closed connections to avoid stale keep-alives."""
+def _build_retrying_session(user_agent: str, timeout: int = 15) -> requests.Session:
+    """Session with retries, but without stale authentication headers.
+
+    Nobitex API-key signatures contain a timestamp, request path and raw body,
+    so authentication headers must be generated per request rather than stored
+    on the Session.
+    """
     s = requests.Session()
     s.headers.update({
-        "Authorization": f"Token {token}",
         "User-Agent": user_agent,
-        "content-type": "application/json",
         "Connection": "close",
     })
     retry = Retry(
@@ -77,30 +81,39 @@ def _build_retrying_session(token: str, user_agent: str, timeout: int = 15) -> r
     return s
 
 class Nobitex_portfolio:
-    """Token-only Nobitex client focused on balances and portfolio value."""
+    """Nobitex balance/portfolio client using API Key + Ed25519 auth."""
 
     def __init__(
         self,
-        token: str,
+        api_key: Optional[str],
+        secret_key: Optional[str] = None,
         *,
         base_url: str = "https://apiv2.nobitex.ir",
-        user_agent: str = "PortfolioBot/TokenOnly",
+        user_agent: str = "PortfolioBot/APIKey",
         timeout: int = 15
     ) -> None:
+        self.api_key = api_key
+        self.secret_key = secret_key
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self.session = _build_retrying_session(token, user_agent=user_agent, timeout=timeout)
+        self.session = _build_retrying_session(user_agent=user_agent, timeout=timeout)
 
     # ---------- Low-level ----------
     def _get(self, path: str, **params) -> Dict[str, Any]:
+        """Public GET used for market prices; no account credentials required."""
         url = f"{self.base_url}{path}"
         r = self.session.get(url, params=params or None)
         self._raise_for_api_errors(r)
         return r.json()
 
     def _post(self, path: str, **json_data) -> Dict[str, Any]:
+        """Authenticated POST with a fresh signature over the exact raw body."""
+        if not (self.api_key and self.secret_key):
+            raise requests.RequestException("Nobitex API credentials are not configured")
+        body = compact_json(json_data or {})
+        headers = signed_headers(self.api_key, self.secret_key, "POST", path, body)
         url = f"{self.base_url}{path}"
-        r = self.session.post(url, json=json_data or None)
+        r = self.session.post(url, headers=headers, data=body)
         self._raise_for_api_errors(r)
         return r.json()
 
@@ -120,7 +133,7 @@ class Nobitex_portfolio:
         try:
             data = self._post("/users/wallets/balance", currency=currency.lower())
             return Decimal(str(data.get("balance", "0")))
-        except (InvalidOperation, TypeError, requests.RequestException) as e:
+        except (InvalidOperation, TypeError, ValueError, requests.RequestException) as e:
             # Log and degrade gracefully
             print(f"[get_balance] error for {currency}: {e}")
             return Decimal("0")
@@ -285,7 +298,7 @@ class Nobitex_portfolio:
 '''
 # ---------------------- Example usage ----------------------
 if __name__ == "__main__":
-    client = Nobitex_portfolio(TOKEN)
+    client = Nobitex_portfolio(API_KEY, SECRET_KEY)
 
     # === Multi-coin: pass the desired coins and get wallet info + values in IRT ===
     desired_coins = ["btc", "usdt", "eth"]  # customize as you like

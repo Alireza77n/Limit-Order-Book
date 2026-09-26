@@ -21,6 +21,7 @@ being crammed onto one dual-scale plot.
 """
 
 import fcntl
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -885,4 +886,8 @@ def _render_validation_tab(
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8050, debug=False, use_reloader=False)
+    app.run(
+        host=os.environ.get("DASHBOARD_HOST", "127.0.0.1"),
+        port=int(os.environ.get("DASHBOARD_PORT", "8050")),
+        debug=False, use_reloader=False,
+    )

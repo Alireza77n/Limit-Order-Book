@@ -90,7 +90,7 @@ LEGACY_REMOVED_FIELDS = frozenset({
 
 FORBIDDEN_FIELDS = frozenset({
     "pair", "currency_1", "currency_2", "algorithm_id", "token",
-    "url_send_order", "url_wallet_balance", "session", "mode",
+    "api_key", "secret_key", "url_send_order", "url_wallet_balance", "session", "mode",
 })
 
 

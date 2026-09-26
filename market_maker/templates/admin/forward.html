@@ -1,0 +1,45 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Live Forward Test{% endblock %}
+
+{% block content %}
+<div class="card mb-lg">
+  <div class="card-header"><h2>Live Forward Test</h2></div>
+  <div class="card-body">
+    <div class="flash flash-warning">This mode sends real orders to Nobitex. It uses real account balances and can lose funds. Starting requires a pair-specific typed confirmation. Stop sends SIGTERM so the worker can cancel its tracked open orders before exit.</div>
+    {% if not trading_enabled %}
+      <div class="flash flash-warning">Live trading is disabled. Set FORWARD_TRADING_ENABLED=1 for the dedicated forward-test service to enable the Start controls.</div>
+    {% endif %}
+    <div class="grid grid-2">
+      {% for pair in ['btc', 'usdt'] %}
+      {% set symbol = 'BTCIRT' if pair == 'btc' else 'USDTIRT' %}
+      <section class="card" style="margin-bottom:0">
+        <div class="card-header"><h3>{{ symbol }}</h3></div>
+        <div class="card-body">
+          <p>Status:
+            {% if workers[pair] %}<span class="status-badge status-running">Running</span>
+            {% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
+          </p>
+          <p><a class="btn btn-secondary btn-sm" href="{{ url_for('admin_forward_config', pair=pair) }}">Configure live parameters</a></p>
+          {% if not workers[pair] %}
+          <form method="post" action="{{ url_for('admin_forward_action', action='start') }}" class="form-group">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="pair" value="{{ pair }}">
+            <label class="form-label" for="confirm-{{ pair }}">Type <code>START {{ symbol }} LIVE</code> to place real orders</label>
+            <input id="confirm-{{ pair }}" name="confirm_phrase" class="form-input" autocomplete="off" required>
+            <button type="submit" class="btn btn-danger mt-sm" {% if not trading_enabled %}disabled{% endif %}>Start live worker</button>
+          </form>
+          {% else %}
+          <form method="post" action="{{ url_for('admin_forward_action', action='stop') }}" data-confirm="Stop {{ symbol }} live worker? It will attempt to cancel its tracked open orders.">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="hidden" name="pair" value="{{ pair }}">
+            <button type="submit" class="btn btn-warning">Stop worker</button>
+          </form>
+          {% endif %}
+        </div>
+      </section>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

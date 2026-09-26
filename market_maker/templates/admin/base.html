@@ -11,10 +11,10 @@
   <header class="site-header">
     <div class="header-content">
       <h1 class="site-title">
-        <a href="{{ url_for('admin_index') }}">Demo Admin Control</a>
+        <a href="{{ url_for('admin_index') }}">Trading Control</a>
       </h1>
       <div class="header-meta">
-        <span class="demo-badge">DEMO / PAPER MODE</span>
+        <span class="demo-badge">{% if request.endpoint and request.endpoint.startswith('admin_forward') %}LIVE FORWARD TEST{% else %}DEMO / PAPER MODE{% endif %}</span>
         {% if session_id %}
         <span class="session-id">Session: {{ session_id }}</span>
         {% endif %}
@@ -24,6 +24,9 @@
       <ul class="nav-list">
         <li><a href="{{ url_for('admin_index') }}" class="{% if request.endpoint == 'admin_index' %}active{% endif %}">Overview</a></li>
         <li><a href="{{ url_for('admin_workers_page') }}" class="{% if request.endpoint == 'admin_workers_page' %}active{% endif %}">Workers</a></li>
+        <li><a href="{{ url_for('admin_forward_page') }}" class="{% if request.endpoint == 'admin_forward_page' %}active{% endif %}">Live Forward Test</a></li>
+        <li><a href="{{ url_for('admin_forward_config', pair='btc') }}" class="{% if request.endpoint == 'admin_forward_config' and request.view_args.pair == 'btc' %}active{% endif %}">Live Config BTC</a></li>
+        <li><a href="{{ url_for('admin_forward_config', pair='usdt') }}" class="{% if request.endpoint == 'admin_forward_config' and request.view_args.pair == 'usdt' %}active{% endif %}">Live Config USDT</a></li>
         <li><a href="{{ url_for('admin_config', pair='btc') }}" class="{% if request.endpoint == 'admin_config' and request.view_args.pair == 'btc' %}active{% endif %}">Config BTC</a></li>
         <li><a href="{{ url_for('admin_config', pair='usdt') }}" class="{% if request.endpoint == 'admin_config' and request.view_args.pair == 'usdt' %}active{% endif %}">Config USDT</a></li>
         <li><a href="{{ url_for('admin_orders') }}" class="{% if request.endpoint == 'admin_orders' %}active{% endif %}">Orders</a></li>

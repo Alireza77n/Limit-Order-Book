@@ -1,8 +1,12 @@
-requests
-pandas
-numpy
-mysql-connector-python
-pytz
 dash
+cryptography
+Flask
+gunicorn
+mysql-connector-python
+numpy
+pandas
 plotly
 python-dotenv
+pytz
+requests
+Werkzeug

@@ -1,0 +1,29 @@
+[Unit]
+Description=Market Maker Live Forward Test Control Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marketmaker-forward
+Group=marketmaker-control
+WorkingDirectory=/opt/market-maker-forward
+EnvironmentFile=/etc/market-maker-forward.env
+Environment=LOB_FORWARD_CONTROL_DIR=/var/lib/market-maker-forward/control
+Environment=LOB_FORWARD_CONFIG_DIR=/var/lib/market-maker-forward/config
+Environment=LOB_FORWARD_LOCK_DIR=/var/lib/market-maker-forward/locks
+Environment=LOB_FORWARD_LOG_DIR=/var/log/market-maker-forward
+Environment=LOB_RESULTS_DIR=/var/lib/market-maker-forward/results
+Environment=LOB_DISABLE_DOTENV=1
+ExecStart=/opt/market-maker-forward/venv/bin/python deploy/forward_control_agent.py
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/market-maker-forward /var/log/market-maker-forward
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

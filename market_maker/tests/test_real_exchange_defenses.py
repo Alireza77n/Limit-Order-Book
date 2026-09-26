@@ -1,9 +1,13 @@
+import base64
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from exchange.nobitex import NobitexExchangeClient
 from order_status import OrderStatusChecker
+
+
+TEST_SECRET = base64.urlsafe_b64encode(b"\x01" * 32).decode("ascii")
 
 
 class _Response:
@@ -24,9 +28,10 @@ class _Response:
 
 def _client():
     return NobitexExchangeClient(
-        token="test-token",
-        url_send_order="https://mock.invalid/orders",
-        url_wallet_balance="https://mock.invalid/wallet",
+        api_key="test-key",
+        secret_key=TEST_SECRET,
+        url_send_order="https://mock.invalid/market/orders/add",
+        url_wallet_balance="https://mock.invalid/users/wallets/balance",
         algorithm_id="algo1",
     )
 
@@ -68,7 +73,13 @@ def test_confirmed_real_submission_returns_matching_client_order_id(monkeypatch)
 def test_status_pagination_reads_beyond_first_hundred(monkeypatch):
     calls = []
 
-    def get(url, *, headers, params, timeout):
+    def get(url, *, headers, timeout):
+        from urllib.parse import parse_qs, urlsplit
+
+        parsed = urlsplit(url)
+        params = {k: v[-1] for k, v in parse_qs(parsed.query).items()}
+        params["page"] = int(params["page"])
+        params["pageSize"] = int(params["pageSize"])
         calls.append(dict(params))
         start = (params["page"] - 1) * params["pageSize"]
         count = 100 if params["page"] == 1 else 50
@@ -85,7 +96,7 @@ def test_status_pagination_reads_beyond_first_hundred(monkeypatch):
 
     monkeypatch.setattr("order_status.requests.get", get)
 
-    orders = OrderStatusChecker("test-token", base_url="https://mock.invalid").get_order_list_status(
+    orders = OrderStatusChecker("test-key", TEST_SECRET, base_url="https://mock.invalid").get_order_list_status(
         status="open", page_size=100, max_pages=10
     )
 

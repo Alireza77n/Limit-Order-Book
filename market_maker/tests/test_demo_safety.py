@@ -71,13 +71,18 @@ def test_demo_engine_rejects_mysql_persistence_before_connecting(monkeypatch):
 def test_make_bot_demo_strips_authenticated_trading_capability(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("btc", mode="demo")
-    cfg.token = "must-not-propagate"
+    cfg.api_key = "must-not-propagate"
+    cfg.secret_key = "must-not-propagate"
 
     bot = run.make_bot(cfg, mode="demo")
     market_data = bot.exchange._market_data
 
-    assert bot.nobi_portfo.session.headers["Authorization"] == "Token None"
-    assert market_data.token is None
+    assert bot.nobi_portfo.api_key is None
+    assert bot.nobi_portfo.secret_key is None
+    assert "Authorization" not in bot.nobi_portfo.session.headers
+    assert "Nobitex-Key" not in bot.nobi_portfo.session.headers
+    assert market_data.api_key is None
+    assert market_data.secret_key is None
     assert market_data.trading_enabled is False
 
 

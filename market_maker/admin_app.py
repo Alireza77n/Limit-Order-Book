@@ -48,6 +48,12 @@ from demo_config import (
     read_runtime_snapshot,
     validate_overrides,
 )
+from forward_config import (
+    FORWARD_FIELDS,
+    config_path as forward_config_path,
+    desired_config as forward_desired_config,
+    validate_forward_config,
+)
 from config import TRADING_PROFILES, demo_csv_path
 from dashboard import activity_records, filter_session, load_track
 from validation.validation_engine import create_validation_engine
@@ -68,6 +74,10 @@ def create_app(config: Optional[dict] = None) -> Flask:
         "STATE_DIR": os.environ.get("LOB_STATE_DIR", "runtime/state"),
         "RESULTS_DIR": os.environ.get("LOB_RESULTS_DIR", "runtime/results"),
         "BACKUPS_DIR": os.environ.get("LOB_BACKUPS_DIR", "runtime/backups"),
+        "FORWARD_CONTROL_DIR": os.environ.get("LOB_FORWARD_CONTROL_DIR", "runtime/forward/control"),
+        "FORWARD_CONFIG_DIR": os.environ.get("LOB_FORWARD_CONFIG_DIR", "runtime/forward/config"),
+        "FORWARD_LOCK_DIR": os.environ.get("LOB_FORWARD_LOCK_DIR", "runtime/forward/locks"),
+        "FORWARD_TRADING_ENABLED": os.environ.get("FORWARD_TRADING_ENABLED", "0") == "1",
         "COMMAND_TIMEOUT": 30.0,
     }
     if config:
@@ -217,6 +227,44 @@ def enqueue_batch(app: Flask, action: str, pairs, payload=None):
     return results
 
 
+def enqueue_forward(app: Flask, action: str, pair, payload=None):
+    control_dir = app.config["FORWARD_CONTROL_DIR"]
+    requested_by = flask_session.get("user", "unknown")
+    with ControlLock(control_dir):
+        command_id = submit_command(
+            control_dir, action, pair, requested_by=requested_by, payload=payload,
+        )
+        result = await_result(control_dir, command_id, timeout=app.config["COMMAND_TIMEOUT"])
+        control_queue.append_audit(control_dir, {
+            "command_id": command_id, "action": action, "pair": pair,
+            "requested_by": requested_by, "ok": result.get("ok"),
+        })
+        return dict(result, pair=pair)
+
+
+def read_forward_wallet_snapshot(app: Flask, pair: str):
+    """Ask the credentialed agent for live balances; the web process has no API key."""
+    try:
+        result = enqueue_forward(app, "read_wallet_balances", pair)
+    except (OperationInProgress, ResultTimeout, OSError) as exc:
+        return None, str(exc)
+    detail = result.get("detail")
+    if not result.get("ok"):
+        message = detail.get("error") if isinstance(detail, dict) else None
+        return None, message or "Nobitex balances are unavailable."
+    if not isinstance(detail, dict) or not isinstance(detail.get("balances"), dict):
+        return None, "The wallet agent returned an invalid balance snapshot."
+    balances = detail["balances"]
+    if any(
+        currency not in balances
+        or isinstance(balances[currency], bool)
+        or not isinstance(balances[currency], (int, float))
+        for currency in ("rls", "btc", "usdt")
+    ):
+        return None, "The wallet agent returned an incomplete balance snapshot."
+    return detail, None
+
+
 def enqueue_session_batch(app: Flask, session_ids, *, confirm):
     """Like enqueue_batch, but the varying dimension is session_id inside the
     payload rather than pair (delete_session is a stack-wide action -- pair
@@ -263,6 +311,23 @@ def _resolve_pairs(selector: Optional[str]):
 
 def _worker_running(app: Flask, pair: str) -> bool:
     lock_path = Path(app.config["STATE_DIR"]) / f".worker_{PAIR_LOCK_SUFFIX[pair]}.lock"
+    if not lock_path.exists():
+        return False
+    try:
+        with lock_path.open("r") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            return False
+    except OSError:
+        return False
+
+
+def _forward_worker_running(app: Flask, pair: str) -> bool:
+    suffix = {"btc": "btcirt", "usdt": "usdtirt"}[pair]
+    lock_path = Path(app.config["FORWARD_LOCK_DIR"]) / f".worker_live_{suffix}.lock"
     if not lock_path.exists():
         return False
     try:
@@ -824,6 +889,114 @@ def _register_routes(app: Flask) -> None:
             flash(f"{action.capitalize()} requested for {', '.join(pairs)}.", "success")
             return _workers_html_response(app, results)
         return jsonify({"results": results})
+
+    @app.route("/admin/forward")
+    @login_required
+    def admin_forward_page():
+        workers = {pair: _forward_worker_running(app, pair) for pair in PAIRS}
+        return render_template(
+            "admin/forward.html", workers=workers,
+            trading_enabled=app.config["FORWARD_TRADING_ENABLED"],
+            csrf_token=get_csrf_token(), session_id=None,
+        )
+
+    @app.route("/admin/forward/<action>", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_forward_action(action):
+        if action not in {"start", "stop"}:
+            return _error_page(400, "Unknown forward-test action.")
+        pair = request.form.get("pair")
+        if pair not in PAIRS:
+            return _error_page(400, "Invalid pair (expected btc or usdt).")
+        if action == "start":
+            if not app.config["FORWARD_TRADING_ENABLED"]:
+                return _error_page(503, "Live forward trading is disabled by FORWARD_TRADING_ENABLED.")
+            expected = f"START {TRADING_PROFILES[pair]['pair']} LIVE"
+            if request.form.get("confirm_phrase", "").strip() != expected:
+                return _error_page(400, f"Type {expected} exactly to start live orders.")
+            try:
+                validate_forward_config(
+                    forward_desired_config(pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"]),
+                    pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"],
+                )
+            except (OverlayLoadError, OverlayValidationError, KeyError, OSError) as exc:
+                return _error_page(400, str(exc))
+            agent_action = "start_forward_worker"
+            payload = {"confirmed": True}
+        else:
+            agent_action = "stop_forward_worker"
+            payload = None
+        try:
+            result = enqueue_forward(app, agent_action, pair, payload=payload)
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
+            return _error_page(status, message)
+        if not result.get("ok"):
+            return _error_page(502, _command_failure_message(result))
+        flash(f"Forward-test worker {action} requested for {pair.upper()}.", "success")
+        return redirect(url_for("admin_forward_page"))
+
+    @app.route("/admin/forward/config/<pair>", methods=["GET", "POST"])
+    @login_required
+    def admin_forward_config(pair):
+        if pair not in PAIRS:
+            return _error_page(404, "Unknown pair.")
+        if request.method == "POST" and not _valid_csrf(request.form.get("csrf_token")):
+            return _error_page(400, "CSRF token missing or invalid. Go back and try again.")
+        path = forward_config_path(pair, app.config["FORWARD_CONFIG_DIR"])
+        schema = {
+            key: definition for key, definition in editable_schema(pair, TRADING_PROFILES).items()
+            if key in FORWARD_FIELDS
+        }
+        try:
+            desired = forward_desired_config(pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"])
+        except (OverlayLoadError, OverlayValidationError, KeyError, OSError) as exc:
+            return _error_page(500, str(exc))
+        if request.method == "GET":
+            wallet_snapshot, wallet_error = read_forward_wallet_snapshot(app, pair)
+            return render_template(
+                "admin/forward_config.html", pair=pair, schema=schema,
+                values=desired, csrf_token=get_csrf_token(), session_id=None,
+                success=None, error=None,
+                wallet_snapshot=wallet_snapshot, wallet_error=wallet_error,
+            )
+        allowed = set(schema) | {"csrf_token"}
+        unknown = sorted(set(request.form) - allowed)
+        if unknown:
+            return _error_page(400, f"Unknown field: {unknown[0]}")
+        submitted = {}
+        for key, definition in schema.items():
+            if key not in request.form:
+                continue
+            values = request.form.getlist(key)
+            value = values[-1]
+            if definition.value_type is bool:
+                submitted[key] = any(item in ("true", "on", "1", "True") for item in values)
+            else:
+                try:
+                    submitted[key] = int(value) if definition.value_type is int else float(value)
+                except ValueError:
+                    return _error_page(400, f"Invalid value for {key}.")
+        desired.update(submitted)
+        try:
+            validated = validate_forward_config(desired, pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"])
+            result = enqueue_forward(
+                app, "apply_forward_config", pair, payload={"overrides": validated},
+            )
+        except (OverlayValidationError, OperationInProgress, ResultTimeout, KeyError, OSError) as exc:
+            status, message = _control_error(exc) if isinstance(exc, (OperationInProgress, ResultTimeout)) else (400, str(exc))
+            wallet_snapshot, wallet_error = read_forward_wallet_snapshot(app, pair)
+            return render_template(
+                "admin/forward_config.html", pair=pair, schema=schema,
+                values=desired, csrf_token=get_csrf_token(), session_id=None,
+                success=None, error=message,
+                wallet_snapshot=wallet_snapshot, wallet_error=wallet_error,
+            ), status
+        if not result.get("ok"):
+            return _error_page(502, _command_failure_message(result))
+        flash("Forward-test configuration saved. Stop and start the worker to apply it.", "success")
+        return redirect(url_for("admin_forward_config", pair=pair))
 
     @app.route("/admin/session/new", methods=["POST"])
     @login_required

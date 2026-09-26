@@ -24,6 +24,11 @@ from typing import Any, Dict, Optional, Union
 
 PathLike = Union[str, os.PathLike]
 
+FORWARD_ACTIONS = frozenset({
+    "start_forward_worker", "stop_forward_worker", "apply_forward_config",
+    "read_wallet_balances",
+})
+
 ACTIONS = frozenset({
     "start_worker", "stop_worker", "restart_worker",
     "apply_config", "rollback_config",
@@ -36,7 +41,7 @@ ACTIONS = frozenset({
 PAIR_ACTIONS = frozenset({
     "start_worker", "stop_worker", "restart_worker",
     "apply_config", "rollback_config", "cancel_orders",
-})
+}) | FORWARD_ACTIONS
 PAIRS = frozenset({"btc", "usdt"})
 
 
@@ -62,7 +67,7 @@ def _dirs(control_dir: PathLike):
 
 
 def _validate_action_pair(action: str, pair: Optional[str]) -> None:
-    if action not in ACTIONS:
+    if action not in ACTIONS and action not in FORWARD_ACTIONS:
         raise QueueValidationError(f"unknown action: {action}")
     if action in PAIR_ACTIONS:
         if pair not in PAIRS:
