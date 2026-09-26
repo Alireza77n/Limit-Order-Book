@@ -144,7 +144,10 @@ services:
     stop_grace_period: 30s
     pids_limit: 128
     cpus: "0.50"
-    mem_limit: 128m
+    # The USDT worker's steady-state Python RSS exceeds 128 MiB on the
+    # production image; 256 MiB avoids an OOM restart loop while remaining
+    # tightly bounded.
+    mem_limit: 256m
     healthcheck:
       test:
         - CMD
@@ -172,7 +175,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 128M
+          memory: 256M
           pids: 128
 
   dashboard:
