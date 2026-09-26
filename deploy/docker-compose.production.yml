@@ -90,7 +90,9 @@ services:
     stop_grace_period: 30s
     pids_limit: 128
     cpus: "0.50"
-    mem_limit: 128m
+    # The production Python worker exceeds 128 MiB RSS under normal market
+    # polling; keep it bounded but above the measured steady-state footprint.
+    mem_limit: 256m
     healthcheck:
       test:
         - CMD
@@ -118,7 +120,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 128M
+          memory: 256M
           pids: 128
 
   usdt-demo:
