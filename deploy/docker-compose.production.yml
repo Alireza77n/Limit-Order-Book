@@ -70,6 +70,7 @@ services:
   btc-demo:
     <<: *runtime-common
     container_name: lob-btc-demo
+    profiles: ["paper"]
     command:
       - python
       - demo_entrypoint.py
@@ -126,6 +127,7 @@ services:
   usdt-demo:
     <<: *runtime-common
     container_name: lob-usdt-demo
+    profiles: ["paper"]
     command:
       - python
       - demo_entrypoint.py
@@ -203,6 +205,7 @@ services:
       # loopback-only, so this does not expose the dashboard directly.
       DASHBOARD_HOST: 0.0.0.0
       LOB_FORWARD_RESULTS_DIR: /app/runtime/forward/results
+      LOB_LIVE_ONLY_DASHBOARD: "1"
     group_add:
       - "${FORWARD_CONTROL_GID:-986}"
     restart: unless-stopped
@@ -261,6 +264,7 @@ services:
       LOB_FORWARD_CONTROL_DIR: /app/runtime/forward/control
       LOB_FORWARD_CONFIG_DIR: /app/runtime/forward/config
       LOB_FORWARD_LOCK_DIR: /app/runtime/forward/locks
+      LOB_FORWARD_ONLY_ADMIN: "1"
     group_add:
       - "${FORWARD_CONTROL_GID:-986}"
     ports:

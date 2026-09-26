@@ -78,6 +78,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
         "FORWARD_CONFIG_DIR": os.environ.get("LOB_FORWARD_CONFIG_DIR", "runtime/forward/config"),
         "FORWARD_LOCK_DIR": os.environ.get("LOB_FORWARD_LOCK_DIR", "runtime/forward/locks"),
         "FORWARD_TRADING_ENABLED": os.environ.get("FORWARD_TRADING_ENABLED", "0") == "1",
+        "FORWARD_ONLY_ADMIN": os.environ.get("LOB_FORWARD_ONLY_ADMIN", "0") == "1",
         "COMMAND_TIMEOUT": 40.0,
     }
     if config:
@@ -809,6 +810,8 @@ def _register_routes(app: Flask) -> None:
     @app.route("/admin/")
     @login_required
     def admin_index():
+        if app.config["FORWARD_ONLY_ADMIN"]:
+            return redirect(url_for("admin_forward_page"))
         status = {
             "session_id": _session_id(app),
             "control_lock_held": _control_lock_held(app),

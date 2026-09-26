@@ -8,6 +8,7 @@ User=marketmaker-admin
 Group=marketmaker-control
 WorkingDirectory=/opt/market-maker-forward/market_maker
 Environment=LOB_RESULTS_DIR=/var/lib/market-maker-forward/results
+Environment=LOB_LIVE_ONLY_DASHBOARD=1
 Environment=LOB_DISABLE_DOTENV=1
 Environment=DASHBOARD_HOST=127.0.0.1
 Environment=DASHBOARD_PORT=18652

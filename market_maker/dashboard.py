@@ -70,6 +70,13 @@ TRACKS = {
                   "path": demo_csv_path(TRADING_PROFILES["usdt"]["output_csv"]), "status": "demo"},
 }
 
+# Production can deliberately expose only the isolated live-forward result
+# streams.  Keeping this as an environment switch preserves the paper-mode
+# dashboard for local development while ensuring the public dashboard never
+# mixes simulated rows with a real-account view.
+if os.environ.get("LOB_LIVE_ONLY_DASHBOARD", "0") == "1":
+    TRACKS = {key: value for key, value in TRACKS.items() if value["status"] == "real"}
+
 ACTIVITY_COLUMNS = [
     "Timestamp", "Session_id", "Round", "Quote Status", "No Quote Reason",
     "No Quote Consecutive Count", "No Quote Episode Seconds",
