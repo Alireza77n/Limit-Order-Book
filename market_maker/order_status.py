@@ -38,8 +38,7 @@ class OrderStatusChecker:
         transmitted. A fresh timestamp/signature is generated for each page.
         """
         if not self._credentials_ready():
-            print("Order status credentials not configured.")
-            return []
+            raise RuntimeError("order status credentials not configured")
 
         path = "/market/orders/list"
         params = {
@@ -63,10 +62,12 @@ class OrderStatusChecker:
                 )
                 r.raise_for_status()
                 data = r.json()
-                if data.get("status") != "ok":
+                if not isinstance(data, dict) or data.get("status") != "ok":
                     raise RuntimeError(f"API error: {data}")
 
-                raw_orders = data.get("orders", [])
+                raw_orders = data.get("orders")
+                if not isinstance(raw_orders, list):
+                    raise RuntimeError("order status response has no orders list")
                 for o in raw_orders:
                     oid = o.get("id")
                     st = o.get("status") or o.get("state")
@@ -119,8 +120,9 @@ class OrderStatusChecker:
                     break
                 params["page"] += 1
             except Exception as exc:
-                print(f"Error fetching order status: {exc}")
-                break
+                raise RuntimeError(f"order status lookup failed: {exc}") from exc
+        else:
+            raise RuntimeError("order status page limit reached before the final page")
 
         return out
 

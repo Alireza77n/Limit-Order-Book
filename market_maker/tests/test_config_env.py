@@ -35,3 +35,14 @@ def test_mysql_env_vars_have_expected_fallbacks(monkeypatch):
     assert engine.MYSQL_USER is None
     assert engine.MYSQL_PASSWORD is None
     assert engine.MYSQL_DATABASE == "trading_bot"
+
+
+def test_engine_does_not_load_dotenv_when_disabled(monkeypatch):
+    calls = []
+    monkeypatch.setenv("LOB_DISABLE_DOTENV", "1")
+    monkeypatch.setattr("dotenv.load_dotenv", lambda *a, **k: calls.append((a, k)))
+
+    import engine
+    importlib.reload(engine)
+
+    assert calls == []

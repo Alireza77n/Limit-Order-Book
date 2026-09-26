@@ -104,6 +104,34 @@ def test_status_pagination_reads_beyond_first_hundred(monkeypatch):
     assert [call["page"] for call in calls] == [1, 2]
 
 
+@pytest.mark.parametrize("second_page", [TimeoutError("timeout"), _Response(200, {"status": "failed"})])
+def test_open_order_lookup_rejects_partial_pages(monkeypatch, second_page):
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            return _Response(200, {"status": "ok", "orders": [{"id": n, "status": "open"} for n in range(2)]})
+        if isinstance(second_page, Exception):
+            raise second_page
+        return second_page
+
+    monkeypatch.setattr("order_status.requests.get", get)
+    checker = OrderStatusChecker("test-key", TEST_SECRET, base_url="https://mock.invalid")
+    with pytest.raises(RuntimeError, match="order status"):
+        checker.get_order_list_status(status="open", page_size=2, max_pages=3)
+
+
+def test_open_order_lookup_rejects_page_limit_without_terminal_page(monkeypatch):
+    monkeypatch.setattr(
+        "order_status.requests.get",
+        lambda *a, **k: _Response(200, {"status": "ok", "orders": [{"id": 1, "status": "open"}]}),
+    )
+    checker = OrderStatusChecker("test-key", TEST_SECRET, base_url="https://mock.invalid")
+    with pytest.raises(RuntimeError, match="page limit"):
+        checker.get_order_list_status(status="open", page_size=1, max_pages=1)
+
+
 class _Checker:
     def __init__(self, orders):
         self.orders = orders

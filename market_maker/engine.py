@@ -22,7 +22,8 @@ import os
 import mysql.connector
 from dotenv import load_dotenv
 
-load_dotenv()
+if os.environ.get("LOB_DISABLE_DOTENV") != "1":
+    load_dotenv()
 
 # DB connection: credentials come from the environment (.env) -- see
 # .env.example. Host/database keep their previous defaults since they
@@ -216,10 +217,16 @@ class SimpleMarketMaker:
     
         Only counts orders:
           - with status 'open'
-          - whose clientOrderId is one we sent (recent_order_ids or algo prefix)
+          - whose clientOrderId is one we sent (recent_order_ids)
           - matching self.cfg.pair
         """
-        orders = self.get_status_orders('open')
+        # Inspect the unfiltered response: discarding an incomplete owned order
+        # would make its locked balance look like zero to the live quote loop.
+        orders = self.exchange.get_order_list_status(
+            status='open', details=2, page_size=100, max_pages=100,
+        )
+        if not isinstance(orders, list):
+            raise RuntimeError("open order exposure is unavailable")
         want_pair = str(self.cfg.pair).upper()
     
         buy_amount_locked  = 0.0
@@ -227,27 +234,41 @@ class SimpleMarketMaker:
         sell_amount_locked = 0.0
         sell_cash_value    = 0.0
     
-        # Helper to parse floats safely
         def _f(x: Any) -> float:
+            if isinstance(x, bool):
+                raise RuntimeError("open order exposure has an invalid amount or price")
             try:
-                return float(x)
-            except Exception:
-                return 0.0
+                value = float(x)
+            except (TypeError, ValueError):
+                raise RuntimeError("open order exposure has an invalid amount or price")
+            if not math.isfinite(value):
+                raise RuntimeError("open order exposure has a non-finite amount or price")
+            return value
     
         for o in orders:
+            if not isinstance(o, dict):
+                raise RuntimeError("open order exposure has an invalid record")
             clid = str(o.get("clientOrderId") or "")
             pair = str(o.get("pair") or "").upper()
             side = str(o.get("type") or "").lower()
-            if not clid or pair != want_pair:
+            if pair and pair != want_pair and clid not in self.recent_order_ids:
                 continue
+            if not clid or not pair:
+                raise RuntimeError("open order exposure has unknown ownership or pair")
+            if pair != want_pair:
+                raise RuntimeError("open order exposure has an unexpected owned pair")
     
             # Count only our orders: either we tracked them recently or they carry our algo prefix
             is_ours = (clid in getattr(self, "recent_order_ids", []))
             if not is_ours:
                 continue
     
-            amt   = _f(o.get("unmatchedAmount") or o.get("amount"))  # prefer remaining/unmatched
+            if side not in {"buy", "sell"} or o.get("status") != "open":
+                raise RuntimeError("open order exposure has unknown side or status")
+            amt   = _f(o.get("unmatchedAmount"))
             price = _f(o.get("price"))
+            if amt < 0 or price <= 0:
+                raise RuntimeError("open order exposure has an invalid amount or price")
     
             if side == "buy":
                 buy_amount_locked += amt

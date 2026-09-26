@@ -66,6 +66,21 @@ def test_real_status_lookup_paginates_and_filters_registry_and_pair():
     assert exchange.status_kwargs["max_pages"] == 100
 
 
+@pytest.mark.parametrize("broken", [
+    {"clientOrderId": "owned-buy", "pair": "USDTIRT", "type": "buy", "status": "open", "price": 100, "unmatchedAmount": None},
+    {"clientOrderId": "owned-buy", "pair": "USDTIRT", "type": None, "status": "open", "price": 100, "unmatchedAmount": 1},
+    {"clientOrderId": "owned-buy", "pair": None, "type": "buy", "status": "open", "price": 100, "unmatchedAmount": 1},
+    {"clientOrderId": None, "pair": "USDTIRT", "type": "buy", "status": "open", "price": 100, "unmatchedAmount": 1},
+    {"clientOrderId": "owned-buy", "pair": "USDTIRT", "type": "buy", "status": "open", "price": 100, "unmatchedAmount": True},
+])
+def test_real_open_order_totals_reject_unknown_exposure(monkeypatch, broken):
+    bot, exchange = _bot()
+    monkeypatch.setattr(exchange, "get_order_list_status", lambda **kwargs: [broken])
+
+    with pytest.raises(RuntimeError, match="open order exposure"):
+        bot.get_open_order_totals()
+
+
 def test_real_bulk_cleanup_passes_pair_and_registry_then_prunes_active_only():
     bot, exchange = _bot()
 

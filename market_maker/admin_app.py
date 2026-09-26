@@ -78,7 +78,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
         "FORWARD_CONFIG_DIR": os.environ.get("LOB_FORWARD_CONFIG_DIR", "runtime/forward/config"),
         "FORWARD_LOCK_DIR": os.environ.get("LOB_FORWARD_LOCK_DIR", "runtime/forward/locks"),
         "FORWARD_TRADING_ENABLED": os.environ.get("FORWARD_TRADING_ENABLED", "0") == "1",
-        "COMMAND_TIMEOUT": 30.0,
+        "COMMAND_TIMEOUT": 40.0,
     }
     if config:
         cfg.update(config)
@@ -934,6 +934,9 @@ def _register_routes(app: Flask) -> None:
             return _error_page(status, message)
         if not result.get("ok"):
             return _error_page(502, _command_failure_message(result))
+        detail = result.get("detail")
+        if action == "stop" and (not isinstance(detail, dict) or detail.get("stopped") is not True):
+            return _error_page(502, "Forward-test worker did not confirm it stopped.")
         flash(f"Forward-test worker {action} requested for {pair.upper()}.", "success")
         return redirect(url_for("admin_forward_page"))
 

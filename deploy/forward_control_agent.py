@@ -200,7 +200,10 @@ def process_command(paths, document):
         config = validate_forward_config(desired_config(pair, TRADING_PROFILES, paths.config), pair, TRADING_PROFILES, paths.config)
         return _start_worker(paths, pair) | {"symbol": PAIRS[pair], "risk_limits_enabled": True, "order_size": config["order_size"]}
     if action == "stop_forward_worker":
-        return _stop_worker(paths, pair)
+        result = _stop_worker(paths, pair)
+        if result.get("stopped") is not True:
+            raise RuntimeError(result.get("error") or "worker is still running")
+        return result
     if action == "apply_forward_config":
         from forward_config import save_config
         from config import TRADING_PROFILES
