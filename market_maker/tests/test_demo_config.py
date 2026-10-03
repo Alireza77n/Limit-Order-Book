@@ -26,6 +26,8 @@ PROFILES = config.TRADING_PROFILES
 
 EXPECTED = {
     "order_size": "hot", "inv_max": "hot", "inv_min": "hot",
+    "inventory_sizing_enabled": "hot", "inventory_sizing_strength": "hot",
+    "inventory_sizing_min_fraction": "hot",
     "cancel_after_minutes": "hot", "depth_max": "hot", "time_step": "hot",
     "demo_inv_initial": "new_session", "cash_initial": "new_session",
     "commission_perc": "new_session",
@@ -40,9 +42,6 @@ HIDDEN_SAFE_DEFAULT_FIELDS = {
     "demo_adverse_fill_enabled",
     "demo_adverse_fill_probability",
     "demo_non_adverse_fill_probability",
-    "inventory_sizing_enabled",
-    "inventory_sizing_strength",
-    "inventory_sizing_min_fraction",
 }
 
 
@@ -216,8 +215,7 @@ def test_hidden_safe_default_fields_are_removed_from_existing_overlays(tmp_path)
         {
           "order_size": 0.25,
           "demo_queue_enabled": true,
-          "demo_adverse_fill_enabled": true,
-          "inventory_sizing_enabled": true
+          "demo_adverse_fill_enabled": true
         }
         """
     )

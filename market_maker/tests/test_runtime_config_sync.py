@@ -50,7 +50,7 @@ def build_runtime_bot(state_dir, monkeypatch, *, session="runtime-session"):
     cfg.demo_result_db_path = str(state_dir / "usdt-results.sqlite3")
     # Constant order size: these tests assert that a hot order_size value is
     # the submitted amount, without the linear inventory multiplier on top.
-    cfg.inventory_sizing_enabled = False
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_enabled", False)
     return run.make_bot(cfg, mode="demo")
 
 
@@ -107,6 +107,9 @@ def run_one_round(bot):
     ("field", "value"),
     [
         ("order_size", 2.0),
+        ("inventory_sizing_enabled", True),
+        ("inventory_sizing_strength", 0.5),
+        ("inventory_sizing_min_fraction", 0.2),
         ("inv_max", 20.0),
         ("inv_min", 1.0),
         ("cancel_after_minutes", 3.0),

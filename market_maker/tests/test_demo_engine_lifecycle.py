@@ -98,7 +98,7 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     cfg.order_size = 1.0
     # This test pins the order lifecycle with a constant order size; linear
     # inventory sizing has its own tests further down.
-    cfg.inventory_sizing_enabled = False
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_enabled", False)
     cfg.max_rounds = 2
     cfg.time_step = 0
     cfg.demo_level1_fill_delay_seconds = 0
@@ -327,7 +327,7 @@ def test_buy_inventory_cap_uses_actual_clamped_buy_amount(monkeypatch, tmp_path)
     cfg.order_size = 1.0
     # Fixed size on purpose: the cap must use the cash-clamped amount (0.3),
     # which linear sizing would shrink further at this inventory.
-    cfg.inventory_sizing_enabled = False
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_enabled", False)
     cfg.max_rounds = 1
     cfg.time_step = 0
     cfg.demo_level1_fast_fill_enabled = False
@@ -359,7 +359,7 @@ def test_fully_locked_inventory_is_not_reported_as_insufficient(monkeypatch, tmp
     cfg.cash_initial = 1_000.0
     cfg.order_size = 1.0
     # Fixed size so round 1 sells the whole 1.0 and round 2 finds it locked.
-    cfg.inventory_sizing_enabled = False
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_enabled", False)
     cfg.max_rounds = 2
     cfg.time_step = 0
     # Keep the round-1 sell resting so round 2 finds all inventory locked.
@@ -416,7 +416,7 @@ def _locked_guard_bot(monkeypatch, tmp_path, *, rounds, **cfg_overrides):
     cfg.demo_result_db_path = str(tmp_path / "usdt-demo.sqlite3")
     cfg.demo_level1_fast_fill_enabled = False
     # The guard arithmetic in these tests assumes one order_size per round.
-    cfg.inventory_sizing_enabled = False
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_enabled", False)
     cfg.max_rounds = rounds
     cfg.time_step = 0
     for key, value in cfg_overrides.items():
@@ -505,7 +505,7 @@ def test_cancelling_a_locked_order_releases_its_exposure(monkeypatch, tmp_path):
     cfg.demo_fee_state_path = str(tmp_path / "fee-state.json")
     cfg.demo_result_db_path = str(tmp_path / "usdt-demo.sqlite3")
     cfg.demo_level1_fast_fill_enabled = False
-    cfg.inventory_sizing_enabled = False  # 90 locked per resting buy, as below
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_enabled", False)
     cfg.demo_inv_initial = 0.0
     cfg.cash_initial = 1_000.0
     cfg.max_rounds = 4

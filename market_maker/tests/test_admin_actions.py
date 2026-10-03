@@ -12,6 +12,8 @@ from demo_config import config_status, desired_digest, load_desired_config
 
 
 EXPECTED_FIELDS = {
+    "inventory_sizing_enabled", "inventory_sizing_strength",
+    "inventory_sizing_min_fraction",
     "order_size", "inv_max", "inv_min", "cancel_after_minutes",
     "depth_max", "time_step", "demo_inv_initial", "cash_initial",
     "commission_perc", "exp_ret_min",
@@ -159,6 +161,31 @@ def test_config_apply_valid_enqueues_apply_config(client, app, fake_agent):
     assert submitted["depth_max"] == TRADING_PROFILES["btc"]["depth_max"]
 
 
+def test_config_apply_accepts_inventory_sizing_fields(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/config/usdt", data={
+        "inventory_sizing_enabled": "false",
+        "inventory_sizing_strength": "0.5",
+        "inventory_sizing_min_fraction": "0.2",
+        "csrf_token": token,
+    })
+    assert response.status_code == 200
+    submitted = _commands_written(app)[0]["payload"]["overrides"]
+    assert submitted["inventory_sizing_enabled"] is False
+    assert submitted["inventory_sizing_strength"] == 0.5
+    assert submitted["inventory_sizing_min_fraction"] == 0.2
+
+
+def test_config_apply_rejects_inventory_sizing_strength_above_one(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/config/usdt", data={
+        "inventory_sizing_strength": "1.5",
+        "csrf_token": token,
+    })
+    assert response.status_code == 400
+    assert _commands_written(app) == []
+
+
 @pytest.mark.parametrize("field", [
     "max_rounds",
     "demo_level1_fast_fill_enabled",
@@ -174,9 +201,6 @@ def test_config_apply_valid_enqueues_apply_config(client, app, fake_agent):
     "demo_adverse_fill_enabled",
     "demo_adverse_fill_probability",
     "demo_non_adverse_fill_probability",
-    "inventory_sizing_enabled",
-    "inventory_sizing_strength",
-    "inventory_sizing_min_fraction",
     "not_a_real_config_field",
 ])
 def test_config_submission_outside_pair_schema_is_rejected_without_enqueue(

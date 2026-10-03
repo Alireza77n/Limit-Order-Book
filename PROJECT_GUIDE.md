@@ -120,7 +120,7 @@ real trading or to MySQL: `safety.py` refuses to start.
 | `strategy/algo2.py` | Placeholder for Avellaneda-Stoikov. Not implemented. |
 | `strategy/base.py` | The interface every strategy implements (`decide_order`). |
 | `config.py` | The `MMConfig` dataclass and `TRADING_PROFILES`, the default parameters for `btc` and `usdt`. |
-| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts 12 fields only, forces commission and minimum return to at least 0.25%, forces both exposure guards on with a ratio of at most 25%. |
+| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts 15 fields only, forces commission and minimum return to at least 0.25%, forces both exposure guards on with a ratio of at most 25%. |
 | `demo_config.py` | Defines which fields the admin panel may edit, validates them, and reloads changed values into a running demo worker at round boundaries. |
 | `safety.py` | Refuses to start demo mode with a real exchange client or with MySQL persistence. |
 | `session.py` | Session ids and `WorkerLease`, a file lock that prevents two workers on the same pair. |
@@ -196,7 +196,7 @@ The parameters that matter for trading:
 |---|---|
 | `order_size` | Base-asset amount per order (BTC or USDT) at the middle of the inventory band. Each side is scaled between 0 and 2× this ([section 7](#7-how-order-sizes-are-decided)). |
 | `inv_min`, `inv_max` | The inventory band. Drives the price skew and the order sizes, and caps buying. |
-| `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction` | The linear size rule. Set in `config.py` only, not in the admin panel. |
+| `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction` | The linear size rule ([section 7](#7-how-order-sizes-are-decided)). Editable from the admin panel, for demo and for live. |
 | `depth_max` | How many order-book levels the strategy may use. |
 | `commission_perc` | Fee per leg, as a fraction (0.0025 = 0.25%). |
 | `exp_ret_min` | Minimum net round-trip return required to quote. |
@@ -411,10 +411,16 @@ Then, for each side separately:
 | `inventory_sizing_strength` | `1.0` | The slope `k`. The general form is `order_size × (1 ∓ k × (2x − 1))`; 1.0 gives the table above, 0 gives a fixed size. |
 | `inventory_sizing_min_fraction` | `0.0` | A floor on each side as a fraction of `order_size`. 0 means a side may go to zero. |
 
-They are set in `TRADING_PROFILES` in `config.py`. They are deliberately not
-editable from the admin panel: `demo_config.py` lists them in
-`LEGACY_REMOVED_FIELDS` and `forward_config.py` leaves them out of
-`FORWARD_FIELDS`. To change them, edit `config.py` and restart the worker.
+The defaults are set in `TRADING_PROFILES` in `config.py`. All three can be
+changed from the admin panel:
+
+| Page | Applies |
+|---|---|
+| Demo **Config** (per pair) | At the next round of the running demo worker. |
+| **Live Config BTC** / **Live Config USDT** | After the live worker is stopped and started again. |
+
+Values outside the allowed range (strength or floor below 0 or above 1) are
+rejected. Turning the rule off sends a fixed `order_size` on both sides.
 
 ### Demo mode
 
@@ -440,7 +446,8 @@ existed in the code but was switched off, used a slope of 0.75 with a floor of
 |---|---|
 | `market_maker/engine.py` | `_inventory_sized_order_targets` takes the open buy and open sell amounts and sizes each side on its effective inventory. The live loop and the demo loop pass those amounts. The demo loop logs `inventory_sizing` as the not-sent reason when the rule holds a side back. |
 | `market_maker/config.py` | Both profiles turn the rule on with strength 1.0 and no floor. The `MMConfig` defaults for strength and floor match. |
-| `market_maker/demo_config.py` | Help text of `order_size` in the admin panel says each side is scaled between 0 and 2×. |
+| `market_maker/demo_config.py` | The three sizing settings are editable fields again (hot in demo), each with help text. The help text of `order_size` explains the scaling. |
+| `market_maker/forward_config.py`, `templates/admin/forward_config.html` | The three sizing settings are part of the Live Config page and of the saved live config. |
 | `market_maker/dashboard.py` | Reads `DASHBOARD_REQUESTS_PATHNAME_PREFIX` so the charts work behind nginx at `/forward/`. This was already running on the server and was missing from the repository. |
 | `README.md` | The inventory sizing paragraph describes the new rule and defaults. |
 | `market_maker/tests/` | New tests for the rule, for both loops and for the new reason. Older tests that assert amounts with a constant order size now switch the rule off explicitly. |

@@ -1126,8 +1126,9 @@ opposite. Both profiles in `config.py` enable it with
 which reduces to `buy = 2 * order_size * (1 - x)` and
 `sell = 2 * order_size * x`: buying fades to zero at `inv_max` and selling
 fades to zero at `inv_min`. The same function sizes orders in the real loop and
-in the Demo loop. The three settings are set in `config.py` only; they are not
-Admin-editable. In Demo, a side the rule scales below the tradable minimum is
+in the Demo loop. The three settings are Admin-editable: on the Demo Config
+page they are hot (applied at the next round), on the Live Config page they
+apply when the worker is restarted. `config.py` holds the defaults. In Demo, a side the rule scales below the tradable minimum is
 logged as `not_sent_inventory_sizing`.
 
 ### When both sides, one side, or nothing is submitted

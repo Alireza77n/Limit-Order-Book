@@ -19,7 +19,9 @@ from demo_config import (
 
 
 FORWARD_FIELDS = frozenset({
-    "order_size", "inv_max", "inv_min", "cancel_after_minutes", "depth_max",
+    "order_size", "inventory_sizing_enabled", "inventory_sizing_strength",
+    "inventory_sizing_min_fraction",
+    "inv_max", "inv_min", "cancel_after_minutes", "depth_max",
     "time_step", "commission_perc", "exp_ret_min",
     "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
     "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",

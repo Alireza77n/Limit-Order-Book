@@ -84,7 +84,9 @@ def test_two_symbol_demo_replay_shares_session_isolates_state_and_has_zero_real_
         # Constant order size keeps the replay's fill outcome identical for
         # both pairs; linear inventory sizing is covered in
         # test_inventory_sizing.py and test_demo_engine_lifecycle.py.
-        cfg.inventory_sizing_enabled = False
+        monkeypatch.setitem(
+            run.TRADING_PROFILES[profile_name], "inventory_sizing_enabled", False
+        )
 
         bot = run.make_bot(cfg, algorithm="algo1", exchange_name="nobitex", mode="demo")
         bot.exchange._market_data = ReplayMarketData()

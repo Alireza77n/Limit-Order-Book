@@ -27,6 +27,8 @@ from demo_config import desired_digest, load_desired_config, write_runtime_snaps
 HTML = {"Accept": "text/html"}
 
 EXPECTED_CONFIG_FIELDS = {
+    "inventory_sizing_enabled", "inventory_sizing_strength",
+    "inventory_sizing_min_fraction",
     "order_size", "inv_max", "inv_min", "cancel_after_minutes",
     "depth_max", "time_step", "demo_inv_initial", "cash_initial",
     "commission_perc", "exp_ret_min",
@@ -42,8 +44,6 @@ REMOVED_CONFIG_FIELDS = {
     "demo_queue_enabled", "demo_max_fill_per_observation_orders",
     "demo_adverse_fill_enabled", "demo_adverse_fill_probability",
     "demo_non_adverse_fill_probability",
-    "inventory_sizing_enabled", "inventory_sizing_strength",
-    "inventory_sizing_min_fraction",
 }
 
 
@@ -956,3 +956,70 @@ def test_delete_sessions_bulk_html_rejects_empty_selection(sessions_client):
     )
     assert response.status_code == 400
     assert "no sessions selected" in _html(response).lower()
+
+
+# ---------- Live Config page: inventory sizing fields ----------
+
+SIZING_FIELDS = (
+    "inventory_sizing_enabled",
+    "inventory_sizing_strength",
+    "inventory_sizing_min_fraction",
+)
+
+
+@pytest.fixture
+def forward_app(tmp_path):
+    names = ("control", "state", "results", "backups",
+             "forward-control", "forward-config", "forward-locks")
+    for name in names:
+        (tmp_path / name).mkdir()
+    return create_app({
+        "ADMIN_USERNAME": "admin",
+        "ADMIN_PASSWORD_HASH": generate_password_hash("correct horse", method="pbkdf2:sha256"),
+        "SECRET_KEY": "test-secret",
+        "CONTROL_DIR": str(tmp_path / "control"),
+        "STATE_DIR": str(tmp_path / "state"),
+        "RESULTS_DIR": str(tmp_path / "results"),
+        "BACKUPS_DIR": str(tmp_path / "backups"),
+        "FORWARD_CONTROL_DIR": str(tmp_path / "forward-control"),
+        "FORWARD_CONFIG_DIR": str(tmp_path / "forward-config"),
+        "FORWARD_LOCK_DIR": str(tmp_path / "forward-locks"),
+        "TESTING": True,
+    })
+
+
+def test_live_config_page_shows_inventory_sizing_fields(forward_app, fake_agent):
+    client = forward_app.test_client()
+    _login(client)
+
+    html = _html(client.get("/admin/forward/config/usdt", headers=HTML))
+
+    for field in SIZING_FIELDS:
+        assert f'name="{field}"' in html
+    # Only the two exposure guards are mandatory for a live start.
+    assert html.count("(required for live start)") == 2
+
+
+def test_live_config_save_sends_inventory_sizing_to_the_agent(forward_app, fake_agent):
+    client = forward_app.test_client()
+    token = _login(client)
+
+    response = client.post("/admin/forward/config/usdt", data={
+        "inventory_sizing_enabled": "false",
+        "inventory_sizing_strength": "0.5",
+        "inventory_sizing_min_fraction": "0.2",
+        "csrf_token": token,
+    })
+
+    assert response.status_code == 302
+    commands_dir = Path(forward_app.config["FORWARD_CONTROL_DIR"]) / "commands"
+    applied = [
+        command for command in
+        (json.loads(path.read_text()) for path in commands_dir.glob("*.json"))
+        if command["action"] == "apply_forward_config"
+    ]
+    assert len(applied) == 1
+    overrides = applied[0]["payload"]["overrides"]
+    assert overrides["inventory_sizing_enabled"] is False
+    assert overrides["inventory_sizing_strength"] == 0.5
+    assert overrides["inventory_sizing_min_fraction"] == 0.2

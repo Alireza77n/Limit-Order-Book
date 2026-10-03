@@ -48,7 +48,10 @@ class RuntimeReloadResult:
 
 
 FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
-    "order_size": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Base amount per order. Linear inventory sizing scales each side between 0 and 2x this amount."),
+    "order_size": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Base amount per order. With inventory sizing on, each side is scaled around this amount (0 to 2x at strength 1)."),
+    "inventory_sizing_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Scale buy and sell sizes linearly with inventory: buy more when inventory is low, sell more when it is high. Off sends a fixed order_size on both sides."),
+    "inventory_sizing_strength": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Slope k of the linear rule. 0 keeps a fixed order_size; 1 makes the buy reach zero at inv_max and the sell reach zero at inv_min."),
+    "inventory_sizing_min_fraction": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Smallest size of either side as a fraction of order_size. 0 lets a side go to zero."),
     "inv_max": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Maximum inventory the worker will hold."),
     "inv_min": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Minimum inventory the worker will hold."),
     "cancel_after_minutes": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Age before resting paper orders are cancelled."),
@@ -83,9 +86,6 @@ LEGACY_REMOVED_FIELDS = frozenset({
     "demo_adverse_fill_enabled",
     "demo_adverse_fill_probability",
     "demo_non_adverse_fill_probability",
-    "inventory_sizing_enabled",
-    "inventory_sizing_strength",
-    "inventory_sizing_min_fraction",
 })
 
 FORBIDDEN_FIELDS = frozenset({

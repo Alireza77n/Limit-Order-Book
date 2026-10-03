@@ -635,11 +635,11 @@ Stop it with `Ctrl-C` afterward. Local mode uses the root Compose project and
 timing out. Inspect `market_maker/results/control/commands/` before starting
 the agent if this checkout may contain older queued requests.
 
-The per-pair configuration surface contains exactly nine fields:
+The per-pair configuration surface contains these fields:
 
 | Field | Application mode |
 |---|---|
-| `order_size`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step` | Hot — applied at a worker round boundary |
+| `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio` | Hot — applied at a worker round boundary |
 | `demo_inv_initial`, `cash_initial`, `commission_perc` | New session — saved now, applied by **New session** |
 
 No current field requires a restart. Desired overlays are pair-isolated and

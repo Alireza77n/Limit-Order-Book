@@ -42,7 +42,7 @@
           {% if definition.value_type.__name__ == 'bool' %}
             <div class="form-check">
               <input type="checkbox" id="{{ field_name }}" name="{{ field_name }}" value="true" class="form-check-input" {% if current_value %}checked{% endif %}>
-              <label for="{{ field_name }}" class="form-check-label">Enabled (required for live start)</label>
+              <label for="{{ field_name }}" class="form-check-label">Enabled{% if 'locked_' in field_name %} (required for live start){% endif %}</label>
               <input type="hidden" name="{{ field_name }}" value="false">
             </div>
           {% elif definition.value_type.__name__ == 'int' %}
