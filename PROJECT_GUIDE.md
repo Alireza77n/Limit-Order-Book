@@ -467,6 +467,12 @@ What to expect in a live session:
 Found by reading the live-mode code path on 2026-10-03. None of these has been
 fixed. Items 1 to 5 matter for real money.
 
+Fixed since then: the live worker crashed whenever it produced a quote while one
+of its own orders was still resting, because Nobitex reports an open order as
+`Active` and `get_open_order_totals` accepted only `open`. That ended the
+BTC/IRT worker on 2026-09-27. The check now accepts `open`, `Active` and `New`
+(`OPEN_ORDER_STATUSES` in `engine.py`).
+
 1. **No quote, and no way to sell down, when inventory is well above
    `inv_max`.** A live session starts from the whole wallet balance. Once
    `inv_d` exceeds `depth_max` there is no valid level pair, so the strategy

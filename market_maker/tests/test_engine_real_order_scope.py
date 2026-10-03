@@ -81,6 +81,33 @@ def test_real_open_order_totals_reject_unknown_exposure(monkeypatch, broken):
         bot.get_open_order_totals()
 
 
+@pytest.mark.parametrize("status", ["Active", "New", "open", "ACTIVE"])
+def test_real_open_order_totals_accept_the_exchange_open_statuses(monkeypatch, status):
+    """Nobitex lists a resting order as "Active" (or "New"), not "open". The
+    live BTC/IRT worker died on 2026-09-27 because only "open" was accepted."""
+    bot, exchange = _bot()
+    monkeypatch.setattr(exchange, "get_order_list_status", lambda **kwargs: [
+        {"clientOrderId": "owned-buy", "pair": "USDTIRT", "type": "buy", "status": status, "price": 100, "unmatchedAmount": 2},
+        {"clientOrderId": "owned-sell", "pair": "USDTIRT", "type": "sell", "status": status, "price": 110, "unmatchedAmount": 3},
+    ])
+
+    buy_totals, sell_totals = bot.get_open_order_totals()
+
+    assert buy_totals == {"amount": 2.0, "cash": 200.0}
+    assert sell_totals == {"amount": 3.0, "cash": 330.0}
+
+
+@pytest.mark.parametrize("status", ["Done", "Canceled", "Inactive", "", None])
+def test_real_open_order_totals_still_reject_statuses_that_are_not_open(monkeypatch, status):
+    bot, exchange = _bot()
+    monkeypatch.setattr(exchange, "get_order_list_status", lambda **kwargs: [
+        {"clientOrderId": "owned-buy", "pair": "USDTIRT", "type": "buy", "status": status, "price": 100, "unmatchedAmount": 1},
+    ])
+
+    with pytest.raises(RuntimeError, match="unknown side or status"):
+        bot.get_open_order_totals()
+
+
 def test_real_bulk_cleanup_passes_pair_and_registry_then_prunes_active_only():
     bot, exchange = _bot()
 

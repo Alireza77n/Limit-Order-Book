@@ -49,6 +49,12 @@ TEHRAN_TZ = pytz.timezone("Asia/Tehran")
 # 0.000015 per order, USDT trades 1). See SimpleMarketMaker._min_tradable_size.
 MIN_ORDER_SIZE_FRACTION = 0.1
 
+# Statuses that mean "this order is resting on the book". Nobitex reports an
+# open order as "Active" (or "New" just after it is accepted); the paper
+# exchange and the test doubles say "open". Compared case-insensitively.
+# Anything else in an open-order listing is still treated as unknown exposure.
+OPEN_ORDER_STATUSES = frozenset({"open", "active", "new"})
+
 
 class CoordinatedShutdown(KeyboardInterrupt):
     """Raised only by the installed SIGTERM/SIGINT coordination handler."""
@@ -263,7 +269,8 @@ class SimpleMarketMaker:
             if not is_ours:
                 continue
     
-            if side not in {"buy", "sell"} or o.get("status") != "open":
+            status = str(o.get("status") or "").strip().lower()
+            if side not in {"buy", "sell"} or status not in OPEN_ORDER_STATUSES:
                 raise RuntimeError("open order exposure has unknown side or status")
             amt   = _f(o.get("unmatchedAmount"))
             price = _f(o.get("price"))

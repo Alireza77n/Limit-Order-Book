@@ -139,7 +139,7 @@ class _RestingOrdersExchange(ExchangeClient):
             "clientOrderId": clientOrderId,
             "pair": "USDTIRT",
             "type": order_type,
-            "status": "open",
+            "status": "Active",   # what Nobitex reports for a resting order
             "price": float(price),
             "amount": float(amount),
             "matchedAmount": 0.0,
