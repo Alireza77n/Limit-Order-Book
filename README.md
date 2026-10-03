@@ -1107,20 +1107,28 @@ exists because unbounded accumulation let a single price touch fill many orders
 at once.
 
 When `inventory_sizing_enabled` is on, the target size is skewed before the
-cash/inventory caps above:
+cash/inventory caps above. Each side uses its own effective inventory, so
+resting orders count before they fill:
 
 ```text
-inventory_fraction = clamp((inventory - inv_min) / (inv_max - inv_min), 0, 1)
-inventory_pressure = 2 * inventory_fraction - 1
-buy_target  = order_size * clamp(1 - strength * inventory_pressure,
+fraction(v) = clamp((v - inv_min) / (inv_max - inv_min), 0, 1)
+buy_pressure  = 2 * fraction(inventory + open buy amount)  - 1
+sell_pressure = 2 * fraction(inventory - open sell amount) - 1
+buy_target  = order_size * clamp(1 - strength * buy_pressure,
                                  min_fraction, 1 + strength)
-sell_target = order_size * clamp(1 + strength * inventory_pressure,
+sell_target = order_size * clamp(1 + strength * sell_pressure,
                                  min_fraction, 1 + strength)
 ```
 
 High inventory shrinks buy orders and grows sell orders; low inventory does the
-opposite. Defaults keep it disabled, with `inventory_sizing_strength = 0.75`
-and `inventory_sizing_min_fraction = 0.25` ready for Admin tuning.
+opposite. Both profiles in `config.py` enable it with
+`inventory_sizing_strength = 1.0` and `inventory_sizing_min_fraction = 0.0`,
+which reduces to `buy = 2 * order_size * (1 - x)` and
+`sell = 2 * order_size * x`: buying fades to zero at `inv_max` and selling
+fades to zero at `inv_min`. The same function sizes orders in the real loop and
+in the Demo loop. The three settings are set in `config.py` only; they are not
+Admin-editable. In Demo, a side the rule scales below the tradable minimum is
+logged as `not_sent_inventory_sizing`.
 
 ### When both sides, one side, or nothing is submitted
 

@@ -432,7 +432,13 @@ def _metric_card(label: str, value: str, color: str = TEXT_PRIMARY) -> html.Div:
 
 # ---------- Dash app ----------
 
-app = Dash(__name__)
+app = Dash(
+    __name__,
+    requests_pathname_prefix=os.environ.get(
+        "DASHBOARD_REQUESTS_PATHNAME_PREFIX", "/"
+    ),
+    routes_pathname_prefix="/",
+)
 app.title = "Market-Making Dashboard"
 
 app.layout = html.Div([

@@ -48,7 +48,7 @@ class RuntimeReloadResult:
 
 
 FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
-    "order_size": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Base-asset amount per order round."),
+    "order_size": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Base amount per order. Linear inventory sizing scales each side between 0 and 2x this amount."),
     "inv_max": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Maximum inventory the worker will hold."),
     "inv_min": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Minimum inventory the worker will hold."),
     "cancel_after_minutes": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Age before resting paper orders are cancelled."),

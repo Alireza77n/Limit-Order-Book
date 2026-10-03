@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+import itertools
 import signal
 
 import pytest
@@ -95,6 +96,9 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     cfg.demo_csv_export_max_rows = 1
     cfg.cash_initial = 1_000.0
     cfg.order_size = 1.0
+    # This test pins the order lifecycle with a constant order size; linear
+    # inventory sizing has its own tests further down.
+    cfg.inventory_sizing_enabled = False
     cfg.max_rounds = 2
     cfg.time_step = 0
     cfg.demo_level1_fill_delay_seconds = 0
@@ -243,6 +247,71 @@ def test_inventory_sizing_changes_submitted_buy_and_sell_amounts(monkeypatch, tm
     assert frame["Sell Original Amount"].iloc[0] == pytest.approx(13.75)
 
 
+def _profile_default_sizing_frame(monkeypatch, tmp_path, *, rounds, inventory):
+    """Demo rounds on the profile's own sizing settings (linear, full
+    strength, no floor) with order_size 10 inside a 0..100 inventory band.
+    The book never touches bid 90 / ask 110, so every order rests."""
+    monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
+    monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "order_size", 10.0)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inv_max", 100.0)
+    cfg = run.make_cfg("usdt", mode="demo", session_id="linear-sizing-session")
+    cfg.output_csv = str(tmp_path / "linear.csv")
+    cfg.demo_state_path = str(tmp_path / "linear-state.json")
+    cfg.demo_fee_state_path = str(tmp_path / "linear-fees.json")
+    cfg.demo_result_db_path = str(tmp_path / "linear.sqlite3")
+    cfg.demo_inv_initial = cfg.inv_initial = inventory
+    cfg.cash_initial = 1_000_000.0
+    cfg.max_rounds = rounds
+    cfg.time_step = 0
+    cfg.demo_level1_fast_fill_enabled = False
+    bot = run.make_bot(cfg, mode="demo")
+    bot.exchange._market_data = DeterministicMarketData()
+    bot.strategy = FixedLevelOneStrategy()
+    clock = itertools.count()
+    bot.now_provider = lambda: T0 + timedelta(seconds=next(clock))
+    bot.sleep_fn = lambda seconds: None
+    return bot.run()
+
+
+def test_profile_default_sizing_counts_resting_buys_as_inventory(monkeypatch, tmp_path):
+    """Empty inventory: the first buy is 2 x order_size and nothing is sold.
+    Each later buy shrinks because the buys already resting count toward the
+    band: 20, then 2*10*(1 - 20/100) = 16, then 2*10*(1 - 36/100) = 12.8."""
+    frame = _profile_default_sizing_frame(
+        monkeypatch, tmp_path, rounds=3, inventory=0.0
+    )
+
+    assert frame["Buy Original Amount"].tolist() == pytest.approx([20.0, 16.0, 12.8])
+    assert set(frame["Sell Status"]) == {"not_sent_insufficient_inventory"}
+
+
+def test_buy_at_top_of_inventory_band_is_reported_as_inventory_sizing(monkeypatch, tmp_path):
+    """Full inventory scales the buy to zero. With a million in cash that must
+    not be logged as a cash shortage."""
+    frame = _profile_default_sizing_frame(
+        monkeypatch, tmp_path, rounds=1, inventory=100.0
+    )
+
+    assert frame["Buy Status"].iloc[0] == "not_sent_inventory_sizing"
+    assert frame["Buy Not Sent Reason"].iloc[0] == "inventory_sizing"
+    assert frame["Sell Original Amount"].iloc[0] == pytest.approx(20.0)
+
+
+def test_sell_near_bottom_of_inventory_band_is_reported_as_inventory_sizing(monkeypatch, tmp_path):
+    """Inventory 2 of 100 gives a sell target of 2*10*0.02 = 0.4, below the
+    tradable minimum of 1.0, while 2.0 is free to sell: the sizing rule held
+    the sell back, not a lack of inventory."""
+    frame = _profile_default_sizing_frame(
+        monkeypatch, tmp_path, rounds=1, inventory=2.0
+    )
+
+    assert frame["Sell Status"].iloc[0] == "not_sent_inventory_sizing"
+    assert frame["Sell Not Sent Reason"].iloc[0] == "inventory_sizing"
+    assert frame["Buy Original Amount"].iloc[0] == pytest.approx(19.6)
+
+
 def test_buy_inventory_cap_uses_actual_clamped_buy_amount(monkeypatch, tmp_path):
     monkeypatch.setattr("engine.TELEGRAM_BOT_TOKEN", None)
     monkeypatch.setattr("engine.TELEGRAM_CHAT_ID", None)
@@ -256,6 +325,9 @@ def test_buy_inventory_cap_uses_actual_clamped_buy_amount(monkeypatch, tmp_path)
     cfg.inv_max = 50.0
     cfg.cash_initial = 27.0
     cfg.order_size = 1.0
+    # Fixed size on purpose: the cap must use the cash-clamped amount (0.3),
+    # which linear sizing would shrink further at this inventory.
+    cfg.inventory_sizing_enabled = False
     cfg.max_rounds = 1
     cfg.time_step = 0
     cfg.demo_level1_fast_fill_enabled = False
@@ -286,6 +358,8 @@ def test_fully_locked_inventory_is_not_reported_as_insufficient(monkeypatch, tmp
     cfg.demo_inv_initial = cfg.inv_initial = 1.0
     cfg.cash_initial = 1_000.0
     cfg.order_size = 1.0
+    # Fixed size so round 1 sells the whole 1.0 and round 2 finds it locked.
+    cfg.inventory_sizing_enabled = False
     cfg.max_rounds = 2
     cfg.time_step = 0
     # Keep the round-1 sell resting so round 2 finds all inventory locked.
@@ -341,6 +415,8 @@ def _locked_guard_bot(monkeypatch, tmp_path, *, rounds, **cfg_overrides):
     cfg.demo_fee_state_path = str(tmp_path / "fee-state.json")
     cfg.demo_result_db_path = str(tmp_path / "usdt-demo.sqlite3")
     cfg.demo_level1_fast_fill_enabled = False
+    # The guard arithmetic in these tests assumes one order_size per round.
+    cfg.inventory_sizing_enabled = False
     cfg.max_rounds = rounds
     cfg.time_step = 0
     for key, value in cfg_overrides.items():
@@ -429,6 +505,7 @@ def test_cancelling_a_locked_order_releases_its_exposure(monkeypatch, tmp_path):
     cfg.demo_fee_state_path = str(tmp_path / "fee-state.json")
     cfg.demo_result_db_path = str(tmp_path / "usdt-demo.sqlite3")
     cfg.demo_level1_fast_fill_enabled = False
+    cfg.inventory_sizing_enabled = False  # 90 locked per resting buy, as below
     cfg.demo_inv_initial = 0.0
     cfg.cash_initial = 1_000.0
     cfg.max_rounds = 4

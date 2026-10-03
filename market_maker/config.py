@@ -73,9 +73,15 @@ class MMConfig:
     demo_adverse_fill_enabled: bool = False
     demo_adverse_fill_probability: float = 1.0
     demo_non_adverse_fill_probability: float = 1.0
+    # Linear inventory-based order sizing -- see
+    # SimpleMarketMaker._inventory_sized_order_targets in engine.py. Off for a
+    # bare MMConfig; both TRADING_PROFILES below turn it on. strength is the
+    # slope k (0 = fixed order_size, 1 = buy fades to zero at inv_max and sell
+    # fades to zero at inv_min); min_fraction is a floor on each side as a
+    # fraction of order_size (0 = no floor).
     inventory_sizing_enabled: bool = False
-    inventory_sizing_strength: float = 0.75
-    inventory_sizing_min_fraction: float = 0.25
+    inventory_sizing_strength: float = 1.0
+    inventory_sizing_min_fraction: float = 0.0
     demo_state_path: Optional[str] = None
     demo_fee_state_path: Optional[str] = None
     demo_archive_path: Optional[str] = None
@@ -173,9 +179,13 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         demo_adverse_fill_enabled=False,
         demo_adverse_fill_probability=1.0,
         demo_non_adverse_fill_probability=1.0,
-        inventory_sizing_enabled=False,
-        inventory_sizing_strength=0.75,
-        inventory_sizing_min_fraction=0.25,
+        # Linear inventory sizing (engine._inventory_sized_order_targets):
+        # buy = 2*order_size*(1 - x), sell = 2*order_size*x, with x the
+        # position in the [inv_min, inv_max] band. strength is the slope k
+        # (0 = fixed size), min_fraction a floor on each side (0 = none).
+        inventory_sizing_enabled=True,
+        inventory_sizing_strength=1.0,
+        inventory_sizing_min_fraction=0.0,
         url_wallet_balance="https://apiv2.nobitex.ir/users/wallets/balance",
         url_send_order="https://apiv2.nobitex.ir/market/orders/add",
         output_csv=os.path.join(RESULTS_DIR, "btc_track.csv"),
@@ -213,9 +223,13 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         demo_adverse_fill_enabled=False,
         demo_adverse_fill_probability=1.0,
         demo_non_adverse_fill_probability=1.0,
-        inventory_sizing_enabled=False,
-        inventory_sizing_strength=0.75,
-        inventory_sizing_min_fraction=0.25,
+        # Linear inventory sizing (engine._inventory_sized_order_targets):
+        # buy = 2*order_size*(1 - x), sell = 2*order_size*x, with x the
+        # position in the [inv_min, inv_max] band. strength is the slope k
+        # (0 = fixed size), min_fraction a floor on each side (0 = none).
+        inventory_sizing_enabled=True,
+        inventory_sizing_strength=1.0,
+        inventory_sizing_min_fraction=0.0,
         url_wallet_balance="https://apiv2.nobitex.ir/users/wallets/balance",
         url_send_order="https://apiv2.nobitex.ir/market/orders/add",
         output_csv=os.path.join(RESULTS_DIR, "usdt_track.csv"),

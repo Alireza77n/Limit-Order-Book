@@ -48,6 +48,9 @@ def build_runtime_bot(state_dir, monkeypatch, *, session="runtime-session"):
     cfg.demo_fee_state_path = str(state_dir / "fees.json")
     cfg.demo_archive_path = str(state_dir / "usdt-archive.jsonl")
     cfg.demo_result_db_path = str(state_dir / "usdt-results.sqlite3")
+    # Constant order size: these tests assert that a hot order_size value is
+    # the submitted amount, without the linear inventory multiplier on top.
+    cfg.inventory_sizing_enabled = False
     return run.make_bot(cfg, mode="demo")
 
 

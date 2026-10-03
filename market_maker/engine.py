@@ -863,7 +863,31 @@ class SimpleMarketMaker:
     def _clamp(value: float, lower: float, upper: float) -> float:
         return max(lower, min(upper, value))
 
-    def _inventory_sized_order_targets(self, inventory: float) -> Tuple[float, float]:
+    def _inventory_sized_order_targets(
+        self,
+        inventory: float,
+        open_buy_amount: float = 0.0,
+        open_sell_amount: float = 0.0,
+    ) -> Tuple[float, float]:
+        """Linear inventory-based (buy, sell) target sizes, in base units.
+
+        With x the position inside the [inv_min, inv_max] band (0 = empty,
+        1 = full) and k = inventory_sizing_strength:
+
+            buy  = order_size * (1 - k * (2x - 1))
+            sell = order_size * (1 + k * (2x - 1))
+
+        each floored at inventory_sizing_min_fraction * order_size. With
+        k = 1 and no floor this is buy = 2*order_size*(1 - x) and
+        sell = 2*order_size*x: buying fades to zero as inventory fills,
+        selling fades to zero as it empties.
+
+        Each side uses its own *effective* inventory, so resting orders
+        count before they fill: the buy side sees inventory plus the amount
+        already resting in open buys, the sell side sees inventory minus the
+        amount already resting in open sells. Without this, a new order is
+        sent every round at the same size until the first fill arrives.
+        """
         base_size = float(self.cfg.order_size)
         if not getattr(self.cfg, "inventory_sizing_enabled", False):
             return base_size, base_size
@@ -884,19 +908,22 @@ class SimpleMarketMaker:
             0.0,
             1.0,
         )
-        inventory_fraction = self._clamp(
-            (float(inventory) - inv_min) / inventory_band,
-            0.0,
-            1.0,
-        )
-        inventory_pressure = 2.0 * inventory_fraction - 1.0
+
+        def pressure(effective_inventory: float) -> float:
+            fraction = self._clamp(
+                (effective_inventory - inv_min) / inventory_band, 0.0, 1.0
+            )
+            return 2.0 * fraction - 1.0
+
+        buy_pressure = pressure(float(inventory) + max(0.0, float(open_buy_amount)))
+        sell_pressure = pressure(float(inventory) - max(0.0, float(open_sell_amount)))
         buy_multiplier = self._clamp(
-            1.0 - strength * inventory_pressure,
+            1.0 - strength * buy_pressure,
             min_fraction,
             1.0 + strength,
         )
         sell_multiplier = self._clamp(
-            1.0 + strength * inventory_pressure,
+            1.0 + strength * sell_pressure,
             min_fraction,
             1.0 + strength,
         )
@@ -1351,7 +1378,13 @@ class SimpleMarketMaker:
                 buy_reason = sell_reason = "no_quote" if quote is None else None
                 if quote is not None:
                     buy_target, sell_target = self._inventory_sized_order_targets(
-                        snapshot.inventory
+                        snapshot.inventory,
+                        open_buy_amount=sum(
+                            order.remaining_amount
+                            for order in ledger.active_orders.values()
+                            if order.side == "buy"
+                        ),
+                        open_sell_amount=snapshot.locked_inventory,
                     )
                     sell_amount = max(
                         0.0,
@@ -1382,6 +1415,15 @@ class SimpleMarketMaker:
                             sell_order = ledger.get_order(result_id)
                         else:
                             sell_reason = "rejected"
+                    elif (
+                        sell_target < self._min_tradable_size()
+                        and snapshot.available_inventory - float(self.cfg.inv_min)
+                        >= self._min_tradable_size()
+                    ):
+                        # There is stock free to sell, but the linear sizing
+                        # rule scaled this side below the tradable minimum
+                        # because inventory sits near the bottom of its band.
+                        sell_reason = "inventory_sizing"
                     elif snapshot.locked_inventory > 0 and snapshot.inventory > float(self.cfg.inv_min):
                         # Holding stock, but every unit is already committed to
                         # resting sell orders. Reporting that as
@@ -1400,7 +1442,12 @@ class SimpleMarketMaker:
                     affordable = snapshot.available_cash / bid_price if bid_price and bid_price > 0 else 0.0
                     buy_amount = max(0.0, min(buy_target, affordable))
                     buy_locked_cash_reason = None
-                    if buy_amount < self._min_tradable_size():
+                    if buy_target < self._min_tradable_size():
+                        # Inventory (plus resting buys) is at the top of its
+                        # band, so the linear sizing rule scaled the buy below
+                        # the tradable minimum. Not a cash shortage.
+                        buy_reason = "inventory_sizing"
+                    elif buy_amount < self._min_tradable_size():
                         buy_reason = "insufficient_cash"
                     elif buy_locked_amount + snapshot.inventory + buy_amount > self.cfg.inv_max:
                         buy_reason = "inventory_cap"
@@ -1744,7 +1791,9 @@ class SimpleMarketMaker:
                     # Current locked totals from our open orders
                     buy_locked, sell_locked = self.get_open_order_totals()
                     buy_target, sell_target = self._inventory_sized_order_targets(
-                        float(inv_current)
+                        float(inv_current),
+                        open_buy_amount=buy_locked['amount'],
+                        open_sell_amount=sell_locked['amount'],
                     )
     
                     # SELL: cap by available (inventory minus already-locked sells)
