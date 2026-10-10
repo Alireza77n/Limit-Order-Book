@@ -176,6 +176,7 @@ real trading or to MySQL: `safety.py` refuses to start.
 |---|---|
 | `market_maker/tests/` | 46 automated test files. |
 | `market_maker/research/` | Three notebooks estimating parameters for Algorithm 2. |
+| `market_maker/test_nobitex_api.ipynb` | Preflight notebook run by hand before a real-mode start: offline signing test, the API-auth pytest files, public order book, authenticated read-only wallet/order/portfolio calls, `send_order`/`cancel_order` with HTTP mocked, demo lifecycle. Needs `NOBITEX_API_KEY`/`NOBITEX_SECRET_KEY` in `market_maker/.env`. The only cell that can place a real order (12b) is off by default and asks for confirmation. |
 | `README.md`, `usage.md`, `FORWARD_TEST.md`, `docs/` | Documentation and design notes. |
 | `market_maker/results/` | Runtime output. Not tracked in git. |
 
