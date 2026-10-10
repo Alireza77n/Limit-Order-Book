@@ -671,3 +671,31 @@ Possible experiments include:
 This project is for research and educational purposes only.
 
 It is not financial advice and should not be used for live trading without careful testing, validation, and risk management.
+
+---
+
+## Algorithm 1, version 2 (`algo1v2_/`)
+
+The quoting rule of Algorithm 1 was replaced on 2026-10-11 by a
+distance-anchored, expected-value version. `algo1v2_/` holds the algorithm
+exactly as it runs in the full project (branch `MM_algo1v2`,
+`market_maker/strategy/algo1.py` + `market_maker/fill_model.py`), with the
+package imports replaced by a local `Config.py` so it runs on its own:
+
+| File | What it is |
+|---|---|
+| `algo1v2_/Algo1v2.py` | the strategy (`Algo1Strategy.decide_order(order_book, inventory) -> quote dict`) and the fill-probability model, one importable file |
+| `algo1v2_/Config.py` | the settings the algorithm reads, with the BTC/IRT and USDT/IRT profile values |
+| `algo1v2_/example.py` | runs the algorithm on the specification's example book: `python example.py` |
+| `algo1v2_/README.md` | the full mathematics, pseudocode, worked example and figures |
+| `algo1v2_/figures/` | figures generated from the code |
+
+In one paragraph: the inventory moves a quote centre away from the mid-price;
+candidate bid/ask prices are placed at fixed distances from that centre and
+anchored one tick inside real book levels; each candidate gets a fill
+probability for one order lifetime; every bid/ask pair is scored by expected
+value (chance both legs fill x net profit after fees, minus the cost of one
+leg filling alone) and the best pair that clears the fee bar is quoted; a
+single side is quoted at the band edges or when only one leg is profitable
+against a reference price; a resting price within a few ticks is kept.
+Version 1 (`algo1_/`) is unchanged above.
