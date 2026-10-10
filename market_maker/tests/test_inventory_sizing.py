@@ -7,6 +7,16 @@ from exchange.base import ExchangeClient
 from helpers import make_bot
 
 
+@pytest.fixture(autouse=True)
+def _repost_every_round(monkeypatch):
+    """These tests post a fixed price every round and count the orders. The
+    v2 resting-order guard (hysteresis_ticks) would otherwise keep rounds 2+
+    from re-posting -- that behaviour has its own tests in
+    test_engine_one_sided.py."""
+    for pair in ("btc", "usdt"):
+        monkeypatch.setitem(run.TRADING_PROFILES[pair], "hysteresis_ticks", 0)
+
+
 def _bot(**overrides):
     values = {
         "pair": "USDTIRT",

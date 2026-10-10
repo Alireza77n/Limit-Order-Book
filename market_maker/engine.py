@@ -239,6 +239,8 @@ class SimpleMarketMaker:
         buy_cash_locked    = 0.0
         sell_amount_locked = 0.0
         sell_cash_value    = 0.0
+        # (price, remaining) of our resting orders, for the re-post guard.
+        self._resting_orders = {"buy": [], "sell": []}
     
         def _f(x: Any) -> float:
             if isinstance(x, bool):
@@ -283,6 +285,7 @@ class SimpleMarketMaker:
             elif side == "sell":
                 sell_amount_locked += amt
                 sell_cash_value    += amt * price
+            self._resting_orders[side].append((price, amt))
     
         buy_totals  = {"amount": buy_amount_locked,  "cash": buy_cash_locked}
         sell_totals = {"amount": sell_amount_locked, "cash": sell_cash_value}
@@ -302,25 +305,57 @@ class SimpleMarketMaker:
     # ---------- Microstructure helpers ----------
     # NOTE: the actual quoting logic lives in Algo1Strategy (strategy/algo1.py).
     # These wrappers exist so existing internal call sites (_tick_size(), _depth_cap(ob),
-    # etc.) and the baseline characterization tests keep working unchanged.
+    # etc.) and the characterization tests keep working unchanged.
     def _depth_cap(self, ob: Dict[str, Any]) -> int:
         return self.strategy.depth_cap(ob)
 
     def _tick_size(self) -> float:
-        return self.strategy.tick_size()
+        method = getattr(self.strategy, "tick_size", None)
+        if callable(method):
+            return float(method())
+        # Strategy stand-ins (tests, future algorithms) may not expose a tick.
+        return 10.0 if str(self.cfg.pair).upper().endswith("IRT") else 0.01
 
     def _spread_ok(self, ob: Dict[str, Any], bid_idx: int, ask_idx: int) -> bool:
         return self.strategy.spread_ok(ob, bid_idx, ask_idx)
 
-    def _leg_pairs(self, inv_diff: int, depth_max: int) -> List[Tuple[int, int]]:
-        return self.strategy.leg_pairs(inv_diff, depth_max)
-
-    # ---------- Quote selection (Algo1) ----------
-    def _algo1_bid_ask_prices(self, ob: Dict[str, Any], inv_current: float) -> Optional[Dict[str, Any]]:
-        return self.strategy.algo1_bid_ask_prices(ob, inv_current)
-
+    # ---------- Quote selection ----------
     def _decide_order(self, ob: Dict[str, Any], inv_current: float) -> Optional[Dict[str, Any]]:
         return self.strategy.decide_order(ob, inv_current)
+
+    @staticmethod
+    def _quote_side_price(quote: Optional[Dict[str, Any]], key: str) -> Optional[float]:
+        """A v2 quote may carry one side only (``bid`` or ``ask`` is None)."""
+        if not quote or quote.get(key) is None:
+            return None
+        return float(quote[key])
+
+    @staticmethod
+    def _quote_side_level(quote: Optional[Dict[str, Any]], key: str) -> Optional[int]:
+        if not quote or quote.get(key) is None:
+            return None
+        try:
+            return int(quote[key])
+        except (TypeError, ValueError):
+            return None
+
+    def _resting_order_blocks(self, price: Optional[float], resting) -> bool:
+        """True when an order of ours already rests within hysteresis_ticks of
+        ``price``: re-posting it every round would only churn and lose queue
+        position. ``resting`` is an iterable of (price, remaining amount)."""
+        if price is None:
+            return False
+        ticks = int(getattr(self.cfg, "hysteresis_ticks", 0) or 0)
+        if ticks <= 0:
+            return False
+        epsilon = self._tick_size()
+        for resting_price, remaining in resting:
+            try:
+                if float(remaining) > 0 and abs(float(resting_price) - float(price)) <= ticks * epsilon + 1e-9:
+                    return True
+            except (TypeError, ValueError):
+                continue
+        return False
 
     def _emit_algo1_diagnostic(
         self, ob: Dict[str, Any], inv_current: float, *, round_no: int,
@@ -500,10 +535,12 @@ class SimpleMarketMaker:
         round_fee_irt: float, symbol_total_fee_irt: float, combined_total_fee_irt: float,
         quote: Optional[Dict[str, Any]] = None,
     ) -> str:
-        quote_line = (
-            f"Bid: {bid_price:,.2f} (lvl {bid_lvl})   Ask: {ask_price:,.2f} (lvl {ask_lvl})"
-            if bid_price is not None and ask_price is not None else "No quote this round"
-        )
+        if bid_price is None and ask_price is None:
+            quote_line = "No quote this round"
+        else:
+            bid_text = f"Bid: {bid_price:,.2f} (lvl {bid_lvl})" if bid_price is not None else "Bid: —"
+            ask_text = f"Ask: {ask_price:,.2f} (lvl {ask_lvl})" if ask_price is not None else "Ask: —"
+            quote_line = f"{bid_text}   {ask_text}"
         economics_line = ""
         if quote is not None:
             net_return = quote.get("net return")
@@ -1376,14 +1413,26 @@ class SimpleMarketMaker:
                     no_quote_decision = self.no_quote_monitor.record_quote(round_no, now)
                 self._deliver_no_quote_decision(no_quote_decision)
                 no_quote_snapshot = self.no_quote_monitor.snapshot()
-                bid_price = float(quote["bid"]) if quote else None
-                ask_price = float(quote["ask"]) if quote else None
-                bid_level = int(quote["bid level"]) if quote else None
-                ask_level = int(quote["ask level"]) if quote else None
+                bid_price = self._quote_side_price(quote, "bid")
+                ask_price = self._quote_side_price(quote, "ask")
+                bid_level = self._quote_side_level(quote, "bid level")
+                ask_level = self._quote_side_level(quote, "ask level")
 
                 buy_order = sell_order = None
                 buy_reason = sell_reason = "no_quote" if quote is None else None
                 if quote is not None:
+                    resting_orders = [
+                        order for order in ledger.active_orders.values()
+                        if order.status in {"open", "partially_filled"}
+                    ]
+                    resting_sells = [
+                        (order.limit_price, order.remaining_amount)
+                        for order in resting_orders if order.side == "sell"
+                    ]
+                    resting_buys = [
+                        (order.limit_price, order.remaining_amount)
+                        for order in resting_orders if order.side == "buy"
+                    ]
                     buy_target, sell_target = self._inventory_sized_order_targets(
                         snapshot.inventory,
                         open_buy_amount=sum(
@@ -1398,7 +1447,13 @@ class SimpleMarketMaker:
                         min(sell_target, snapshot.available_inventory - float(self.cfg.inv_min)),
                     )
                     sell_locked_reason = None
-                    if sell_amount >= self._min_tradable_size() and (
+                    if ask_price is None:
+                        # v2 quoted the bid side only (inventory low, or only
+                        # the buy leg cleared the bar).
+                        sell_reason = "one_sided_quote"
+                    elif self._resting_order_blocks(ask_price, resting_sells):
+                        sell_reason = "resting_order_kept"
+                    elif sell_amount >= self._min_tradable_size() and (
                         sell_locked_reason := self._locked_inventory_guard_reason(
                             locked_sell_inventory=snapshot.locked_inventory,
                             new_order_amount=sell_amount,
@@ -1449,7 +1504,13 @@ class SimpleMarketMaker:
                     affordable = snapshot.available_cash / bid_price if bid_price and bid_price > 0 else 0.0
                     buy_amount = max(0.0, min(buy_target, affordable))
                     buy_locked_cash_reason = None
-                    if buy_target < self._min_tradable_size():
+                    if bid_price is None:
+                        # v2 quoted the ask side only (inventory high, or only
+                        # the sell leg cleared the bar).
+                        buy_reason = "one_sided_quote"
+                    elif self._resting_order_blocks(bid_price, resting_buys):
+                        buy_reason = "resting_order_kept"
+                    elif buy_target < self._min_tradable_size():
                         # Inventory (plus resting buys) is at the top of its
                         # band, so the linear sizing rule scaled the buy below
                         # the tradable minimum. Not a cash shortage.
@@ -1790,21 +1851,26 @@ class SimpleMarketMaker:
                 self._emit_algo1_diagnostic(ob, float(inv_current), round_no=round_no)
                 res = self._decide_order(ob, float(inv_current))
                 if res is not None:
-                    bid_price = float(res["bid"])
-                    ask_price = float(res["ask"])
-                    bid_lvl = res["bid level"]
-                    ask_lvl = res["ask level"]
-    
-                    # Current locked totals from our open orders
+                    bid_price = self._quote_side_price(res, "bid")
+                    ask_price = self._quote_side_price(res, "ask")
+                    bid_lvl = self._quote_side_level(res, "bid level")
+                    ask_lvl = self._quote_side_level(res, "ask level")
+
+                    # Current locked totals (and resting prices) from our open orders
                     buy_locked, sell_locked = self.get_open_order_totals()
+                    resting = getattr(self, "_resting_orders", {"buy": [], "sell": []})
                     buy_target, sell_target = self._inventory_sized_order_targets(
                         float(inv_current),
                         open_buy_amount=buy_locked['amount'],
                         open_sell_amount=sell_locked['amount'],
                     )
-    
+
                     # SELL: cap by available (inventory minus already-locked sells)
                     sell_size = max(0.0, min(sell_target, (inv_current - sell_locked['amount']) - float(self.cfg.inv_min)))
+                    if ask_price is None:
+                        sell_size = 0.0  # one-sided quote: no ask this round
+                    elif self._resting_order_blocks(ask_price, resting.get("sell", [])):
+                        sell_size = 0.0  # an order of ours already rests at this price
                     if sell_size >= self._min_tradable_size() and self._locked_inventory_guard_reason(
                         locked_sell_inventory=sell_locked['amount'],
                         new_order_amount=sell_size,
@@ -1822,17 +1888,21 @@ class SimpleMarketMaker:
                         )
                         if sell_id:
                             sell_sent = 1
-                            sell_size_value = float(sell_size)     # NEW: record size actually sent
+                            sell_size_value = float(sell_size)     # record size actually sent
                             ask_price_sent = ask_price
                             self.tracked_orders["sell"].add(sell_id)
-    
+
                     # BUY: cap by available quote after buy-locked cash, and by inv_max
                     if bid_price and bid_price > 0:
                         buy_affordable_base = (cash_current - buy_locked['cash']) / bid_price
                     else:
                         buy_affordable_base = 0.0
-    
+
                     buy_size = max(0.0, min(buy_target, buy_affordable_base))
+                    if bid_price is None:
+                        buy_size = 0.0  # one-sided quote: no bid this round
+                    elif self._resting_order_blocks(bid_price, resting.get("buy", [])):
+                        buy_size = 0.0  # an order of ours already rests at this price
                     if buy_size >= self._min_tradable_size() and self._locked_cash_guard_reason(
                         locked_buy_cash=buy_locked['cash'],
                         new_order_cash=buy_size * bid_price,
@@ -1850,10 +1920,10 @@ class SimpleMarketMaker:
                         )
                         if buy_id:
                             buy_sent = 1
-                            buy_size_value = float(buy_size)       # NEW: record size actually sent
+                            buy_size_value = float(buy_size)       # record size actually sent
                             bid_price_sent = bid_price
                             self.tracked_orders["buy"].add(buy_id)
-    
+
                 # ---- (E) Build the row: status cells start with ID or 'not_sent' ----
                 buy_status_cell = buy_id if (buy_sent and buy_id) else "not_sent"
                 sell_status_cell = sell_id if (sell_sent and sell_id) else "not_sent"

@@ -66,6 +66,16 @@ class RestThenTouchBook(ExchangeClient):
         raise AssertionError("real cancellation is forbidden")
 
 
+class _LevelOneBid:
+    """Rests a bid one tick inside the second level; with the matcher's
+    level-1 fast fill it fills on the next observation, so orders open in
+    one round and fill in a later one -- the condition under test."""
+
+    def decide_order(self, ob, inv_current):
+        price = float(ob["bids"][1][0]) + 10.0
+        return {"bid": price, "ask": None, "bid level": 1, "ask level": None}
+
+
 @pytest.fixture
 def demo_run(tmp_path, monkeypatch):
     monkeypatch.setattr(engine_module, "TELEGRAM_BOT_TOKEN", None)
@@ -80,8 +90,12 @@ def demo_run(tmp_path, monkeypatch):
     cfg.demo_state_path = str(tmp_path / "state.json")
     cfg.demo_fee_state_path = str(tmp_path / "fees.json")
     cfg.demo_archive_path = str(tmp_path / "arch.jsonl")
+    cfg.demo_level1_fast_fill_enabled = True
+    cfg.demo_level1_fill_delay_seconds = 30
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "hysteresis_ticks", 0)
 
     bot = run.make_bot(cfg, mode="demo")
+    bot.strategy = _LevelOneBid()
     bot.exchange._market_data = RestThenTouchBook()
     clock = iter([T0 + timedelta(seconds=20 * i) for i in range(300)])
     bot.now_provider = lambda: next(clock)

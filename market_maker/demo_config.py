@@ -65,6 +65,24 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "buy_locked_cash_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total quote cash (free + already locked in BUY orders) locked in resting BUY orders, 0-1."),
     "sell_locked_inventory_limit_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Reject new SELL orders that would push locked inventory past the ratio below."),
     "sell_locked_inventory_limit_ratio": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Max share of total base inventory (free + already locked in SELL orders) locked in resting SELL orders, 0-1."),
+    # ---- Algorithm 1 v2 quote selection (strategy/algo1.py) ----
+    "grid_min_perc": FieldDefinition(float, 0.00001, 0.5, ApplicationMode.HOT, "Nearest candidate distance from the quote centre, as a fraction of price (0.0005 = 0.05%)."),
+    "grid_ratio": FieldDefinition(float, 1.05, 10, ApplicationMode.HOT, "Multiplier between consecutive candidate distances (1.4 = each step 40% farther out)."),
+    "grid_max_perc": FieldDefinition(float, 0.00001, 0.5, ApplicationMode.HOT, "Farthest candidate distance from the quote centre, as a fraction of price (0.02 = 2%)."),
+    "skew_perc": FieldDefinition(float, 0, 0.1, ApplicationMode.HOT, "How far the inventory moves the quote centre at the band edges, as a fraction of price: centre = mid * (1 - skew * (2x - 1)). 0 = no skew."),
+    "one_sided_lo": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Inventory position (0-1) at or below which only BUY orders are quoted."),
+    "one_sided_hi": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Inventory position (0-1) at or above which only SELL orders are quoted."),
+    "cost_basis_reference": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Judge a lone SELL against the average price we paid for the inventory (when known) instead of the current quote centre."),
+    "ev_min": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Expected-value floor per order lifetime (fraction of capital); pairs below it are not quoted even if they clear the profit bar."),
+    "adverse_selection_perc": FieldDefinition(float, 0, 0.1, ApplicationMode.HOT, "Average loss charged in the expected value when only one leg fills, as a fraction of price (measured from the price move after fills; 0 at first)."),
+    "hysteresis_ticks": FieldDefinition(int, 0, 10000, ApplicationMode.HOT, "Keep a resting order while the new price is within this many ticks of it and it is younger than refresh_seconds. 0 = re-quote every round."),
+    "refresh_seconds": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Age after which a resting order is re-quoted even when its price barely moved."),
+    "fill_table_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Use the measured fill-probability table (fill_table_<pair>.json) when it is fresh; off = formula only."),
+    "fill_table_max_age_hours": FieldDefinition(float, 0, None, ApplicationMode.HOT, "A fill table older than this is ignored and the formula is used."),
+    "fill_table_min_samples": FieldDefinition(int, 0, None, ApplicationMode.HOT, "Table buckets with fewer observations than this fall back to the formula."),
+    "fill_kappa": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Fallback fill formula: decay of the fill rate per unit of relative distance (400 = e-fold every 0.25%)."),
+    "fill_lambda_tau": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Fallback fill formula: expected fills at zero distance during one order lifetime."),
+    "fill_queue_volume_ref": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Queue correction: fill probability is multiplied by exp(-volume ahead / this). 0 = no correction."),
 })
 
 ALLOWED_FIELDS = frozenset(FIELD_DEFINITIONS)
@@ -115,6 +133,10 @@ def _validate_desired_values(values: Mapping[str, Any]) -> None:
         raise OverlayValidationError("inv_min must be < inv_max")
     if "order_size" in values and values["order_size"] <= 0:
         raise OverlayValidationError("order_size must be > 0")
+    if {"grid_min_perc", "grid_max_perc"} <= values.keys() and values["grid_min_perc"] > values["grid_max_perc"]:
+        raise OverlayValidationError("grid_min_perc must be <= grid_max_perc")
+    if {"one_sided_lo", "one_sided_hi"} <= values.keys() and values["one_sided_lo"] >= values["one_sided_hi"]:
+        raise OverlayValidationError("one_sided_lo must be < one_sided_hi")
     if (
         "demo_max_fill_per_observation_orders" in values
         and values["demo_max_fill_per_observation_orders"] <= 0

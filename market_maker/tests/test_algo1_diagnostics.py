@@ -1,86 +1,104 @@
 import json
 
+import pytest
+
 import run
 from helpers import make_bot, make_orderbook
 
 
-def test_zero_inventory_usdt_diagnostic_classifies_depth_fallback(monkeypatch, tmp_path):
+def _usdt_book():
+    bids = [[2_659_990, "20000"], [2_659_900, "300"], [2_658_000, "1500"], [2_655_000, "8000"],
+            [2_650_000, "40000"], [2_640_000, "10000"], [2_630_000, "5000"], [2_620_000, "5000"],
+            [2_610_000, "5000"], [2_600_000, "5000"], [2_590_000, "5000"]]
+    asks = [[2_660_010, "5000"], [2_660_100, "400"], [2_662_000, "2000"], [2_665_000, "6000"],
+            [2_670_000, "30000"], [2_680_000, "12000"], [2_690_000, "5000"], [2_700_000, "5000"],
+            [2_710_000, "5000"], [2_720_000, "5000"], [2_730_000, "5000"]]
+    return {"bids": bids, "asks": asks, "lastTradePrice": "2660000"}
+
+
+def test_diagnostic_describes_candidates_pairs_and_the_selection(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
-    cfg.exp_ret_min = cfg.commission_perc
+    cfg.commission_perc = 0.0025
+    cfg.exp_ret_min = 0.0025
+    cfg.skew_perc = 0.0
     bot = make_bot(cfg)
-    book = {
-        "bids": [["100", "1"] for _ in range(11)],
-        "asks": [["100.1", "1"] for _ in range(11)],
-        "lastTradePrice": "100",
-    }
 
-    diagnostic = bot.strategy.diagnostics(book, 0.0, round_no=23, session_id=cfg.session)
+    quote = bot.strategy.decide_order(_usdt_book(), 25.0)
+    diagnostic = bot.strategy.diagnostics(_usdt_book(), 25.0, round_no=23, session_id=cfg.session)
 
-    assert diagnostic["inv_d"] == -5
-    assert diagnostic["candidate_pairs"] == [[5, 10], [4, 9], [3, 8], [2, 7], [1, 6]]
-    assert diagnostic["commission_perc"] == 0.001
-    assert diagnostic["exp_ret_min"] == 0.001
-    assert diagnostic["required_threshold"] == 0.001
-    assert diagnostic["min_required_return"] == 0.001
-    assert diagnostic["mid_price"] == 100.05
-    assert diagnostic["selected_bid_level"] is None
-    assert diagnostic["selected_ask_level"] is None
-    assert diagnostic["fallback_bid_level"] == 10
-    assert diagnostic["fallback_ask_level"] == 10
-    assert diagnostic["fallback_detected"] is True
-    assert diagnostic["selection_reason"] == "no_candidate_passed_fallback_rejected"
-    assert diagnostic["candidate_results"][0]["bid_price"] == 100.0
-    assert diagnostic["candidate_results"][0]["ask_price"] == 100.1
-    assert diagnostic["candidate_results"][0]["last_price"] == 100.0
-    assert diagnostic["candidate_results"][0]["required_threshold"] == 0.001
-    assert diagnostic["candidate_results"][0]["min_required_return"] == 0.001
-    # USDTIRT tick = 10: one tick inside a 100/100.1 book is crossed, so the
-    # submitted prices carry a negative net return and the candidate fails.
-    assert diagnostic["candidate_results"][0]["submitted_bid_price"] == 110.0
-    assert diagnostic["candidate_results"][0]["submitted_ask_price"] == 90.1
-    assert diagnostic["candidate_results"][0]["net_return"] < 0
+    assert diagnostic["algorithm_version"] == 2
+    assert diagnostic["inventory_position"] == 0.5
+    assert diagnostic["inv_d"] == 0                       # legacy staircase value
+    assert diagnostic["centre"] == pytest.approx(2_660_000.0)
+    assert diagnostic["mid_price"] == pytest.approx(2_660_000.0)
+    assert diagnostic["commission_perc"] == 0.0025
+    assert diagnostic["exp_ret_min"] == diagnostic["required_threshold"] == diagnostic["min_required_return"] == 0.0025
+    assert diagnostic["gross_bar"] == pytest.approx(0.00753, abs=2e-5)
+    assert diagnostic["distance_grid"][0] == pytest.approx(cfg.grid_min_perc)
+    assert [c["price"] for c in diagnostic["candidate_bids"]][:2] == [2_658_010.0, 2_655_010.0]
+    assert all({"side", "price", "distance", "level", "anchored", "fill_probability"} <= set(c) for c in diagnostic["candidate_bids"])
+    assert len(diagnostic["candidate_results"]) == len(diagnostic["candidate_bids"]) * len(diagnostic["candidate_asks"])
+    first = diagnostic["candidate_results"][0]
+    for key in ("bid_level", "ask_level", "bid_price", "ask_price", "submitted_bid_price",
+                "submitted_ask_price", "last_price", "mid_price", "spread_ratio",
+                "relative_quoted_spread", "gross_return", "net_return", "p_bid", "p_ask",
+                "expected_value", "required_threshold", "min_required_return", "passed"):
+        assert key in first
+    assert diagnostic["quote_mode"] == "pair"
+    assert diagnostic["selection_reason"] == "pair_selected"
+    assert diagnostic["selected_bid_price"] == quote["bid"]
+    assert diagnostic["selected_ask_price"] == quote["ask"]
+    assert diagnostic["selected_bid_level"] == quote["bid level"]
+    assert diagnostic["fallback_detected"] is False
+    assert diagnostic["fill_model"]["formula_kappa"] == cfg.fill_kappa
+    winner = max((r for r in diagnostic["candidate_results"] if r["passed"]), key=lambda r: r["expected_value"])
+    assert winner["submitted_bid_price"] == quote["bid"]
 
 
-def test_shallow_book_diagnostic_documents_unexpressible_inventory_skew(monkeypatch, tmp_path):
+def test_diagnostic_is_pure_and_json_serialisable(monkeypatch, tmp_path):
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
+    bot = make_bot(cfg)
+    book = make_orderbook(n=11, last=100)
+    before = bot.strategy.cost_basis(), dict(bot.strategy._resting)
+    document = bot.strategy.diagnostics(book, 0.0, round_no=1, session_id=cfg.session)
+    json.dumps(document, sort_keys=True)
+    assert (bot.strategy.cost_basis(), dict(bot.strategy._resting)) == before
+
+
+def test_shallow_book_diagnostic_reports_the_available_depth(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     bot = make_bot(cfg)
 
     diagnostic = bot.strategy.diagnostics(
-        make_orderbook(n=4, last=100), 0.0, round_no=1, session_id=cfg.session
+        make_orderbook(n=4, last=100), 0.5, round_no=1, session_id=cfg.session
     )
-
     assert diagnostic["depth_max_available"] == 3
-    assert diagnostic["candidate_pairs"] == []
-    assert diagnostic["fallback_detected"] is True
-    assert diagnostic["selection_reason"] == "inventory_skew_unexpressible_in_shallow_book"
+
+    two_levels = {
+        "bids": [["2000000", "1"], ["1999000", "1"]],
+        "asks": [["2000020", "1"], ["2001020", "1"]],
+        "lastTradePrice": "2000010",
+    }
+    diagnostic = bot.strategy.diagnostics(two_levels, 0.5, round_no=1, session_id=cfg.session)
+    assert diagnostic["depth_max_available"] == 1
+    assert diagnostic["candidate_bids"]                 # synthetic candidates beyond the book
+    assert any(not c["anchored"] for c in diagnostic["candidate_bids"])
 
 
-def test_actual_candidate_selection_is_not_classified_as_fallback(monkeypatch, tmp_path):
+def test_single_level_book_diagnostic_names_the_reason(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
-    cfg.commission_perc = 0.0001
-    cfg.exp_ret_min = 0.0001
     bot = make_bot(cfg)
-    # USDTIRT ticks are 10.0, so the 100/101 book used elsewhere is crossed
-    # after the one-tick adjustment (bid 110 > ask 91) and would yield no
-    # candidate at all. Use a realistic IRT-denominated book whose top-of-book
-    # spread (~1%) clears the fee-adjusted net-return bar.
-    book = {
-        "bids": [[str(2_000_000 - 20_000 * i), "1"] for i in range(11)],
-        "asks": [[str(2_020_000 + 20_000 * i), "1"] for i in range(11)],
-        "lastTradePrice": "2000000",
-    }
+    book = {"bids": [["100", "1"]], "asks": [["101", "1"]], "lastTradePrice": "100"}
 
-    quote = bot.strategy.decide_order(book, 0.0)
-    diagnostic = bot.strategy.diagnostics(book, 0.0, round_no=2, session_id=cfg.session)
+    diagnostic = bot.strategy.diagnostics(book, 0.5, round_no=1, session_id=cfg.session)
 
-    assert quote is not None
-    assert diagnostic["fallback_detected"] is False
-    assert diagnostic["selection_reason"] == "candidate_selected"
-    assert diagnostic["selected_bid_level"] == quote["bid level"]
-    assert diagnostic["selected_ask_level"] == quote["ask level"]
+    assert diagnostic["selection_reason"] == "invalid_or_single_level_order_book"
+    assert diagnostic["candidate_results"] == []
+    assert bot.strategy.no_quote_reason(book, 0.5) == "invalid_or_single_level_order_book"
 
 
 def test_optional_jsonl_logging_is_deterministic_and_disabled_by_default(monkeypatch, tmp_path):
@@ -109,24 +127,17 @@ def test_optional_jsonl_logging_is_deterministic_and_disabled_by_default(monkeyp
     assert "token" not in first.lower()
 
 
-def test_no_quote_reason_distinguishes_shallow_skew_from_profitability(monkeypatch, tmp_path):
+def test_no_quote_reason_distinguishes_the_bar_from_the_floor(monkeypatch, tmp_path):
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
+    cfg.commission_perc = 0.2
+    cfg.exp_ret_min = 0.2
     bot = make_bot(cfg)
+    assert bot.strategy.no_quote_reason(_usdt_book(), 25.0) == "no_side_clears_bar"
 
-    assert bot.strategy.no_quote_reason(make_orderbook(n=4), 0.0) == (
-        "inventory_skew_unexpressible_in_shallow_book"
-    )
-    # Book is flat at every level, so even the loosest inventory-skewed
-    # candidate never clears the profitability bar -- the root-cause fix
-    # (reports/batch-fill-definitive-root-cause.md) surfaces this under its
-    # own name rather than the generic profitability_threshold, since it
-    # used to be the silent (depth_max, depth_max) fallback path.
-    tight = {
-        "bids": [["100", "1"] for _ in range(11)],
-        "asks": [["100.1", "1"] for _ in range(11)],
-        "lastTradePrice": "100",
-    }
-    assert bot.strategy.no_quote_reason(tight, 0.0) == (
-        "no_profitable_inventory_skewed_candidate"
-    )
+    cfg.commission_perc = 0.0025
+    cfg.exp_ret_min = 0.0025
+    cfg.ev_min = 0.9
+    assert bot.strategy.no_quote_reason(_usdt_book(), 25.0) == "expected_value_below_floor"
+    cfg.ev_min = 0.0
+    assert bot.strategy.no_quote_reason(_usdt_book(), 25.0) == "quote_available"

@@ -10,6 +10,16 @@ from session import WorkerLease
 
 
 TRADING_PROFILES = config.TRADING_PROFILES
+
+
+@pytest.fixture(autouse=True)
+def _repost_every_round(monkeypatch):
+    """These tests post a fixed price every round and count the orders. The
+    v2 resting-order guard (hysteresis_ticks) would otherwise keep rounds 2+
+    from re-posting -- that behaviour has its own tests in
+    test_engine_one_sided.py."""
+    for pair in ("btc", "usdt"):
+        monkeypatch.setitem(run.TRADING_PROFILES[pair], "hysteresis_ticks", 0)
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=timezone.utc)
 
 
@@ -159,15 +169,15 @@ def test_hot_order_size_updates_demo_fill_budget_at_round_boundary(runtime_bot):
 def test_hot_inventory_bounds_change_strategy_skew(runtime_bot):
     bot, state_dir = runtime_bot
     book = make_orderbook()
-    before = bot.strategy.diagnostics(book, 10.0, round_no=1, session_id=bot.session)["inv_d"]
+    before = bot.strategy.diagnostics(book, 10.0, round_no=1, session_id=bot.session)["inventory_position"]
     save_desired(state_dir, inv_min=1.0, inv_max=20.0)
 
     result = bot.config_sync.reload_at_round_boundary()
-    after = bot.strategy.diagnostics(book, 10.0, round_no=1, session_id=bot.session)["inv_d"]
+    after = bot.strategy.diagnostics(book, 10.0, round_no=1, session_id=bot.session)["inventory_position"]
 
     assert result.ok
     assert after != before
-    assert after == -1
+    assert after == pytest.approx((10.0 - 1.0) / 19.0)
 
 
 def test_hot_inventory_max_changes_next_round_buy_cap(runtime_bot):

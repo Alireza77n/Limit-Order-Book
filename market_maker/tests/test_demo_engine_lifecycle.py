@@ -12,6 +12,16 @@ import pandas as pd
 T0 = datetime(2026, 8, 1, 8, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _repost_every_round(monkeypatch):
+    """These tests post a fixed price every round and count the orders. The
+    v2 resting-order guard (hysteresis_ticks) would otherwise keep rounds 2+
+    from re-posting -- that behaviour has its own tests in
+    test_engine_one_sided.py."""
+    for pair in ("btc", "usdt"):
+        monkeypatch.setitem(run.TRADING_PROFILES[pair], "hysteresis_ticks", 0)
+
+
 class DeterministicMarketData(ExchangeClient):
     def __init__(self):
         self.orderbook_calls = 0
@@ -101,6 +111,7 @@ def test_demo_engine_uses_canonical_lifecycle_and_explicit_csv(monkeypatch, tmp_
     monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "inventory_sizing_enabled", False)
     cfg.max_rounds = 2
     cfg.time_step = 0
+    cfg.demo_level1_fast_fill_enabled = True   # v2 profiles turn it off; this test pins the matcher
     cfg.demo_level1_fill_delay_seconds = 0
     cfg.demo_level1_fill_fraction = 1.0
 
@@ -187,6 +198,7 @@ def _sizing_bot(monkeypatch, tmp_path, cash_initial):
     cfg.order_size = 1.0
     cfg.max_rounds = 1
     cfg.time_step = 0
+    cfg.demo_level1_fast_fill_enabled = True
     cfg.demo_level1_fill_delay_seconds = 0
     bot = run.make_bot(cfg, mode="demo")
     bot.exchange._market_data = DeterministicMarketData()

@@ -116,11 +116,13 @@ real trading or to MySQL: `safety.py` refuses to start.
 |---|---|
 | `run.py` | Entry point. Builds the config for a profile, picks the exchange client and the strategy, takes the worker lock, starts the loop. |
 | `engine.py` | `SimpleMarketMaker`, the main loop. Fetches the market, tracks fills, inventory and cash, decides order sizes, sends and cancels orders, writes the CSV, sends Telegram messages. Has two loops: `run()` for real mode and `_run_demo()` for demo mode. |
-| `strategy/algo1.py` | Algorithm 1. Decides only the bid and ask price levels. No network or file access. |
+| `strategy/algo1.py` | Algorithm 1 (version 2). Decides the bid and ask prices, or one of them: distance-anchored candidates, fill probabilities, expected-value selection, one-sided quotes, hysteresis. No network or file access beyond the fill table. |
+| `fill_model.py` | `FillModel`: loads `fill_table_<pair>.json` (reloaded when it changes), falls back to the parametric fill formula. |
+| `tools/build_fill_table.py` | Builds the fill table from the CSVs (price path + own orders); run daily. |
 | `strategy/algo2.py` | Placeholder for Avellaneda-Stoikov. Not implemented. |
 | `strategy/base.py` | The interface every strategy implements (`decide_order`). |
 | `config.py` | The `MMConfig` dataclass and `TRADING_PROFILES`, the default parameters for `btc` and `usdt`. |
-| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts 15 fields only, forces commission and minimum return to at least 0.25%, forces both exposure guards on with a ratio of at most 25%. |
+| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts the 33 editable fields only, forces commission and minimum return to at least 0.25%, forces both exposure guards on with a ratio of at most 25%. |
 | `demo_config.py` | Defines which fields the admin panel may edit, validates them, and reloads changed values into a running demo worker at round boundaries. |
 | `safety.py` | Refuses to start demo mode with a real exchange client or with MySQL persistence. |
 | `session.py` | Session ids and `WorkerLease`, a file lock that prevents two workers on the same pair. |
@@ -198,12 +200,18 @@ The parameters that matter for trading:
 | `order_size` | Base-asset amount per order (BTC or USDT) at the middle of the inventory band. Each side is scaled between 0 and 2× this ([section 7](#7-how-order-sizes-are-decided)). |
 | `inv_min`, `inv_max` | The inventory band. Drives the price skew and the order sizes, and caps buying. |
 | `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction` | The linear size rule ([section 7](#7-how-order-sizes-are-decided)). Editable from the admin panel, for demo and for live. |
-| `depth_max` | How many order-book levels the strategy may use. |
+| `depth_max` | How many order-book levels the strategy may use when anchoring candidates. |
 | `commission_perc` | Fee per leg, as a fraction (0.0025 = 0.25%). |
 | `exp_ret_min` | Minimum net round-trip return required to quote. |
 | `time_step` | Seconds between rounds. |
-| `cancel_after_minutes` | Age at which a resting order is cancelled. |
+| `cancel_after_minutes` | Age at which a resting order is cancelled; also the lifetime the fill probabilities refer to. |
 | `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_ratio` | Maximum share of cash or inventory that may be locked in open orders. |
+| `grid_min_perc`, `grid_ratio`, `grid_max_perc` | Candidate distances from the quote centre ([section 6](#6-algorithm-1-in-detail-version-2-2026-10-11), step 2). |
+| `skew_perc` | How far the inventory moves the quote centre at the band edges (step 1). |
+| `one_sided_lo`, `one_sided_hi`, `cost_basis_reference` | When only one side is quoted and against which reference price (step 5). |
+| `ev_min`, `adverse_selection_perc` | Expected-value floor and the one-leg cost in the pair score (step 4). |
+| `hysteresis_ticks`, `refresh_seconds` | Keep a resting price / do not re-post within this window (step 6). |
+| `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | The fill model (step 3; `docs/algorithms/FILL_MODEL.md`). |
 
 Live-mode values at the time of the review:
 
@@ -258,83 +266,88 @@ of its own open orders.
 
 ---
 
-## 6. Algorithm 1 in detail
+## 6. Algorithm 1 in detail (version 2, 2026-10-11)
 
-Algorithm 1 chooses two order-book levels, one for the bid and one for the
-ask, and quotes one tick inside each. Inventory shifts the two levels in
-opposite directions. Level 0 is the best price; higher levels are further from
-the market.
+The full specification with every formula, figures, the worked example and
+the test map is in [`docs/algorithms/ALGORITHM_1_V2.md`](docs/algorithms/ALGORITHM_1_V2.md);
+the fill probabilities are explained in [`docs/algorithms/FILL_MODEL.md`](docs/algorithms/FILL_MODEL.md);
+the differences from version 1 in [`docs/algorithms/CHANGES_V1_TO_V2.md`](docs/algorithms/CHANGES_V1_TO_V2.md).
+Version 1 stays on the git branch `MM_algo1v1`. This section is the short form.
 
-### Step 1: turn inventory into an integer shift
+Algorithm 1 decides the bid price and the ask price (or only one of them, or
+none); the engine decides the sizes ([section 7](#7-how-order-sizes-are-decided)).
 
-```
-inv_d = int( 10 × (inv − inv_min) / (inv_max − inv_min) ) − 5
-```
-
-| Inventory | `inv_d` |
-|---|---|
-| empty (`inv_min`) | −5 |
-| half | 0 |
-| full (`inv_max`) | +5 |
-
-### Step 2: build candidate level pairs
+### Step 1: the inventory moves the quote centre
 
 ```
-for bid_level from depth_max down to 1:
-    ask_level = bid_level − inv_d
-    keep the pair if 0 ≤ ask_level ≤ depth_max
+x = clamp( (inv − inv_min) / (inv_max − inv_min), 0, 1 )
+c = mid × (1 − skew_perc × (2x − 1))
 ```
 
-- Low inventory (`inv_d` negative): the ask sits deeper than the bid. The bot
-  buys close to the market and sells far from it.
-- High inventory (`inv_d` positive): the reverse. It sells close to the market
-  and buys far from it.
+Half-full inventory leaves the centre at the mid. A full band moves it
+`skew_perc` (0.2%) below the mid, so every ask candidate is nearer the market
+and every bid candidate farther; an empty band does the opposite. Inventory
+outside the band saturates at 0 or 1 instead of switching the quote off.
 
-### Step 3: price each candidate
+### Step 2: candidates at fixed distances from the centre
 
-The price actually submitted is one tick inside the level (tick is 10 for IRT
-pairs):
+A geometric grid of distances, 0.05%, 0.07%, 0.10%, … 1.45% (`grid_min_perc`
+× `grid_ratio`^k up to `grid_max_perc`). For each distance the first book level
+at or beyond the target is found and the price one tick inside it is the
+candidate (the same anchoring version 1 used for level indices). When the book
+ends before the target the tick-rounded target itself is used. Candidates
+never cross the touch and duplicates are kept once. The *real* distance of
+each candidate from the centre is what the next step uses.
+
+### Step 3: each candidate gets a fill probability
+
+`p(distance)` = probability that an order resting at that distance is filled
+within `cancel_after_minutes`. From the measured table
+`fill_table_<pair>.json` (built daily by `tools/build_fill_table.py` from the
+CSVs) when it is fresh, otherwise from the fallback formula
+`p = 1 − exp(−fill_lambda_tau × exp(−fill_kappa × distance))`.
+
+### Step 4: every bid/ask pair is scored by expected value
 
 ```
-bid = price at bid_level + tick
-ask = price at ask_level − tick
+R_net = ask × (1 − fee)² / bid − 1                      (unchanged from version 1)
+J     = p_bid × p_ask × R_net − adverse_selection_perc × (p_bid(1 − p_ask) + p_ask(1 − p_bid))
 ```
 
-### Step 4: the profitability test
+A pair is feasible when `R_net > exp_ret_min` and `J > ev_min`. The feasible
+pair with the largest `J` is quoted. All pairs are scored, so one odd level
+in the book cannot hide a better pair (version 1 stopped at the first failure).
 
-```
-R_net = ask × (1 − fee) × (1 − fee) / bid − 1
-accept if R_net > exp_ret_min
-```
+### Step 5: one side alone when that is what makes sense
 
-The capital basis is the submitted buy price. The last traded price is not
-used. With a fee of 0.25% per leg and `exp_ret_min` of 0.25%, the ask must be
-about 0.75% above the bid.
+A lone sell is allowed when `ask > P_ref × (1 + G)`, a lone buy when
+`bid < P_ref / (1 + G)`, with `G = (1 + exp_ret_min)/(1 − fee)² − 1` (0.753% at
+0.25%/0.25%) and `P_ref` the centre or, for a sell of inventory we bought
+ourselves, its average cost. Used when the inventory position is at or beyond
+`one_sided_hi` (asks only) / `one_sided_lo` (bids only), and as the fallback
+when no pair is feasible.
 
-### Step 5: choose the tightest profitable pair
+### Step 6: resting prices are kept
 
-Candidates are tested from the widest (deepest levels) inward. The scan stops
-at the first failure and keeps the last pair that passed. If even the widest
-pair fails, the algorithm returns no quote for the round.
+A new price within `hysteresis_ticks` of the resting one, while the resting
+quote is younger than `refresh_seconds`, is replaced by the resting price, and
+the engine does not re-post a side when one of its own orders already rests
+within that window.
 
 ### Worked example
 
-Synthetic book: best bid 1,000,000, best ask 1,004,000, levels 1,000 apart,
-`depth_max` 10, fee 0.1%, `exp_ret_min` 0.1%, `inv_max` 50. Output of the
-actual code:
+USDT/IRT, fee 0.25%, `exp_ret_min` 0.25%, 25 of 50 USDT held, formula fill
+model, the book of `docs/algorithms/ALGORITHM_1_V2.md` §3. Output of the
+actual code (pinned by `tests/test_strategy_algo1.py`):
 
-| Inventory | `inv_d` | Bid level | Ask level | Bid | Ask |
+| Inventory | Quote mode | Bid | Ask | Net return | Expected value |
 |---|---|---|---|---|---|
-| 0 | −5 | 1 | 6 | 999,010 | 1,009,990 |
-| 10 | −3 | 1 | 4 | 999,010 | 1,007,990 |
-| 25 | 0 | 1 | 1 | 999,010 | 1,004,990 |
-| 40 | 3 | 3 | 0 | 997,010 | 1,003,990 |
-| 50 | 5 | 5 | 0 | 995,010 | 1,003,990 |
-| 70 | 9 | 9 | 0 | 991,010 | 1,003,990 |
-| 81 | 11 | no quote | | | |
+| 25 of 50 | pair | 2,650,010 (level 4) | 2,669,990 (level 4) | 0.251% | 0.0100% per lifetime |
+| 48 of 50, cost basis 2,640,000 | ask only | — | 2,664,990 (level 3) | 0.44% vs cost | 0.17% |
+| 2 of 50 | bid only | 2,640,010 (level 5) | — | 0.44% vs centre | 0.010% |
 
-The last row is the problem described in
-[section 9, item 1](#9-problems-found-in-review).
+Version 1 quoted level pairs `(5,10) … (1,6)` at empty inventory and nothing
+at all above about 1.6 × `inv_max`.
 
 ---
 
@@ -465,8 +478,11 @@ What to expect in a live session:
 
 ## 9. Problems found in review
 
-Found by reading the live-mode code path on 2026-10-03. None of these has been
-fixed. Items 1 to 5 matter for real money.
+Found by reading the live-mode code path on 2026-10-03. Items 2 to 5 and 9
+are still open; items 1, 6, 7 and 8 were fixed by Algorithm 1 version 2 on
+2026-10-11 (inventory is clamped and a full wallet quotes sells only, the last
+price is optional, an empty band defaults to the middle position, candidates
+never cross the touch). Items 2 to 5 matter for real money.
 
 Fixed since then: the live worker crashed whenever it produced a quote while one
 of its own orders was still resting, because Nobitex reports an open order as
@@ -534,3 +550,25 @@ BTC/IRT, 26 to 27 September 2026, 1,330 rounds:
 - Inventory and cash did not change during the run: no fills were recorded.
 
 The bot is quiet on BTC/IRT because of the threshold, not because of a fault.
+
+---
+
+## 11. Algorithm 1 version 2 (2026-10-11)
+
+The selection rule of Algorithm 1 was replaced; the fee bar, the sizing rule,
+the engine's accounting and the file formats were kept. Short list (details in
+`docs/algorithms/`):
+
+| Change | Where |
+|---|---|
+| Candidates by price distance instead of level index; inventory moves the quote centre continuously | `strategy/algo1.py` |
+| Every pair scored by expected value with fill probabilities; best feasible pair wins | `strategy/algo1.py`, `fill_model.py` |
+| One-sided quotes at the band edges and as a fallback (reference: centre or own cost basis) | `strategy/algo1.py`, `engine.py` (a quote may omit a side) |
+| Resting prices kept; the engine does not re-post a side that already rests at the price | `strategy/algo1.py`, `engine.py` |
+| 18 new settings, all editable in the admin panel for demo and live | `config.py`, `demo_config.py`, `forward_config.py` |
+| Daily fill-table builder | `tools/build_fill_table.py` |
+| Demo matcher's level-1 fast fill switched off in the profiles | `config.py` |
+| Tests rewritten for the new rule; new tests for the fill model, the builder and the engine's one-sided handling | `tests/` |
+
+Before switching the new code to real mode, run it in demo for at least five
+days and apply the gate in `docs/algorithms/ALGORITHM_1_V2.md` §7.

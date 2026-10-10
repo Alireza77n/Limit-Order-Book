@@ -1,127 +1,104 @@
-"""Regression tests for the root-cause fix in
-reports/batch-fill-definitive-root-cause.md.
+"""Regression tests for the incident in
+reports/batch-fill-definitive-root-cause.md, kept for Algorithm 1 v2.
 
-Historical incident: at low/zero inventory, if the loosest inventory-skewed
-candidate pair failed `spread_ok`, `algo1_bid_ask_prices` used to fall back
-silently to the untested, unskewed `(depth_max, depth_max)` pair -- and
-return it as an ordinary quote whenever that pair happened to be profitable.
-In the recorded incident this produced a zero-inventory BUY quote at level
-10 (the loosest level in the book), which could never qualify for
-`level1_fast_fill` (`selected_level == 1` is a strict check), so it rested
-until price genuinely moved to it -- by which time several near-identical
-orders had accumulated and filled together.
+Historical incident: at zero inventory the version-1 scan fell back to an
+untested (depth_max, depth_max) pair and rested a level-10 BUY that
+accumulated with near-identical orders and filled together. The fix at the
+time was to return no quote instead of the untested pair. Version 2 has no
+level scan and no fallback pair at all; what must still hold is:
 
-The fix: if the scan never assigns a level (whether `leg_pairs()` is empty
-or its loosest candidate fails immediately), `algo1_bid_ask_prices` and
-`decide_order` return `None` instead of the untested fallback -- a real
-`no_quote` round, with the explicit reason
-`no_profitable_inventory_skewed_candidate` from `no_quote_reason()`.
+* every quote that is returned clears the fee bar on the exact prices sent;
+* zero inventory is a bid-only situation, never a two-sided one;
+* the same price is not re-posted every round (hysteresis + the engine's
+  resting-order guard), which is what let the orders accumulate.
 """
+
+from datetime import datetime, timedelta, timezone
 
 from config import MMConfig
 from strategy.algo1 import Algo1Strategy
 
 
-def _usdt_cfg():
-    return MMConfig(
+def _usdt_cfg(**overrides):
+    base = dict(
         depth_max=10, inv_min=0.0, inv_max=50.0,
         commission_perc=0.0010, exp_ret_min=0.0010, pair="USDTIRT",
+        skew_perc=0.0,
     )
+    base.update(overrides)
+    return MMConfig(**base)
 
 
 def _narrow_book():
-    """Book where the loosest d_q=-5 skewed candidate (5,10) fails, but the
-    unskewed (10,10) fallback -- never a real candidate at d_q=-5 -- would
-    have passed. Verified against the actual historical mechanism: this is
-    exactly the shape that produced the recorded level-10 BUY quote.
-
-    The ask gap was widened from 200 to 500 IRT so the pair still satisfies
-    BOTH profitability semantics (old raw (ask-bid)/last > 0.002 and the new
-    fee-adjusted net return on submitted prices > 0.001): net(5,10) ~
-    0.000996 < 0.001 fails while net(10,10) ~ 0.001496 > 0.001 passes."""
+    """The incident's book shape: 200-IRT bid steps, 500-IRT ask steps."""
     bids = [[str(2_000_000 - 200 * i), "1.0"] for i in range(11)]
     asks = [[str(2_000_020 + 500 * i), "1.0"] for i in range(11)]
     return {"bids": bids, "asks": asks, "lastTradePrice": "2000010"}
 
 
-def test_first_candidate_failure_no_longer_falls_back_silently():
-    """Prove the trap is real for this book/config before checking the fix:
-    the loosest actual skewed candidate (5,10) fails, while the old fallback
-    pair (10,10) -- never itself a member of leg_pairs(-5, 10) -- would have
-    passed. This is the exact condition the root-cause fix closes."""
+def test_zero_inventory_never_produces_a_two_sided_quote():
     strategy = Algo1Strategy(_usdt_cfg())
-    ob = _narrow_book()
+    quote = strategy.decide_order(_narrow_book(), 0.0)
+    assert quote is None or quote["quote mode"] == "bid_only"
+    if quote is not None:
+        assert quote["ask"] is None
+        # a lone bid clears the bar against the centre on its own
+        reference = quote["reference price"]
+        assert (1 - 0.001) ** 2 * reference / quote["bid"] - 1 > 0.001
 
-    assert strategy.leg_pairs(-5, 10) == [(5, 10), (4, 9), (3, 8), (2, 7), (1, 6)]
-    assert strategy.spread_ok(ob, 5, 10) is False
-    assert strategy.spread_ok(ob, 10, 10) is True
 
-
-def test_zero_inventory_first_candidate_failure_returns_no_quote():
-    """The actual fix: decide_order must return None here, not a level-10
-    quote, now that the untested fallback is never used."""
+def test_a_returned_pair_always_clears_the_bar_on_the_submitted_prices():
     strategy = Algo1Strategy(_usdt_cfg())
-    ob = _narrow_book()
+    for inventory in (10.0, 25.0, 40.0):
+        quote = strategy.decide_order(_narrow_book(), inventory)
+        strategy.reset_memory()
+        if quote is not None and quote["quote mode"] == "pair":
+            assert strategy.net_return(quote["bid"], quote["ask"]) > strategy.min_required_return()
 
-    assert strategy.algo1_bid_ask_prices(ob, 0.0) is None
-    assert strategy.decide_order(ob, 0.0) is None
 
-
-def test_zero_inventory_first_candidate_failure_has_explicit_reason():
-    strategy = Algo1Strategy(_usdt_cfg())
-    ob = _narrow_book()
-
-    assert strategy.no_quote_reason(ob, 0.0) == "no_profitable_inventory_skewed_candidate"
-
-    diagnostic = strategy.diagnostics(ob, 0.0, round_no=1, session_id="regression")
-    assert diagnostic["fallback_detected"] is True
+def test_no_quote_has_an_explicit_reason():
+    strategy = Algo1Strategy(_usdt_cfg(commission_perc=0.2, exp_ret_min=0.2))
+    assert strategy.decide_order(_narrow_book(), 0.0) is None
+    reason = strategy.no_quote_reason(_narrow_book(), 0.0)
+    assert reason in {"no_side_clears_bar", "expected_value_below_floor"}
+    diagnostic = strategy.diagnostics(_narrow_book(), 0.0, round_no=1, session_id="regression")
+    assert diagnostic["fallback_detected"] is False
     assert diagnostic["selected_bid_level"] is None
     assert diagnostic["selected_ask_level"] is None
+    assert diagnostic["selection_reason"] == reason
 
 
-def test_normal_zero_inventory_case_still_reaches_level_one():
-    """Positive control: when the book is wide enough that every candidate
-    from (5,10) down to (1,6) clears the profitability bar, the scan must
-    still walk all the way to the tightest one -- level 1 -- exactly as
-    before the fix. The fix only removes the untested fallback; it must not
-    touch a scan that actually completes."""
+def test_wide_book_quotes_near_the_touch_not_at_the_deepest_level():
+    """Positive control: a wide, profitable book gets a tight quote, not the
+    deepest level the old scan could reach."""
     strategy = Algo1Strategy(_usdt_cfg())
     bids = [[str(2_000_000 - 1_000 * i), "1.0"] for i in range(11)]
     asks = [[str(2_000_020 + 1_000 * i), "1.0"] for i in range(11)]
     ob = {"bids": bids, "asks": asks, "lastTradePrice": "2000010"}
-
-    quote = strategy.decide_order(ob, 0.0)
-    assert quote is not None
-    assert quote["bid level"] == 1
-    assert quote["ask level"] == 6
-
-
-def test_normal_scan_breaking_partway_still_selects_last_feasible_pair():
-    """Positive control for the general case (not the trap): the scan should
-    still stop at the last feasible pair and return it, unaffected by the
-    fix, whenever at least one candidate passes. Under the fee-adjusted
-    net-return bar the break now sits at (8,8) instead of (5,5): net(8,8) ~
-    6.9% clears the 10% bar while net(7,7) ~ 4.8% does not."""
-    strategy = Algo1Strategy(MMConfig(
-        depth_max=10, inv_min=0.0, inv_max=1.0,
-        commission_perc=0.05, exp_ret_min=0.05, pair="BTCUSDT",
-    ))
-    bids = [[str(100 - i), "1.0"] for i in range(11)]
-    asks = [[str(101 + i), "1.0"] for i in range(11)]
-    ob = {"bids": bids, "asks": asks, "lastTradePrice": "100"}
-
-    quote = strategy.decide_order(ob, 0.5)
-    assert quote is not None
-    assert quote["bid level"] == 8
-    assert quote["ask level"] == 8
+    quote = strategy.decide_order(ob, 25.0)
+    assert quote is not None and quote["quote mode"] == "pair"
+    assert quote["bid level"] is not None and 1 <= quote["bid level"] <= 8
+    assert quote["ask level"] is not None and 1 <= quote["ask level"] <= 8
 
 
-def test_level1_order_still_fast_fills_after_the_fix():
-    """The fix touches only level SELECTION (algo1.py). The Demo matcher's
-    level1_fast_fill mechanism (paper.py) is untouched and must still fire
-    for a genuine level-1 order on the very next market observation."""
-    from datetime import datetime, timedelta, timezone
+def test_same_price_is_not_re_quoted_every_round():
+    """The accumulation mechanism: with hysteresis on, the second round
+    returns the resting price marked as kept, so the engine's guard can
+    skip the re-post."""
+    clock = {"t": 0.0}
+    strategy = Algo1Strategy(_usdt_cfg(hysteresis_ticks=5, refresh_seconds=600.0), clock=lambda: clock["t"])
+    first = strategy.decide_order(_narrow_book(), 25.0)
+    clock["t"] = 10.0
+    second = strategy.decide_order(_narrow_book(), 25.0)
+    assert first is not None and second is not None
+    assert second["bid"] == first["bid"] and second["bid kept"] is True
+    assert second["ask"] == first["ask"] and second["ask kept"] is True
 
+
+def test_level1_order_still_fast_fills_when_the_matcher_option_is_on():
+    """paper.py's level1_fast_fill is untouched by the strategy change; it is
+    now off in the profiles (v2 quotes by distance, so a level index says
+    nothing about the touch) but still works when enabled explicitly."""
     from paper import PaperLedger
 
     t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)

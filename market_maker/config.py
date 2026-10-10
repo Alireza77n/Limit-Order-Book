@@ -82,6 +82,43 @@ class MMConfig:
     inventory_sizing_enabled: bool = False
     inventory_sizing_strength: float = 1.0
     inventory_sizing_min_fraction: float = 0.0
+
+    # Algorithm 1 v2 quote selection -- see strategy/algo1.py and
+    # docs/algorithms/ALGORITHM_1_V2.md. All of these are hot-reloadable from
+    # the admin panel (demo_config.FIELD_DEFINITIONS / forward_config.FORWARD_FIELDS).
+    #
+    # Candidate distances from the quote centre, as fractions of price:
+    # delta_k = grid_min_perc * grid_ratio^(k-1) while delta_k <= grid_max_perc.
+    grid_min_perc: float = 0.0005
+    grid_ratio: float = 1.4
+    grid_max_perc: float = 0.02
+    # Inventory moves the quote centre: c = mid * (1 - skew_perc * (2x - 1)),
+    # x = position inside [inv_min, inv_max]. 0 = no skew.
+    skew_perc: float = 0.002
+    # Below one_sided_lo only bids are quoted, above one_sided_hi only asks.
+    one_sided_lo: float = 0.1
+    one_sided_hi: float = 0.9
+    # A lone sell is judged against the average cost of inventory we bought
+    # ourselves when it is known (True), else against the quote centre.
+    cost_basis_reference: bool = True
+    # Expected-value floor (fraction of capital per order lifetime) and the
+    # adverse-selection cost charged when only one leg fills.
+    ev_min: float = 0.00001
+    adverse_selection_perc: float = 0.0
+    # Keep a resting price while the new one is within hysteresis_ticks and
+    # the quote is younger than refresh_seconds (0 = always re-quote).
+    hysteresis_ticks: int = 5
+    refresh_seconds: float = 300.0
+    # Fill-probability model (fill_model.py): measured table when fresh and
+    # populated, else the formula p = 1 - exp(-lambda_tau * exp(-kappa * delta)).
+    fill_table_enabled: bool = True
+    fill_table_max_age_hours: float = 48.0
+    fill_table_min_samples: int = 50
+    fill_kappa: float = 400.0
+    fill_lambda_tau: float = 1.0
+    # Queue correction p *= exp(-volume_ahead / fill_queue_volume_ref); 0 = off.
+    fill_queue_volume_ref: float = 0.0
+    fill_table_path: Optional[str] = None
     demo_state_path: Optional[str] = None
     demo_fee_state_path: Optional[str] = None
     demo_archive_path: Optional[str] = None
@@ -186,6 +223,30 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         inventory_sizing_enabled=True,
         inventory_sizing_strength=1.0,
         inventory_sizing_min_fraction=0.0,
+        # Algorithm 1 v2 quote selection (strategy/algo1.py). The grid runs
+        # 0.05% .. 2% from the centre in steps of x1.4; BTC/IRT's book is
+        # sparse, so most grid points anchor to the same few levels.
+        grid_min_perc=0.0005,
+        grid_ratio=1.4,
+        grid_max_perc=0.02,
+        skew_perc=0.002,
+        one_sided_lo=0.1,
+        one_sided_hi=0.9,
+        cost_basis_reference=True,
+        ev_min=0.00001,
+        adverse_selection_perc=0.0,
+        hysteresis_ticks=5,
+        refresh_seconds=300.0,
+        fill_table_enabled=True,
+        fill_table_max_age_hours=48.0,
+        fill_table_min_samples=50,
+        fill_kappa=400.0,
+        fill_lambda_tau=1.0,
+        fill_queue_volume_ref=0.0,
+        # The demo matcher's "level-1 fast fill" assumed a level-1 quote sat
+        # at the touch; v2 quotes by distance, so fills come from the price
+        # path only (price_touch), consistent with the fill model.
+        demo_level1_fast_fill_enabled=False,
         url_wallet_balance="https://apiv2.nobitex.ir/users/wallets/balance",
         url_send_order="https://apiv2.nobitex.ir/market/orders/add",
         output_csv=os.path.join(RESULTS_DIR, "btc_track.csv"),
@@ -230,6 +291,26 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         inventory_sizing_enabled=True,
         inventory_sizing_strength=1.0,
         inventory_sizing_min_fraction=0.0,
+        # Algorithm 1 v2 quote selection (strategy/algo1.py); same defaults
+        # as BTC, see the comment there.
+        grid_min_perc=0.0005,
+        grid_ratio=1.4,
+        grid_max_perc=0.02,
+        skew_perc=0.002,
+        one_sided_lo=0.1,
+        one_sided_hi=0.9,
+        cost_basis_reference=True,
+        ev_min=0.00001,
+        adverse_selection_perc=0.0,
+        hysteresis_ticks=5,
+        refresh_seconds=300.0,
+        fill_table_enabled=True,
+        fill_table_max_age_hours=48.0,
+        fill_table_min_samples=50,
+        fill_kappa=400.0,
+        fill_lambda_tau=1.0,
+        fill_queue_volume_ref=0.0,
+        demo_level1_fast_fill_enabled=False,
         url_wallet_balance="https://apiv2.nobitex.ir/users/wallets/balance",
         url_send_order="https://apiv2.nobitex.ir/market/orders/add",
         output_csv=os.path.join(RESULTS_DIR, "usdt_track.csv"),

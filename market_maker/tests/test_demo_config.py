@@ -34,6 +34,11 @@ EXPECTED = {
     "exp_ret_min": "hot",
     "buy_locked_cash_limit_enabled": "hot", "buy_locked_cash_limit_ratio": "hot",
     "sell_locked_inventory_limit_enabled": "hot", "sell_locked_inventory_limit_ratio": "hot",
+    "grid_min_perc": "hot", "grid_ratio": "hot", "grid_max_perc": "hot", "skew_perc": "hot",
+    "one_sided_lo": "hot", "one_sided_hi": "hot", "cost_basis_reference": "hot",
+    "ev_min": "hot", "adverse_selection_perc": "hot", "hysteresis_ticks": "hot", "refresh_seconds": "hot",
+    "fill_table_enabled": "hot", "fill_table_max_age_hours": "hot", "fill_table_min_samples": "hot",
+    "fill_kappa": "hot", "fill_lambda_tau": "hot", "fill_queue_volume_ref": "hot",
 }
 
 HIDDEN_SAFE_DEFAULT_FIELDS = {

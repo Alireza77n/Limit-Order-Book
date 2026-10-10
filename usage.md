@@ -228,6 +228,27 @@ still raises `NotImplementedError` in demo mode exactly as in real mode.
 
 ---
 
+## 1c. Fill-probability table (Algorithm 1 v2)
+
+Algorithm 1 v2 scores quotes with a fill probability per distance. It reads
+`fill_table_<pair>.json` from the results directory when the file is fresh
+(default: younger than 48 h) and uses a formula otherwise. Build the table from
+the CSVs the engine writes (see `docs/algorithms/FILL_MODEL.md`):
+
+```bash
+cd market_maker
+python -m tools.build_fill_table --pair usdt --horizon-seconds 600 \
+  --csv results/usdt_track.csv --csv results/usdt_track_demo.csv \
+  --out results/fill_table_usdtirt.json
+```
+
+A running worker picks the new file up at its next round. The related
+settings (`fill_table_enabled`, `fill_table_max_age_hours`,
+`fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`) and the other v2
+settings (`grid_*`, `skew_perc`, `one_sided_*`, `ev_min`,
+`adverse_selection_perc`, `hysteresis_ticks`, `refresh_seconds`) are editable
+from the admin panel's Config pages for demo and live.
+
 ## 2. Automated tests
 
 From the repository root:

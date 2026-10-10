@@ -1,21 +1,10 @@
-"""Characterization tests for Algorithm 1's quoting logic.
+"""Engine-side characterization of Algorithm 1 v2.
 
-These pin the CURRENT behavior of SimpleMarketMaker's decision-making
-methods (as of the pre-refactor baseline commit) so that later structural
-refactors can be verified to leave outputs byte-for-byte identical. Expected
-values were captured by running the existing code against synthetic order
-books -- they are not independently re-derived from the README formulas, so
-any existing quirks or edge-case behavior are intentionally preserved here.
-
-The profitability rework (net return on submitted prices instead of the
-raw (ask-bid)/last ratio) deliberately changes the Scenario C break points;
-Scenario A and B outcomes are unchanged. See test_algo1_profitability.py
-for the new semantics.
-
-Scope: only the pure, I/O-free quoting methods are exercised. `run()`,
-`send_order`, `save_to_db`, and anything touching the live Nobitex API or
-MySQL are out of scope -- they cannot be safely exercised in a test
-environment (see refactor plan / structural report).
+SimpleMarketMaker delegates every quoting decision to Algo1Strategy; these
+tests pin the delegation and the engine-visible contract (what a quote dict
+must contain, what the engine does with a missing side) without going
+through the network or MySQL. The strategy's own arithmetic is covered in
+test_strategy_algo1.py.
 """
 
 import pytest
@@ -24,7 +13,7 @@ from config import MMConfig
 from helpers import make_bot, make_orderbook
 
 
-# ---------- _tick_size ----------
+# ---------- delegation of the helpers the engine still calls ----------
 
 @pytest.mark.parametrize("pair,expected", [
     ("BTCIRT", 10.0),
@@ -35,8 +24,6 @@ def test_tick_size(pair, expected):
     bot = make_bot(MMConfig(pair=pair))
     assert bot._tick_size() == expected
 
-
-# ---------- _depth_cap ----------
 
 def test_depth_cap_normal():
     bot = make_bot(MMConfig(depth_max=5))
@@ -51,156 +38,84 @@ def test_depth_cap_capped_by_short_book():
 def test_depth_cap_malformed_book():
     bot = make_bot(MMConfig(depth_max=5))
     assert bot._depth_cap({"bids": [], "asks": []}) == 0
-
-
-def test_depth_cap_missing_keys():
-    bot = make_bot(MMConfig(depth_max=5))
     assert bot._depth_cap({}) == 0
 
 
-# ---------- _leg_pairs ----------
-
-def test_leg_pairs_negative_inv_diff():
-    bot = make_bot(MMConfig())
-    assert bot._leg_pairs(-5, 10) == [(5, 10), (4, 9), (3, 8), (2, 7), (1, 6)]
-
-
-def test_leg_pairs_zero_inv_diff():
-    bot = make_bot(MMConfig())
-    assert bot._leg_pairs(0, 10) == [
-        (10, 10), (9, 9), (8, 8), (7, 7), (6, 6),
-        (5, 5), (4, 4), (3, 3), (2, 2), (1, 1),
-    ]
-
-
-def test_leg_pairs_positive_inv_diff():
-    bot = make_bot(MMConfig())
-    assert bot._leg_pairs(5, 10) == [(10, 5), (9, 4), (8, 3), (7, 2), (6, 1), (5, 0)]
-
-
-def test_leg_pairs_zero_depth():
-    bot = make_bot(MMConfig())
-    assert bot._leg_pairs(0, 0) == []
-
-
-# ---------- _spread_ok ----------
-
-def test_spread_ok_bad_index_returns_false():
-    bot = make_bot(MMConfig(commission_perc=0.05, exp_ret_min=0.05))
-    ob = make_orderbook(last=100.0)
-    assert bot._spread_ok(ob, 100, 100) is False
-
-
-def test_spread_ok_true_case():
+def test_spread_ok_delegates_to_the_strategy():
     bot = make_bot(MMConfig(commission_perc=0.05, exp_ret_min=0.05, pair="BTCUSDT"))
     ob = make_orderbook(last=100.0)
     assert bot._spread_ok(ob, 10, 10) is True
-
-
-def test_spread_ok_false_case():
-    bot = make_bot(MMConfig(commission_perc=0.05, exp_ret_min=0.05))
-    ob = make_orderbook(last=100.0)
     assert bot._spread_ok(ob, 0, 0) is False
+    assert bot._spread_ok(ob, 100, 100) is False
 
 
-# ---------- _algo1_bid_ask_prices: full pipeline ----------
+# ---------- _decide_order: the engine-visible contract ----------
 
 def _cfg_scenario_a():
     return MMConfig(depth_max=10, inv_min=0.0, inv_max=1.0,
-                     commission_perc=0.0025, exp_ret_min=None, pair="BTCUSDT")
+                    commission_perc=0.0025, exp_ret_min=0.0025, pair="BTCUSDT")
 
 
-@pytest.mark.parametrize("q,expected", [
-    (0.0, {"bid": 99.01, "ask": 106.99, "bid level": 1, "ask level": 6,
-           "lastTradePrice": 100.0, "bid spread": pytest.approx(1.49),
-           "ask spread": pytest.approx(6.49)}),
-    (0.05, {"bid": 99.01, "ask": 106.99, "bid level": 1, "ask level": 6,
-            "lastTradePrice": 100.0, "bid spread": pytest.approx(1.49),
-            "ask spread": pytest.approx(6.49)}),
-    (0.5, {"bid": 99.01, "ask": 101.99, "bid level": 1, "ask level": 1,
-           "lastTradePrice": 100.0, "bid spread": pytest.approx(1.49),
-           "ask spread": pytest.approx(1.49)}),
-    (0.95, {"bid": 96.01, "ask": 100.99, "bid level": 4, "ask level": 0,
-            "lastTradePrice": 100.0, "bid spread": pytest.approx(4.49),
-            "ask spread": pytest.approx(0.49)}),
-    (1.0, {"bid": 95.01, "ask": 100.99, "bid level": 5, "ask level": 0,
-           "lastTradePrice": 100.0, "bid spread": pytest.approx(5.49),
-           "ask spread": pytest.approx(0.49)}),
-])
-def test_algo1_prices_scenario_always_feasible(q, expected):
-    """Loose commission threshold: spread condition holds for every candidate
-    pair, so the scan walks all the way to the shallowest generated pair."""
+def test_decide_order_returns_the_strategy_quote():
     bot = make_bot(_cfg_scenario_a())
     ob = make_orderbook()
-    result = bot._algo1_bid_ask_prices(ob, q)
-    for key, value in expected.items():
-        assert result[key] == value
-    assert result["bid exec prob"] == 1.0
-    assert result["ask exec prob"] == 1.0
+    result = bot._decide_order(ob, 0.5)
+    assert result["quote mode"] == "pair"
+    assert result["bid"] == 100.01 and result["ask"] == 100.99
+    assert result["bid level"] == 0 and result["ask level"] == 0
+    assert result["bid exec prob"] == pytest.approx(result["ask exec prob"])
+    assert 0.0 < result["bid exec prob"] <= 1.0
 
 
-def _cfg_scenario_b():
-    return MMConfig(depth_max=10, inv_min=0.0, inv_max=1.0,
-                     commission_perc=0.3, exp_ret_min=None, pair="BTCUSDT")
-
-
-@pytest.mark.parametrize("q", [0.0, 0.5, 1.0])
-def test_algo1_prices_scenario_never_feasible(q):
-    """Strict commission threshold: no candidate pair satisfies the spread
-    condition, not even the loosest one -- the scan never assigns a level, so
-    the helper returns None instead of the old untested (depth_max,
-    depth_max) fallback. See reports/batch-fill-definitive-root-cause.md."""
-    bot = make_bot(_cfg_scenario_b())
-    ob = make_orderbook(last=100.0)
-    assert bot._algo1_bid_ask_prices(ob, q) is None
-
-
-def _cfg_scenario_c():
-    return MMConfig(depth_max=10, inv_min=0.0, inv_max=1.0,
-                     commission_perc=0.05, exp_ret_min=0.05, pair="BTCUSDT")
-
-
-@pytest.mark.parametrize("q,bid_level,ask_level,bid,ask", [
-    (0.5, 8, 8, 92.01, 108.99),
-    (0.0, 5, 10, 95.01, 110.99),
-    (1.0, 10, 5, 90.01, 105.99),
+@pytest.mark.parametrize("q,mode,bid,ask", [
+    (0.0, "bid_only", 99.01, None),
+    (0.05, "bid_only", 99.01, None),
+    (0.5, "pair", 100.01, 100.99),
+    (0.95, "ask_only", None, 101.99),
+    (1.0, "ask_only", None, 101.99),
 ])
-def test_algo1_prices_scenario_breaks_partway(q, bid_level, ask_level, bid, ask):
-    """Mid-range commission threshold: the scan is feasible for the deepest
-    pairs and stops partway through -- exercises the `else: break` branch.
-
-    The profitability bar is the fee-adjusted round-trip net return on the
-    submitted prices (R_net = (1-c)^2 * A_q/B_q - 1), so the break point sits
-    deeper than under the old (ask-bid)/last check: e.g. at q=0.5 the pair
-    (8,8) clears the 10% bar (net ~6.9%) while (7,7) does not (net ~4.8%)."""
-    bot = make_bot(_cfg_scenario_c())
-    ob = make_orderbook(last=100.0)
-    result = bot._algo1_bid_ask_prices(ob, q)
-    assert result["bid level"] == bid_level
-    assert result["ask level"] == ask_level
+def test_decide_order_across_the_inventory_band(q, mode, bid, ask):
+    """Empty inventory quotes bids only, full inventory asks only, the
+    middle both -- the engine receives None for the absent side. A lone leg
+    must clear the whole gross bar against the centre, so it sits one level
+    deeper than the pair's leg."""
+    bot = make_bot(_cfg_scenario_a())
+    result = bot._decide_order(make_orderbook(), q)
+    assert result["quote mode"] == mode
     assert result["bid"] == bid
     assert result["ask"] == ask
 
 
-def test_algo1_prices_single_level_book_returns_none():
-    bot = make_bot(MMConfig(depth_max=10))
-    ob = {"bids": [["100", "1"]], "asks": [["101", "1"]], "lastTradePrice": "100"}
-    assert bot._algo1_bid_ask_prices(ob, 0.0) is None
-
-
-# ---------- _decide_order ----------
-
-def test_decide_order_matches_algo1_prices_when_feasible():
-    bot = make_bot(_cfg_scenario_a())
-    ob = make_orderbook()
-    result = bot._decide_order(ob, 0.5)
-    assert result["bid level"] == 1
-    assert result["ask level"] == 1
-    assert result["bid"] == 99.01
-    assert result["ask"] == 101.99
+def test_decide_order_never_feasible_returns_none():
+    """A 30 % fee cannot be covered by any pair or lone leg of this book."""
+    bot = make_bot(MMConfig(depth_max=10, inv_min=0.0, inv_max=1.0,
+                            commission_perc=0.3, exp_ret_min=None, pair="BTCUSDT"))
+    for q in (0.0, 0.5, 1.0):
+        assert bot._decide_order(make_orderbook(last=100.0), q) is None
 
 
 def test_decide_order_single_level_book_returns_none():
     bot = make_bot(MMConfig(depth_max=10))
     ob = {"bids": [["100", "1"]], "asks": [["101", "1"]], "lastTradePrice": "100"}
     assert bot._decide_order(ob, 0.0) is None
+
+
+def test_quote_side_helpers_accept_a_missing_side():
+    bot = make_bot(_cfg_scenario_a())
+    quote = {"bid": None, "ask": 100.99, "bid level": None, "ask level": 0}
+    assert bot._quote_side_price(quote, "bid") is None
+    assert bot._quote_side_price(quote, "ask") == 100.99
+    assert bot._quote_side_level(quote, "bid level") is None
+    assert bot._quote_side_level(quote, "ask level") == 0
+    assert bot._quote_side_price(None, "bid") is None
+
+
+def test_resting_order_guard_blocks_only_prices_within_the_tick_window():
+    bot = make_bot(MMConfig(pair="USDTIRT", hysteresis_ticks=5))
+    resting = [(2_650_010.0, 1.0), (2_700_000.0, 0.0)]
+    assert bot._resting_order_blocks(2_650_030.0, resting) is True     # 2 ticks away
+    assert bot._resting_order_blocks(2_650_100.0, resting) is False    # 9 ticks away
+    assert bot._resting_order_blocks(2_700_000.0, resting) is False    # nothing remaining
+    assert bot._resting_order_blocks(None, resting) is False
+    bot.cfg.hysteresis_ticks = 0
+    assert bot._resting_order_blocks(2_650_010.0, resting) is False

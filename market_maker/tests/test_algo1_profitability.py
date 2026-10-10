@@ -1,18 +1,13 @@
-"""Profitability-reference tests for Algorithm 1's reworked spread check.
-
-The old feasibility test compared the raw level gap against the last traded
-price:  (ask - bid) / last > commission_perc + exp_ret_min. The last traded
-price is a stale snapshot of the order book, so the check could both over-
-and under-estimate the current market (a trade printed at 90 against a book
-centered at 100.5 inflates the measured spread by ~11%). Under the rework:
+"""Profitability-reference tests for Algorithm 1's spread check (v2 keeps
+the version-1 semantics unchanged):
 
 * the market's relative quoted spread is measured against the current
-  mid-price M_t = (best_bid + best_ask) / 2  --  a market descriptor;
+  mid-price M_t = (best_bid + best_ask) / 2 -- a market descriptor;
 * the economic return on deployed capital uses the SUBMITTED (tick-adjusted)
   buy price as the basis, deducting proportional fees on both legs:
   R_net = (A_q(1-fb)(1-fs) - B_q) / B_q, where fb=fs=commission_perc;
-* a candidate pair is accepted only when R_net strictly exceeds
-  exp_ret_min (bootstrapped to commission_perc when unset).
+* a quote is accepted only when R_net strictly exceeds exp_ret_min
+  (bootstrapped to commission_perc when unset).
 """
 
 import pytest
@@ -120,6 +115,7 @@ def test_min_required_return_bootstraps_when_exp_ret_min_unset():
 def test_decision_and_metrics_are_identical_for_stale_and_fresh_last_prices():
     strategy = _strategy()
     quote_90 = strategy.decide_order(make_orderbook(last=90.0), 0.5)
+    strategy.reset_memory()
     quote_120 = strategy.decide_order(make_orderbook(last=120.0), 0.5)
     assert quote_90 is not None and quote_120 is not None
     for key in (
@@ -142,8 +138,7 @@ def test_candidate_above_the_bar_passes_and_below_fails():
 
 def test_candidate_with_net_return_just_below_the_bar_is_rejected():
     # commission 0 keeps the arithmetic exact: submitted (100.01, 102.99)
-    # grosses 2.98% against a 2.99% bar. The raw level gap (3.0% of last)
-    # would have cleared the old check; the submitted-price return does not.
+    # grosses 2.98% against a 2.99% bar.
     strategy = _strategy(commission_perc=0.0, exp_ret_min=0.0299)
     bids = [[str(101 - i), "1"] for i in range(11)]
     asks = [[str(102 + i), "1"] for i in range(11)]
@@ -153,26 +148,29 @@ def test_candidate_with_net_return_just_below_the_bar_is_rejected():
 
 
 def test_profitability_is_checked_on_submitted_not_raw_prices():
-    """Past validation was eroded by the one-tick inward move (2 eps did not
-    even get retested). Now the tick-adjusted prices decide: pair (1,1) with
-    raw gap 3% clears the 2.99% bar but its submitted prices (100.01/102.99,
-    net 2.98%) do not, so the scan stops at the last feasible pair (2,2)."""
-    strategy = _strategy(commission_perc=0.0, exp_ret_min=0.0299)
+    """The tick-adjusted prices decide: the raw level-0 gap (101 -> 102,
+    0.99 %) clears a 0.98 % bar, the submitted pair (101.01 / 101.99,
+    0.97 %) does not, so that pair is never returned."""
+    strategy = _strategy(commission_perc=0.0, exp_ret_min=0.0098, ev_min=0.0)
     bids = [[str(101 - i), "1"] for i in range(11)]
     asks = [[str(102 + i), "1"] for i in range(11)]
     ob = {"bids": bids, "asks": asks, "lastTradePrice": "100"}
 
-    assert strategy.spread_ok(ob, 1, 1) is False
+    assert (102 - 101) / 101 > strategy.min_required_return()
     quote = strategy.decide_order(ob, 0.5)
-    assert quote["bid level"] == 2
-    assert quote["ask level"] == 2
+    assert quote is not None and quote["quote mode"] == "pair"
+    assert (quote["bid"], quote["ask"]) != (101.01, 101.99)
+    assert strategy.net_return(quote["bid"], quote["ask"]) > 0.0098
+    evaluation = strategy.evaluate(ob, 0.5)
+    touch_pair = next(r for r in evaluation.pairs if (r.bid.price, r.ask.price) == (101.01, 101.99))
+    assert touch_pair.passed is False
 
 
-# ---------- Quote dict carries the new economics ----------
+# ---------- Quote dict carries the economics ----------
 
 def test_quote_carries_mid_relative_spread_gross_and_net():
     strategy = _strategy()
-    quote = strategy.algo1_bid_ask_prices(make_orderbook(), 0.5)
+    quote = strategy.decide_order(make_orderbook(), 0.5)
     c = strategy.cfg.commission_perc
     assert quote["mid price"] == 100.5
     assert quote["relative quoted spread"] == pytest.approx(
@@ -188,10 +186,13 @@ def test_quote_carries_mid_relative_spread_gross_and_net():
     assert quote["min required return"] == c
 
 
-def test_decide_order_returns_exactly_the_scan_result():
-    strategy = _strategy(commission_perc=0.05, exp_ret_min=0.05)
+def test_decide_order_returns_the_evaluation_winner():
+    strategy = _strategy(commission_perc=0.005, exp_ret_min=0.005, ev_min=0.0)
     ob = make_orderbook(last=100.0)
-    assert strategy.decide_order(ob, 0.5) == strategy.algo1_bid_ask_prices(ob, 0.5)
+    evaluation = strategy.evaluate(ob, 0.5)
+    quote = strategy.decide_order(ob, 0.5)
+    assert quote["bid"] == evaluation.chosen_bid.price
+    assert quote["ask"] == evaluation.chosen_ask.price
 
 
 # ---------- Crossed / malformed books fail closed ----------

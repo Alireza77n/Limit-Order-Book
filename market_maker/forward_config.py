@@ -25,6 +25,12 @@ FORWARD_FIELDS = frozenset({
     "time_step", "commission_perc", "exp_ret_min",
     "buy_locked_cash_limit_enabled", "buy_locked_cash_limit_ratio",
     "sell_locked_inventory_limit_enabled", "sell_locked_inventory_limit_ratio",
+    # Algorithm 1 v2 quote selection (same definitions as the Demo overlay).
+    "grid_min_perc", "grid_ratio", "grid_max_perc", "skew_perc",
+    "one_sided_lo", "one_sided_hi", "cost_basis_reference",
+    "ev_min", "adverse_selection_perc", "hysteresis_ticks", "refresh_seconds",
+    "fill_table_enabled", "fill_table_max_age_hours", "fill_table_min_samples",
+    "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
 })
 
 # The authenticated Nobitex account reports a 0.25% IRT fee for both maker
@@ -84,6 +90,10 @@ def validate_forward_config(values, pair, profiles, directory=None):
         raise OverlayValidationError("order_size must be greater than zero")
     if merged["inv_min"] >= merged["inv_max"]:
         raise OverlayValidationError("inv_min must be less than inv_max")
+    if merged.get("grid_min_perc", 0.0) > merged.get("grid_max_perc", 1.0):
+        raise OverlayValidationError("grid_min_perc must be at most grid_max_perc")
+    if merged.get("one_sided_lo", 0.0) >= merged.get("one_sided_hi", 1.0):
+        raise OverlayValidationError("one_sided_lo must be less than one_sided_hi")
     if merged["commission_perc"] < FORWARD_MIN_COMMISSION_PERC:
         raise OverlayValidationError(
             "live forward testing requires commission_perc of at least 0.0025"

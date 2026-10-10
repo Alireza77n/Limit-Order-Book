@@ -117,13 +117,15 @@ def test_two_symbol_demo_replay_shares_session_isolates_state_and_has_zero_real_
         assert set(frame["Crypto"]) == {run.TRADING_PROFILES[profile_name]["pair"]}
         assert frame["Best Bid"].notna().all()
         assert frame["Best Ask"].notna().all()
-        assert frame["Buy Status"].iloc[0] == "filled"
-        assert frame["Buy Fill Reason"].iloc[0] == "level1_fast_fill"
-        assert frame["Buy Matched Amount"].iloc[0] > 0
-        assert frame["Buy Remaining Amount"].iloc[0] == pytest.approx(0)
-        assert frame["Sell Status"].iloc[0] == "not_sent_insufficient_inventory"
-        assert frame["Buy Status"].iloc[1] == "cancelled"
-        assert frame["Sell Status"].iloc[1] == "cancelled"
+        # Zero inventory: Algorithm 1 v2 quotes the bid side only, the
+        # paper order rests (the replay book never moves) and is cancelled
+        # with the session.
+        assert isinstance(frame["Buy Order ID"].iloc[0], str)
+        assert frame["Buy Status"].iloc[0] == "cancelled"
+        assert frame["Buy Original Amount"].iloc[0] > 0
+        assert frame["Sell Status"].iloc[0] == "not_sent_one_sided_quote"
+        assert frame["Buy Status"].iloc[1] == "not_sent_resting_order_kept"
+        assert frame["Sell Status"].iloc[1] == "not_sent_one_sided_quote"
 
     scopes = ledgers["btc"].fee_scopes()
     expected_combined = ledgers["btc"].fees_quote + ledgers["usdt"].fees_quote
