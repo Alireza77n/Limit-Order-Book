@@ -74,6 +74,14 @@ class _FixedPair:
         return {"bid": 90.0, "ask": 110.0, "bid level": 1, "ask level": 1}
 
 
+class _SyntheticBid:
+    """v2 anchors a candidate beyond the last displayed level to a synthetic
+    tick-rounded price, which has no book level (None)."""
+
+    def decide_order(self, ob, inv_current):
+        return {"bid": 90.0, "ask": 110.0, "bid level": None, "ask level": 1}
+
+
 def _live_bot(monkeypatch, tmp_path, strategy, *, hysteresis_ticks, rounds=3):
     monkeypatch.setattr("engine.RESULTS_DIR", str(tmp_path))
     monkeypatch.delenv("LOB_FORWARD_CONFIG_DIR", raising=False)
@@ -201,6 +209,36 @@ def test_demo_loop_records_the_missing_side_as_one_sided(monkeypatch, tmp_path):
     assert result["Sell Order ID"].notna().all()          # a sell every round
     assert set(result["Sell Status"]) <= {"open", "cancelled"}   # cancelled at session end
     assert (result["Sell Limit Price"] == 110.0).all()
+
+
+def test_demo_loop_places_an_order_at_a_synthetic_level(monkeypatch, tmp_path):
+    """Regression: the paper ledger used to do int(selected_level) and the
+    USDT demo worker crash-looped (TypeError) on the first synthetic bid."""
+    bot = _demo_bot(monkeypatch, tmp_path, _SyntheticBid(), hysteresis_ticks=0)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "demo_queue_enabled", True)
+
+    result = bot.run()
+
+    assert result["Buy Order ID"].notna().all()
+    assert set(result["Buy Status"]) <= {"open", "cancelled"}
+    assert result["Bid Level"].isna().all()
+    assert result["Buy Selected Level"].isna().all()
+    assert result["Ask Level"].tolist() == [1, 1, 1]
+    buys = [o for o in bot.exchange.ledger.order_history.values() if o.side == "buy"]
+    assert len(buys) == 3
+    assert all(o.selected_level is None for o in buys)
+    assert all(o.queue_ahead == 0.0 for o in buys)
+    assert bot._demo_queue_ahead(bot.exchange.get_orderbook("USDTIRT"), "buy", None) == 0.0
+
+
+def test_live_loop_records_a_synthetic_level_as_missing(monkeypatch, tmp_path):
+    bot, exchange = _live_bot(monkeypatch, tmp_path, _SyntheticBid(), hysteresis_ticks=0)
+
+    frame = bot.run()
+
+    assert frame["Buy Sent"].tolist() == [1, 1, 1]
+    assert frame["Bid Level"].isna().all()
+    assert frame["Ask Level"].tolist() == [1, 1, 1]
 
 
 def test_demo_loop_keeps_a_resting_order_instead_of_reposting(monkeypatch, tmp_path):

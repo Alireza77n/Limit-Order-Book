@@ -1111,8 +1111,10 @@ class SimpleMarketMaker:
             reason="locked_inventory_limit",
         )
 
-    def _demo_queue_ahead(self, ob: Dict[str, Any], side: str, level: int) -> float:
-        if not self.cfg.demo_queue_enabled:
+    def _demo_queue_ahead(self, ob: Dict[str, Any], side: str, level: Optional[int]) -> float:
+        """Displayed volume at the chosen level; 0 for a synthetic level
+        (None, beyond the displayed book) or when the queue model is off."""
+        if not self.cfg.demo_queue_enabled or level is None:
             return 0.0
         book_side = "bids" if side == "buy" else "asks"
         try:

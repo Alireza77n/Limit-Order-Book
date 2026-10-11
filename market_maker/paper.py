@@ -20,7 +20,9 @@ class PaperOrder:
     symbol: str
     side: str
     limit_price: float
-    selected_level: int
+    # Book level the price was anchored to (1 = best); None for a synthetic
+    # Algorithm 1 v2 candidate placed beyond the last displayed level.
+    selected_level: Optional[int]
     original_amount: float
     matched_amount: float
     processed_matched_amount: float
@@ -549,7 +551,7 @@ class PaperLedger:
         side: str,
         limit_price: float,
         amount: float,
-        selected_level: int,
+        selected_level: Optional[int],
         client_order_id: str,
         now: datetime,
         queue_ahead: float = 0.0,
@@ -577,7 +579,7 @@ class PaperLedger:
             symbol=self.symbol,
             side=side,
             limit_price=float(limit_price),
-            selected_level=int(selected_level),
+            selected_level=None if selected_level is None else int(selected_level),
             original_amount=float(amount),
             matched_amount=0.0,
             processed_matched_amount=0.0,

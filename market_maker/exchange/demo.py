@@ -52,7 +52,7 @@ class DemoExchangeClient(ExchangeClient):
     # ---------- Simulated orders (nothing ever sent to Nobitex) ----------
     def send_order(self, order_type: str, srcCurrency: str, dstCurrency: str,
                     amount: float, price: float,
-                    clientOrderId: Optional[str] = None, *, selected_level: int = 0,
+                    clientOrderId: Optional[str] = None, *, selected_level: Optional[int] = 0,
                     queue_ahead: float = 0.0, round_no: int = 0,
                     now: Optional[datetime] = None) -> Optional[str]:
         if clientOrderId is None:
