@@ -378,6 +378,37 @@ class SimpleMarketMaker:
             os.makedirs(directory, exist_ok=True)
         with open(path, "a") as diagnostic_file:
             diagnostic_file.write(json.dumps(document, sort_keys=True) + "\n")
+        self._rotate_diagnostics(path)
+
+    def _rotate_diagnostics(self, path: str) -> None:
+        """Keep the JSONL bounded: once it holds twice
+        ``algo1_diagnostics_keep_rounds`` documents, rewrite it with the
+        newest ``keep`` only. The dashboard reads the tail of this file."""
+        keep = int(getattr(self.cfg, "algo1_diagnostics_keep_rounds", 0) or 0)
+        if keep <= 0:
+            return
+        count = getattr(self, "_diagnostic_line_count", None)
+        if count is None:
+            try:
+                with open(path, "rb") as stream:
+                    count = sum(1 for _ in stream)
+            except OSError:
+                count = 0
+        else:
+            count += 1
+        self._diagnostic_line_count = count
+        if count <= 2 * keep:
+            return
+        try:
+            with open(path, "r") as stream:
+                lines = stream.readlines()[-keep:]
+            temporary = f"{path}.{os.getpid()}.tmp"
+            with open(temporary, "w") as stream:
+                stream.writelines(lines)
+            os.replace(temporary, path)
+            self._diagnostic_line_count = len(lines)
+        except OSError as exc:
+            print(f"Diagnostics rotation failed: {exc}")
 
     def _algo1_diagnostic_document(
         self, ob: Dict[str, Any], inv_current: float, *, round_no: int
@@ -856,7 +887,31 @@ class SimpleMarketMaker:
         "Sell Telegram Message ID",
         "Round Fee", "Session Pair Fee", "Session All Symbols Fee",
         "Pair All Time Fee", "All Symbols All Time Fee",
+        # Algorithm 1 v2 decision fields (dashboard "Quote decision" /
+        # "Fill model" tabs); None on no-quote rounds and on the absent side.
+        "Quote Mode", "Selection Reason", "Centre", "Bid Distance", "Ask Distance",
+        "Bid Fill Prob", "Ask Fill Prob", "Expected Value", "Reference Price",
     ]
+
+    # The same nine fields, in the order the live CSV and the demo rows carry them.
+    QUOTE_EXTRA_COLUMNS = [
+        "Quote Mode", "Selection Reason", "Centre", "Bid Distance", "Ask Distance",
+        "Bid Fill Prob", "Ask Fill Prob", "Expected Value", "Reference Price",
+    ]
+
+    @staticmethod
+    def _quote_extra_fields(quote: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Algorithm 1 v2's decision numbers for the round row (all None when
+        there was no quote or the strategy does not report them)."""
+        keys = {
+            "Quote Mode": "quote mode", "Selection Reason": "selection reason",
+            "Centre": "centre", "Bid Distance": "bid distance", "Ask Distance": "ask distance",
+            "Bid Fill Prob": "bid exec prob", "Ask Fill Prob": "ask exec prob",
+            "Expected Value": "expected value", "Reference Price": "reference price",
+        }
+        if not quote:
+            return {column: None for column in keys}
+        return {column: quote.get(key) for column, key in keys.items()}
 
     @staticmethod
     def _demo_side_fields(side: str, order, not_sent_reason: Optional[str]) -> Dict[str, Any]:
@@ -1621,6 +1676,7 @@ class SimpleMarketMaker:
                     "Min Required Return": (
                         quote.get("min required return") if quote else None
                     ),
+                    **self._quote_extra_fields(quote),
                     "Round Fee": round_fee,
                     "Session Pair Fee": scopes.session_pair,
                     "Session All Symbols Fee": scopes.session_all_symbols,
@@ -1756,6 +1812,7 @@ class SimpleMarketMaker:
             "Sell Sent",
             "Buy Status",
             "Sell Status",
+            *self.QUOTE_EXTRA_COLUMNS,
         ]
 
     
@@ -1940,6 +1997,7 @@ class SimpleMarketMaker:
                     buy_size_value, sell_size_value,
                     buy_sent, sell_sent,
                     buy_status_cell, sell_status_cell,
+                    *self._quote_extra_fields(res).values(),
                 ]
 
     

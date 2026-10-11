@@ -396,6 +396,12 @@ allowed to trade with money:
 The strategy writes the fill probability and expected value it used into every
 row, so predicted and realised fill rates can be compared bucket by bucket.
 
+The dashboard's **Validation** tab computes every row of this table from the
+selected track and session (value, threshold, pass / fail / not measurable
+yet) and places it above the performance metrics; the **Overview** tab shows
+the same quote rate, fills per hour, realised vs computed spread and
+adverse-selection numbers as headline tiles (usage.md §3).
+
 ---
 
 ## 8. What is deliberately *not* in version 2

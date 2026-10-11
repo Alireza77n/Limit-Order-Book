@@ -279,35 +279,61 @@ runs. For Demo tracks it prefers the sibling SQLite result store and
 falls back to CSV; Real tracks remain CSV-compatible. It does not touch
 Nobitex or MySQL and auto-refreshes every 20 seconds.
 
-**Layout:** a toolbar card (track picker, session picker, a colored
-real/demo status badge with icon + label -- never color alone) sits above
-five chart cards and an activity-table card, all on a shared light
-surface with consistent spacing, a system-UI font, and a fixed
-categorical color palette (never Plotly's default color cycle). Every
-line chart uses `hovermode="x unified"` for a crosshair-style tooltip.
+**Layout:** a dark header bar with the tab strip and the real/demo status
+badge (icon + label, never colour alone); a toolbar card (track picker,
+session picker, risk-free rate and target return for the Validation tab);
+the active tab; and, for Demo tracks, the effective-configuration panel
+(desired vs applied value of every editable field). Charts share one light
+surface, a system-UI font and a fixed palette (blue = our bid, orange = our
+ask, teal = fills), each on its own single axis. Every line chart uses
+`hovermode="x unified"` for a crosshair-style tooltip.
 
-Pick a **track** (which CSV) and a **session** (a specific run, or "All
-sessions (compare)" to overlay multiple runs, colored by session), then
-review five separate charts -- each on its own single axis, since mixing
-differently-scaled measures on one axis (e.g. BTC amounts vs. IRT cash,
-or depth-level integers vs. price spreads) makes both unreadable:
+Pick a **track** (which result store) and a **session** (a specific run,
+or "All sessions (compare)" to overlay runs), then use the six tabs:
 
-* **Portfolio wealth** over time (colored by session when comparing).
-* **Inventory** over time (base currency, e.g. BTC amount).
-* **Cash** over time (quote currency, e.g. IRT amount) -- its own chart,
-  not sharing an axis with inventory.
-* **Selected depth levels** — `Bid Level`/`Ask Level`, logged directly.
-* **Quoted spreads** — `Bid Spread`/`Ask Spread`, computed from
-  already-logged `Best Bid`/`Best Ask`/`Bid Price Sent`/`Ask Price Sent`
-  using the same formulas as README.md's Algorithm 1 "Step 5: Reported
-  spreads" section -- nothing new is collected, this is a view over
-  existing columns.
-* **Order activity table** — a sortable, filterable, timestamp-descending
-  table of every round's bid/ask levels, prices sent, and buy/sell
-  size/status, for line-by-line audit review.
+* **Overview** -- six headline tiles: quote rate (split into pair / bid
+  only / ask only / none), fills per hour, realised vs computed net spread
+  per round trip, adverse selection 60 s after our fills, net PnL after
+  fees, and the inventory position *x* inside the band. Below them:
+  mid-price with our bid/ask as steps and our fills as dots; a histogram of
+  where the quotes sat (% from the mid, per side); inventory inside the band
+  with the order sizes sent; the decision mix (quoted pair / bid only / ask
+  only and every no-quote reason, as a share of rounds); portfolio wealth.
+* **Quote decision** -- one round of Algorithm 1 v2, read from the
+  strategy's diagnostics file (`<pair>_algo1_diagnostics.jsonl` in the
+  results directory, written every round while `algo1_diagnostics_enabled`
+  is on): the candidate ladder (price, distance, book level or synthetic,
+  volume ahead, fill probability, which ones were sent), the expected-value
+  heat map of every bid/ask pair (`J = p_bid · p_ask · R_net`; rejected
+  pairs marked ✗, the sent pair framed), a step-by-step decision trace
+  (inventory → centre → candidates → fill model → bar and EV floor → pair /
+  one-sided / none), a round picker that keeps its choice across the 20 s
+  refresh, and a strip of the last 80 decisions.
+* **Fill model** -- the measured fill-probability table against the
+  formula fallback, with sample counts; predicted vs realised fill rate per
+  distance bucket (calibration); adverse selection at 10/30/60/300/600 s;
+  table health (file, method, age, samples, own orders, sources); and the
+  table itself.
+* **Order book** -- selected depth levels and quoted spreads (`Bid
+  Spread`/`Ask Spread` computed from the logged `Best Bid`/`Best Ask` and
+  quote prices, plus the relative quoted spread).
+* **Validation** -- the demo-to-real gate of
+  `docs/algorithms/ALGORITHM_1_V2.md` §7 first (each metric with its value,
+  threshold and pass / fail / not measurable yet), then the inventory
+  position with the one-sided thresholds, the fill-rate forecast per day,
+  and the performance metrics from `validation/` (return, Sharpe, Sortino,
+  drawdown, Calmar, win rate, profit factor, inventory statistics).
+* **Rounds** -- a sortable, filterable table of every round, newest first,
+  including the nine decision columns the engine writes (`Quote Mode`,
+  `Selection Reason`, `Centre`, `Bid/Ask Distance`, `Bid/Ask Fill Prob`,
+  `Expected Value`, `Reference Price`).
 
-If a track's CSV doesn't exist yet (e.g. you haven't run `--mode demo`
-yet), the dashboard says so plainly instead of erroring.
+Everything is derived from the rows the engine already writes, the
+strategy's diagnostics file and the fill table; the dashboard collects
+nothing of its own. If a track's result store doesn't exist yet (e.g. you
+haven't run `--mode demo` yet) the dashboard says so plainly instead of
+erroring, and a tab whose source file is missing (no diagnostics file, no
+fill table) names the file it is waiting for.
 
 Replaces the old `live_plot.py` (a single live PnL line for one
 hardcoded CSV) -- superseded by this dashboard, no functional loss.

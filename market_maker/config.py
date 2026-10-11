@@ -133,6 +133,10 @@ class MMConfig:
     no_quote_recovery_alert: bool = True
     algo1_diagnostics_enabled: bool = False
     algo1_diagnostics_path: Optional[str] = None
+    # The per-round diagnostics JSONL (candidates, probabilities, expected
+    # values, the selection) feeds the dashboard's "Quote decision" tab; the
+    # engine keeps the newest N documents (see engine._rotate_diagnostics).
+    algo1_diagnostics_keep_rounds: int = 3000
 
 
     # Loop / time controls
@@ -247,6 +251,9 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         # at the touch; v2 quotes by distance, so fills come from the price
         # path only (price_touch), consistent with the fill model.
         demo_level1_fast_fill_enabled=False,
+        # Per-round decision diagnostics for the dashboard's Quote-decision tab
+        # (bounded to the newest algo1_diagnostics_keep_rounds documents).
+        algo1_diagnostics_enabled=True,
         url_wallet_balance="https://apiv2.nobitex.ir/users/wallets/balance",
         url_send_order="https://apiv2.nobitex.ir/market/orders/add",
         output_csv=os.path.join(RESULTS_DIR, "btc_track.csv"),
@@ -311,6 +318,9 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         fill_lambda_tau=1.0,
         fill_queue_volume_ref=0.0,
         demo_level1_fast_fill_enabled=False,
+        # Per-round decision diagnostics for the dashboard's Quote-decision tab
+        # (bounded to the newest algo1_diagnostics_keep_rounds documents).
+        algo1_diagnostics_enabled=True,
         url_wallet_balance="https://apiv2.nobitex.ir/users/wallets/balance",
         url_send_order="https://apiv2.nobitex.ir/market/orders/add",
         output_csv=os.path.join(RESULTS_DIR, "usdt_track.csv"),

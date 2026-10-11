@@ -156,7 +156,7 @@ real trading or to MySQL: `safety.py` refuses to start.
 | `templates/admin/*.html` | The 15 admin pages. |
 | `static/admin/` | Admin CSS and JavaScript. |
 | `control_queue.py` | File-based command queue between the admin panel (writes commands) and the agents (execute them). Includes the audit log. |
-| `dashboard.py` | Dash charts: wealth, inventory, cash, chosen levels, spreads, order activity table, session picker. Reads the CSV files only. |
+| `dashboard.py` | Dash results dashboard, six tabs: Overview (quote rate, fills per hour, realised vs computed spread, adverse selection, PnL, inventory), Quote decision (candidate ladder, expected-value heat map and decision trace of one round, from the diagnostics file), Fill model (measured table vs formula, calibration, table health), Order book (levels, spreads), Validation (demo-to-real gate, then the metrics), Rounds (every round as a table). Reads the result stores, the fill table and the diagnostics file only. |
 | `validation/` | Performance metrics for the dashboard: return, Sharpe, Sortino, drawdown, win rate, inventory statistics. |
 
 ### Deployment (`deploy/` and the repository root)

@@ -101,10 +101,14 @@ def test_single_level_book_diagnostic_names_the_reason(monkeypatch, tmp_path):
     assert bot.strategy.no_quote_reason(book, 0.5) == "invalid_or_single_level_order_book"
 
 
-def test_optional_jsonl_logging_is_deterministic_and_disabled_by_default(monkeypatch, tmp_path):
+def test_jsonl_logging_is_deterministic_and_silent_when_disabled(monkeypatch, tmp_path):
+    """The trading profiles enable the JSONL (the dashboard's Quote decision
+    tab reads it); switching it off must stop the writes, and the document
+    must be byte-for-byte reproducible for the same inputs."""
     monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
     cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
     cfg.algo1_diagnostics_path = str(tmp_path / "algo1.jsonl")
+    cfg.algo1_diagnostics_enabled = False
     bot = make_bot(cfg)
     bot.pair = cfg.pair
     bot.session = cfg.session
@@ -125,6 +129,34 @@ def test_optional_jsonl_logging_is_deterministic_and_disabled_by_default(monkeyp
     assert document["symbol"] == "USDTIRT"
     assert document["session_id"] == "shared-session"
     assert "token" not in first.lower()
+
+
+def test_jsonl_is_rotated_to_the_newest_keep_rounds(monkeypatch, tmp_path):
+    """Each document holds every scored pair (tens of KB), so the file is
+    rewritten with the newest ``algo1_diagnostics_keep_rounds`` documents
+    once it holds twice that many; the dashboard reads the tail."""
+    monkeypatch.setattr(run, "DEMO_STATE_DIR", str(tmp_path))
+    cfg = run.make_cfg("usdt", mode="demo", session_id="shared-session")
+    path = tmp_path / "algo1.jsonl"
+    cfg.algo1_diagnostics_path = str(path)
+    cfg.algo1_diagnostics_enabled = True
+    cfg.algo1_diagnostics_keep_rounds = 4
+    bot = make_bot(cfg)
+    bot.pair = cfg.pair
+    bot.session = cfg.session
+    book = make_orderbook(n=11, last=100)
+
+    for round_no in range(1, 9):
+        bot._emit_algo1_diagnostic(book, 0.0, round_no=round_no)
+    assert len(path.read_text().splitlines()) == 8          # 2 x keep: still untouched
+
+    bot._emit_algo1_diagnostic(book, 0.0, round_no=9)
+    lines = path.read_text().splitlines()
+    assert [json.loads(line)["round"] for line in lines] == [6, 7, 8, 9]
+
+    bot._emit_algo1_diagnostic(book, 0.0, round_no=10)
+    assert [json.loads(line)["round"] for line in path.read_text().splitlines()] == [6, 7, 8, 9, 10]
+    assert not list(tmp_path.glob("*.tmp"))
 
 
 def test_no_quote_reason_distinguishes_the_bar_from_the_floor(monkeypatch, tmp_path):

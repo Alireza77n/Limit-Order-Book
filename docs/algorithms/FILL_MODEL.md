@@ -117,6 +117,13 @@ formula; `FillModel.source(...)` says which; `FillModel.describe()` is included
 in every diagnostics document (`fill_model` key) so the dashboard can show the
 table's age, method and bucket count.
 
+The dashboard's **Fill model** tab (usage.md §3) draws the measured table
+against the formula, compares the probability written into each round row
+(`Bid Fill Prob` / `Ask Fill Prob`) with the realised fill rate of our own
+orders per distance bucket, shows the mid move after our fills at several
+horizons (the adverse-selection estimate $\eta$ is read from it) and reports
+the table's health (file, method, age, samples, own orders, sources).
+
 The probability enters the expected value of a pair,
 $J = p_b p_a R_{\text{net}} - \eta[p_b(1-p_a) + p_a(1-p_b)]$, and of a lone leg,
 $J = pR_{\text{net}} - \eta p$ (see ALGORITHM_1_V2.md §2.4–2.5).
