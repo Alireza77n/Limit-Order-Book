@@ -131,6 +131,27 @@ def v2_track(tmp_path, monkeypatch):
     return tmp_path
 
 
+# ---------- track picker ----------
+
+def test_default_track_is_the_most_recently_written_store(tmp_path, monkeypatch):
+    import os
+    import time
+
+    for key in list(dashboard.TRACKS):
+        monkeypatch.setitem(dashboard.TRACKS, key, dict(dashboard.TRACKS[key], path=str(tmp_path / f"{key}.csv")))
+    assert dashboard.default_track() == next(iter(dashboard.TRACKS))     # nothing written yet
+
+    now = time.time()
+    (tmp_path / "btc_real.csv").write_text("x")
+    os.utime(tmp_path / "btc_real.csv", (now - 3600, now - 3600))
+    (tmp_path / "usdt_demo.sqlite3").write_text("x")                     # the sibling store counts too
+    os.utime(tmp_path / "usdt_demo.sqlite3", (now - 60, now - 60))
+    (tmp_path / "btc_demo.csv").write_text("x")
+    os.utime(tmp_path / "btc_demo.csv", (now - 600, now - 600))
+
+    assert dashboard.default_track() == "usdt_demo"
+
+
 # ---------- decisions ----------
 
 def test_quote_mode_counts_from_the_quote_mode_column():

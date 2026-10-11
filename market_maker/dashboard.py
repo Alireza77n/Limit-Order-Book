@@ -159,6 +159,23 @@ def load_track(path: str) -> Optional[pd.DataFrame]:
     return df
 
 
+def default_track() -> str:
+    """The track whose result store was written most recently (the running
+    workers), so the page opens on live data; the first track when none has
+    data yet."""
+    newest, newest_mtime = None, None
+    for key, track in TRACKS.items():
+        path = Path(track["path"])
+        for candidate in (path.with_suffix(".sqlite3"), path):
+            try:
+                mtime = candidate.stat().st_mtime
+            except OSError:
+                continue
+            if newest_mtime is None or mtime > newest_mtime:
+                newest, newest_mtime = key, mtime
+    return newest or next(iter(TRACKS))
+
+
 def with_derived_spreads(df: pd.DataFrame) -> pd.DataFrame:
     """Add Mid Price / Bid Spread / Ask Spread columns.
 
@@ -1176,7 +1193,7 @@ app.layout = html.Div([
                 dcc.Dropdown(
                     id="track",
                     options=[{"label": v["label"], "value": k} for k, v in TRACKS.items()],
-                    value=next(iter(TRACKS)), clearable=False,
+                    value=default_track(), clearable=False,
                 ),
             ]),
             html.Div([
