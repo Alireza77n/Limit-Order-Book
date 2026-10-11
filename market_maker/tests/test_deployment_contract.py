@@ -223,10 +223,14 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
 
     expected = {
         "session-init": ("no", None, 64, 64),
-        "btc-demo": ("unless-stopped", "30s", 128, 128),
-        "usdt-demo": ("unless-stopped", "30s", 128, 128),
-        "dashboard": ("unless-stopped", "20s", 128, 192),
-        "admin": ("unless-stopped", "20s", 128, 192),
+        # Workers: the per-round store work was measured at ~90 MB after the
+        # 2026-10-11 fix; the UI containers decode result rows into pandas
+        # object frames for every page and were OOM-killed at 192 MB on a
+        # 5,700-row store, so they get 384 MB.
+        "btc-demo": ("unless-stopped", "30s", 128, 256),
+        "usdt-demo": ("unless-stopped", "30s", 128, 256),
+        "dashboard": ("unless-stopped", "20s", 128, 384),
+        "admin": ("unless-stopped", "20s", 128, 384),
     }
     for name, (restart, grace, pids, memory) in expected.items():
         block = blocks[name]
@@ -242,7 +246,7 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         assert "healthcheck:" in block
 
     long_running_memory_mib = sum(expected[name][3] for name in SERVICES[1:])
-    assert long_running_memory_mib <= 640
+    assert long_running_memory_mib <= 1536
 
 
 def test_mounts_are_limited_to_separate_results_and_state_roots():

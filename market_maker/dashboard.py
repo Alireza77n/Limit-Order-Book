@@ -144,6 +144,7 @@ MAX_ROWS = max(100, int(os.environ.get("LOB_DASHBOARD_MAX_ROWS", "2000") or 2000
 
 _TRACK_CACHE: Dict[str, Any] = {}
 _TRACK_CACHE_LOCK = threading.Lock()
+_TRACK_LOAD_LOCKS: Dict[str, threading.Lock] = {}
 
 
 def _track_signature(path: Path) -> tuple:
@@ -167,12 +168,22 @@ def load_track(path: str) -> Optional[pd.DataFrame]:
     signature = _track_signature(Path(path))
     with _TRACK_CACHE_LOCK:
         cached = _TRACK_CACHE.get(path)
+        load_lock = _TRACK_LOAD_LOCKS.setdefault(path, threading.Lock())
     if cached is not None and cached[0] == signature:
         frame = cached[1]
         return None if frame is None else frame.copy()
-    frame = _read_track(path)
-    with _TRACK_CACHE_LOCK:
-        _TRACK_CACHE[path] = (signature, frame)
+    # One decode at a time per track: the callbacks of a refresh tick fire
+    # together, and concurrent decodes of the same rows were enough to push
+    # the container over its memory limit.
+    with load_lock:
+        with _TRACK_CACHE_LOCK:
+            cached = _TRACK_CACHE.get(path)
+        if cached is not None and cached[0] == signature:
+            frame = cached[1]
+            return None if frame is None else frame.copy()
+        frame = _read_track(path)
+        with _TRACK_CACHE_LOCK:
+            _TRACK_CACHE[path] = (signature, frame)
     return None if frame is None else frame.copy()
 
 
