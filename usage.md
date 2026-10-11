@@ -330,7 +330,12 @@ or "All sessions (compare)" to overlay runs), then use the six tabs:
 
 Everything is derived from the rows the engine already writes, the
 strategy's diagnostics file and the fill table; the dashboard collects
-nothing of its own. If a track's result store doesn't exist yet (e.g. you
+nothing of its own. The page opens on the track whose result store was
+written most recently (normally the running demo workers). On the server
+the Docker stack's dashboard (`http://<host>/` and `https://<host>/`)
+offers all four tracks; `LOB_LIVE_ONLY_DASHBOARD=1` (the forward stack's
+own dashboard service uses it) restricts a dashboard instance to the two
+live forward tracks. If a track's result store doesn't exist yet (e.g. you
 haven't run `--mode demo` yet) the dashboard says so plainly instead of
 erroring, and a tab whose source file is missing (no diagnostics file, no
 fill table) names the file it is waiting for.

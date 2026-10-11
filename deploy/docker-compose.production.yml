@@ -205,7 +205,12 @@ services:
       # loopback-only, so this does not expose the dashboard directly.
       DASHBOARD_HOST: 0.0.0.0
       LOB_FORWARD_RESULTS_DIR: /app/runtime/forward/results
-      LOB_LIVE_ONLY_DASHBOARD: "1"
+      # 0 (default): the demo stack's dashboard offers every track -- the
+      # paper workers' results (badge DEMO) and the live forward results
+      # (badge REAL), never mixed in one view. Set
+      # LOB_LIVE_ONLY_DASHBOARD=1 in deploy/demo.env to hide the demo
+      # tracks from this public page.
+      LOB_LIVE_ONLY_DASHBOARD: "${LOB_LIVE_ONLY_DASHBOARD:-0}"
     group_add:
       - "${FORWARD_CONTROL_GID:-986}"
     restart: unless-stopped
