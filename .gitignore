@@ -24,6 +24,7 @@ market_maker/results/*.sqlite3
 market_maker/results/*.sqlite3-shm
 market_maker/results/*.sqlite3-wal
 market_maker/results/*_archive*.jsonl
+market_maker/results/*_algo1_diagnostics.jsonl
 # Admin control-queue runtime state: pending commands, results, audit log.
 market_maker/results/control/
 market_maker/results/backups/
