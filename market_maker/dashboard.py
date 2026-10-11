@@ -136,6 +136,12 @@ MONO = "Consolas, 'JetBrains Mono', monospace"
 
 # ---------- Pure data handling (unit-tested, no Dash involved) ----------
 
+# Newest rounds a track view holds. Every row is decoded from JSON into
+# Python objects, and a full 5,700-row store cost the dashboard container
+# about 210 MB against its 192 MB limit, so the view is bounded; the status
+# line says when it is.
+MAX_ROWS = max(100, int(os.environ.get("LOB_DASHBOARD_MAX_ROWS", "2000") or 2000))
+
 _TRACK_CACHE: Dict[str, Any] = {}
 _TRACK_CACHE_LOCK = threading.Lock()
 
@@ -170,20 +176,22 @@ def load_track(path: str) -> Optional[pd.DataFrame]:
     return None if frame is None else frame.copy()
 
 
-def _read_track(path: str) -> Optional[pd.DataFrame]:
+def _read_track(path: str, max_rows: Optional[int] = None) -> Optional[pd.DataFrame]:
+    """The newest ``max_rows`` (default MAX_ROWS) rounds of a track."""
+    limit = MAX_ROWS if max_rows is None else max(1, int(max_rows))
     p = Path(path)
     store_path = p.with_suffix(".sqlite3")
     df = None
     if store_path.exists():
         try:
-            df = DemoResultStore.open_existing(store_path).load_view()
+            df = DemoResultStore.open_existing(store_path).load_view(limit=limit)
         except Exception:
             df = None
     if df is None or df.empty:
         if not p.exists():
             return None
         try:
-            df = pd.read_csv(path)
+            df = pd.read_csv(path).tail(limit).reset_index(drop=True)
         except Exception:
             return None
     if df.empty:
@@ -1355,6 +1363,8 @@ def refresh_status_text(track_key, session_id, _):
     comparing = session_id in (None, "all")
     last = pd.to_datetime(df["Timestamp"], errors="coerce").max()
     status = f"{len(df)} rounds" + ("" if comparing else f" — session {session_id}")
+    if comparing and len(df) >= MAX_ROWS:
+        status += f" (the newest {MAX_ROWS:,} rounds; older rows stay in the store)"
     if pd.notna(last):
         status += f" — last round {last:%Y-%m-%d %H:%M:%S}"
     return status + no_quote_summary(df)

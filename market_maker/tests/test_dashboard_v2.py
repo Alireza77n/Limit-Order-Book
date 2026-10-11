@@ -533,3 +533,26 @@ def _components(component):
         return
     yield component
     yield from _components(getattr(component, "children", None))
+
+
+def test_track_view_is_bounded_to_the_newest_rows(tmp_path, monkeypatch):
+    """A full store decoded into Python objects does not fit the dashboard
+    container, so a track view holds the newest MAX_ROWS rounds (SQLite and
+    CSV alike) and the status line says so."""
+    from result_store import DemoResultStore
+
+    monkeypatch.setattr(dashboard, "MAX_ROWS", 3)
+    path = tmp_path / "usdt_track_demo.csv"
+    rows = [_row(f"2026-10-01 10:00:{n:02d}", n) for n in range(1, 7)]
+    pd.DataFrame(rows).to_csv(path, index=False)
+    assert list(dashboard._read_track(str(path))["Round"]) == [4, 5, 6]
+
+    store = DemoResultStore(path.with_suffix(".sqlite3"), list(rows[0]))
+    for row in rows:
+        store.append_round(row)
+    assert list(dashboard._read_track(str(path))["Round"]) == [4, 5, 6]
+    assert list(dashboard._read_track(str(path), max_rows=5)["Round"]) == [2, 3, 4, 5, 6]
+
+    monkeypatch.setitem(dashboard.TRACKS, "usdt_demo", dict(dashboard.TRACKS["usdt_demo"], path=str(path)))
+    text = dashboard.refresh_status_text("usdt_demo", "all", 0)
+    assert text.startswith("3 rounds (the newest 3 rounds")
