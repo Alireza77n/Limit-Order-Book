@@ -607,11 +607,18 @@ def test_create_backup_snapshots_expected_files_only(tmp_path):
     (paths.results_dir / "btc_track_demo.csv").write_text("t,v\n")
     (paths.results_dir / "btc_track.csv").write_text("t,v\n")  # real csv, must not be copied
 
+    (paths.results_dir / "btc_track_demo.csv").chmod(0o600)   # how the worker writes it
+
     result = ca.handle_create_backup(paths, None, {"prefix": "manual"}, None)
     assert result.ok is True
     backup_dir = paths.backups_dir / result.detail["backup"]
     names = {p.name for p in backup_dir.iterdir()}
     assert names == {"paper_s1_btcirt.json", "stack_session.json", "btc_track_demo.csv"}
+    # lob-admin reads the snapshot as the stack user through a read-only
+    # mount: every copied file must be readable, whatever the source mode.
+    import stat
+    for copied in backup_dir.iterdir():
+        assert stat.S_IMODE(copied.stat().st_mode) & 0o044 == 0o044, copied
 
 
 def test_reset_demo_requires_confirmation(tmp_path):

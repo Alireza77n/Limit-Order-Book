@@ -346,9 +346,29 @@ def _snapshot_demo_files(paths: AgentPaths, dest_dir: Path) -> List[str]:
     return sorted(copied)
 
 
+def _readable_by_the_stack(dest_dir: Path, reference: Path) -> None:
+    """Backups are read by lob-admin (the stack's uid, read-only mount) and
+    this agent runs as root: give the snapshot the runtime directory's
+    owner and world-readable modes. The worker writes its CSV as 0600, and
+    a root-owned copy of that was unreadable for /admin/export."""
+    try:
+        owner = reference.stat()
+    except OSError:
+        owner = None
+    for entry in [dest_dir, *dest_dir.iterdir()]:
+        try:
+            entry.chmod(0o755 if entry.is_dir() else 0o644)
+            if owner is not None and hasattr(os, "chown") and os.geteuid() == 0:
+                os.chown(entry, owner.st_uid, owner.st_gid)
+        except OSError:
+            continue
+
+
 def create_backup(paths: AgentPaths, dest_name: str) -> List[str]:
     dest_dir = paths.backups_dir / dest_name
-    return _snapshot_demo_files(paths, dest_dir)
+    files = _snapshot_demo_files(paths, dest_dir)
+    _readable_by_the_stack(dest_dir, paths.state_dir)
+    return files
 
 
 # --- handlers -------------------------------------------------------------
