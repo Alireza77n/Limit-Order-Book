@@ -399,16 +399,26 @@ class SimpleMarketMaker:
         self._diagnostic_line_count = count
         if count <= 2 * keep:
             return
+        # Stream the tail into a temporary file: the documents are large
+        # (every scored pair), so the file must never be read into memory.
+        skip = max(0, count - keep)
+        temporary = f"{path}.{os.getpid()}.tmp"
         try:
-            with open(path, "r") as stream:
-                lines = stream.readlines()[-keep:]
-            temporary = f"{path}.{os.getpid()}.tmp"
-            with open(temporary, "w") as stream:
-                stream.writelines(lines)
+            kept = 0
+            with open(path, "rb") as source, open(temporary, "wb") as target:
+                for index, line in enumerate(source):
+                    if index < skip:
+                        continue
+                    target.write(line)
+                    kept += 1
             os.replace(temporary, path)
-            self._diagnostic_line_count = len(lines)
+            self._diagnostic_line_count = kept
         except OSError as exc:
             print(f"Diagnostics rotation failed: {exc}")
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
 
     def _algo1_diagnostic_document(
         self, ob: Dict[str, Any], inv_current: float, *, round_no: int
@@ -1365,8 +1375,15 @@ class SimpleMarketMaker:
         csv_path = self.csv_path or os.path.join(RESULTS_DIR, "track_demo.csv")
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         self._ensure_demo_operations(csv_path)
-        order_df = self.result_store.load_view(limit=self.cfg.demo_csv_export_max_rows)
+        # The SQLite store is the source of truth and every lifecycle
+        # back-fill goes there (_update_demo_result_orders). The in-memory
+        # frame is only handed to _sync_demo_order_rows, which is a no-op on
+        # an empty frame; reloading the whole store into it every round
+        # decoded tens of MB of JSON per round on a long-lived store and
+        # pushed the workers past their container memory limit.
+        order_df = pd.DataFrame(columns=self.result_store.columns, dtype=object)
         self.result_store.export_bounded_csv()
+        last_export = float(self.monotonic_provider())
 
         self._notify_startup()
         round_no = self.result_store.latest_round_no(str(self.session), self.pair)
@@ -1689,10 +1706,15 @@ class SimpleMarketMaker:
                 row.update(self._demo_side_fields("sell", sell_order, sell_reason))
                 self.result_store.append_round(row)
                 self.result_store.compact(self.cfg.demo_result_retain_rows)
-                self.result_store.export_bounded_csv()
-                order_df = self.result_store.load_view(
-                    limit=self.cfg.demo_csv_export_max_rows
+                # The CSV is a bounded export of the store (readers prefer
+                # the SQLite file); rewriting it every round cost seconds of
+                # CPU per round once the store held thousands of rows.
+                interval = float(
+                    getattr(self.cfg, "demo_csv_export_interval_seconds", 0.0) or 0.0
                 )
+                if interval <= 0 or float(self.monotonic_provider()) - last_export >= interval:
+                    self.result_store.export_bounded_csv()
+                    last_export = float(self.monotonic_provider())
                 round_target = self._wait_for_next_round(round_target)
             termination = {
                 "reason": "session_end",

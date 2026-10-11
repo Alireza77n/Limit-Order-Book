@@ -67,6 +67,30 @@ def test_bounded_export_and_compaction(tmp_path):
     assert list(store.load_view()["Round"]) == [3, 4, 5, 6]
 
 
+def test_streamed_export_formats_cells_like_pandas(tmp_path):
+    """export_bounded_csv streams rows straight from SQLite (no DataFrame);
+    nulls, booleans, floats and nested values must read back as before."""
+    csv_path = tmp_path / "btc.csv"
+    columns = COLUMNS + ["Flag", "Nested"]
+    store = DemoResultStore(tmp_path / "btc.sqlite3", columns, csv_export_path=csv_path)
+    store.append_round({**row(1, buy_id="buy-1"), "Buy Status": None, "cash_current": 1234.5,
+                        "Flag": True, "Nested": {"a": 1}})
+    store.append_round({**row(2), "cash_current": 7, "Flag": False, "Nested": None})
+
+    store.export_bounded_csv()
+
+    exported = pd.read_csv(csv_path)
+    assert list(exported.columns) == columns
+    assert list(exported["Round"]) == [1, 2]
+    assert pd.isna(exported.loc[0, "Buy Status"])
+    assert exported.loc[0, "cash_current"] == 1234.5
+    assert exported.loc[1, "cash_current"] == 7
+    assert list(exported["Flag"]) == [True, False]
+    assert exported.loc[0, "Nested"] == '{"a":1}'
+    assert pd.isna(exported.loc[1, "Nested"])
+    assert not list(tmp_path.glob(".btc.csv.*.tmp"))
+
+
 def test_legacy_csv_import_is_idempotent(tmp_path):
     csv_path = tmp_path / "legacy.csv"
     pd.DataFrame([row(1), row(2)]).to_csv(csv_path, index=False)

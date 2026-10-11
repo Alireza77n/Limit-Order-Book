@@ -27,6 +27,7 @@ import fcntl
 import json
 import math
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -135,9 +136,41 @@ MONO = "Consolas, 'JetBrains Mono', monospace"
 
 # ---------- Pure data handling (unit-tested, no Dash involved) ----------
 
+_TRACK_CACHE: Dict[str, Any] = {}
+_TRACK_CACHE_LOCK = threading.Lock()
+
+
+def _track_signature(path: Path) -> tuple:
+    """What must change for a track to be re-read: the SQLite file, its
+    write-ahead log (appends land there first) and the CSV fallback."""
+    parts = []
+    for candidate in (path.with_suffix(".sqlite3"), path.with_suffix(".sqlite3-wal"), path):
+        try:
+            stat = candidate.stat()
+            parts.append((candidate.name, stat.st_mtime_ns, stat.st_size))
+        except OSError:
+            parts.append((candidate.name, None, None))
+    return tuple(parts)
+
+
 def load_track(path: str) -> Optional[pd.DataFrame]:
-    """Read a track's CSV. Returns None if it doesn't exist yet, is
-    unreadable, or has no rows -- callers show a "no data yet" state."""
+    """Read a track's result store (SQLite first, CSV fallback). Returns
+    None if it doesn't exist yet, is unreadable, or has no rows -- callers
+    show a "no data yet" state. Reads are cached until one of the files
+    changes, so the callbacks of one refresh tick share a single load."""
+    signature = _track_signature(Path(path))
+    with _TRACK_CACHE_LOCK:
+        cached = _TRACK_CACHE.get(path)
+    if cached is not None and cached[0] == signature:
+        frame = cached[1]
+        return None if frame is None else frame.copy()
+    frame = _read_track(path)
+    with _TRACK_CACHE_LOCK:
+        _TRACK_CACHE[path] = (signature, frame)
+    return None if frame is None else frame.copy()
+
+
+def _read_track(path: str) -> Optional[pd.DataFrame]:
     p = Path(path)
     store_path = p.with_suffix(".sqlite3")
     df = None

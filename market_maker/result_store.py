@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 import os
@@ -203,23 +204,52 @@ class DemoResultStore:
         return pd.DataFrame(documents, columns=self.columns, dtype=object)
 
     def export_bounded_csv(self) -> bool:
+        """Write the newest ``csv_export_max_rows`` rows (oldest first) to
+        the CSV, streaming one row at a time. Building a DataFrame of the
+        whole export first cost tens of MB of transient objects per call on
+        a long-lived store, which is what a worker does every minute."""
         if self.csv_export_path is None:
             return False
         self.csv_export_path.parent.mkdir(parents=True, exist_ok=True)
-        view = self.load_view(limit=self.csv_export_max_rows)
+        query = (
+            "SELECT payload_json FROM ("
+            "SELECT id, payload_json FROM rounds ORDER BY id DESC LIMIT ?"
+            ") ORDER BY id"
+        )
         fd, temporary = tempfile.mkstemp(
             prefix=f".{self.csv_export_path.name}.",
             suffix=".tmp",
             dir=self.csv_export_path.parent,
         )
-        os.close(fd)
         try:
-            view.to_csv(temporary, index=False)
+            with os.fdopen(fd, "w", newline="", encoding="utf-8") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(self.columns)
+                with self._connect() as connection:
+                    for (payload,) in connection.execute(query, (self.csv_export_max_rows,)):
+                        document = json.loads(payload)
+                        writer.writerow(
+                            [self._csv_cell(document.get(column)) for column in self.columns]
+                        )
             os.replace(temporary, self.csv_export_path)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
         return True
+
+    @staticmethod
+    def _csv_cell(value):
+        """The cell text pandas' ``to_csv`` would have produced: empty for
+        null, ``True``/``False`` for booleans, the shortest float repr."""
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "True" if value else "False"
+        if isinstance(value, float):
+            return repr(value)
+        if isinstance(value, (list, dict)):
+            return json.dumps(value, sort_keys=True, separators=(",", ":"))
+        return value
 
     def compact(self, retain_rows: int) -> int:
         retain_rows = max(0, int(retain_rows))

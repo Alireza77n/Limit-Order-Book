@@ -241,6 +241,33 @@ def test_live_loop_records_a_synthetic_level_as_missing(monkeypatch, tmp_path):
     assert frame["Ask Level"].tolist() == [1, 1, 1]
 
 
+def test_demo_csv_export_is_throttled_by_the_interval(monkeypatch, tmp_path):
+    """The SQLite store is updated every round; the CSV export runs at start,
+    at session end and otherwise at most every demo_csv_export_interval_seconds
+    (rewriting it every round cost seconds of CPU on a long-lived store)."""
+    from result_store import DemoResultStore
+
+    calls = []
+    original = DemoResultStore.export_bounded_csv
+    monkeypatch.setattr(
+        DemoResultStore, "export_bounded_csv",
+        lambda self: calls.append(1) or original(self),
+    )
+
+    bot = _demo_bot(monkeypatch, tmp_path, _FixedPair(), hysteresis_ticks=0, rounds=3)
+    bot.cfg.demo_csv_export_interval_seconds = 1e9
+    bot.run()
+    assert len(calls) == 2                        # start + final flush
+
+    calls.clear()
+    (tmp_path / "every").mkdir()
+    bot = _demo_bot(monkeypatch, tmp_path / "every", _FixedPair(), hysteresis_ticks=0, rounds=3)
+    bot.cfg.demo_csv_export_interval_seconds = 0
+    result = bot.run()
+    assert len(calls) == 2 + 3                    # plus one per round
+    assert len(result) == 3
+
+
 def test_demo_loop_keeps_a_resting_order_instead_of_reposting(monkeypatch, tmp_path):
     bot = _demo_bot(monkeypatch, tmp_path, _FixedPair(), hysteresis_ticks=5)
 

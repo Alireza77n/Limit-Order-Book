@@ -126,6 +126,10 @@ class MMConfig:
     demo_archive_max_bytes: int = 10_000_000
     demo_result_db_path: Optional[str] = None
     demo_csv_export_max_rows: int = 10_000
+    # Seconds between rewrites of the bounded CSV export during a demo run
+    # (the SQLite store is updated every round; the CSV is also written at
+    # start and at session end). 0 = every round.
+    demo_csv_export_interval_seconds: float = 60.0
     demo_result_retain_rows: int = 100_000
     no_quote_alert_rounds: int = 30
     no_quote_alert_seconds: float = 300.0
@@ -136,7 +140,9 @@ class MMConfig:
     # The per-round diagnostics JSONL (candidates, probabilities, expected
     # values, the selection) feeds the dashboard's "Quote decision" tab; the
     # engine keeps the newest N documents (see engine._rotate_diagnostics).
-    algo1_diagnostics_keep_rounds: int = 3000
+    # About 60 KB per USDT/IRT round (every scored pair is recorded), so the
+    # file stays near 120 MB and is rewritten, streaming, at twice that.
+    algo1_diagnostics_keep_rounds: int = 2000
 
 
     # Loop / time controls

@@ -152,6 +152,24 @@ def test_default_track_is_the_most_recently_written_store(tmp_path, monkeypatch)
     assert dashboard.default_track() == "usdt_demo"
 
 
+def test_load_track_cache_refreshes_when_the_store_changes(tmp_path):
+    """Reads are cached per file signature (mtime, size) so the callbacks of
+    one refresh tick share a load; a changed file is re-read, and callers
+    get their own copy."""
+    path = tmp_path / "track.csv"
+    pd.DataFrame([_row("2026-10-01 10:00:00", 1)]).to_csv(path, index=False)
+    first = dashboard.load_track(str(path))
+    assert list(first["Round"]) == [1]
+
+    pd.DataFrame([_row("2026-10-01 10:00:00", 1), _row("2026-10-01 10:00:10", 2)]).to_csv(path, index=False)
+    second = dashboard.load_track(str(path))
+    assert list(second["Round"]) == [1, 2]
+
+    second["Round"] = 99                                   # a caller mutating its copy
+    assert list(dashboard.load_track(str(path))["Round"]) == [1, 2]
+    assert dashboard.load_track(str(tmp_path / "missing.csv")) is None
+
+
 # ---------- decisions ----------
 
 def test_quote_mode_counts_from_the_quote_mode_column():
