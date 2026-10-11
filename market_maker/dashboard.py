@@ -29,11 +29,12 @@ import math
 import os
 import threading
 from pathlib import Path
+from urllib.parse import parse_qs
 from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, dash_table, dcc, html
+from dash import Dash, dash_table, dcc, html, no_update
 from dash.dependencies import Input, Output, State
 
 from config import DEMO_STATE_DIR, RESULTS_DIR, TRADING_PROFILES, demo_csv_path
@@ -103,6 +104,17 @@ ACTIVITY_COLUMNS = [
 
 # Buckets (relative distance) used for calibration tables; match the fill-table builder.
 CALIBRATION_BUCKETS = (0.001, 0.0015, 0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016, 0.024)
+
+TAB_VALUES = ("overview", "decision", "fillmodel", "orderbook", "validation", "trading")
+
+
+def _url_params(search) -> Dict[str, str]:
+    """Query-string parameters of a deep link, first value each:
+    ?tab=decision&track=usdt_demo&session=<id>."""
+    if not search:
+        return {}
+    return {key: values[0] for key, values in parse_qs(str(search).lstrip("?")).items() if values}
+
 
 # Rounds offered in the Quote decision picker. Each diagnostics document holds
 # every scored pair (~50 KB), so this bounds what one refresh reads.
@@ -1214,6 +1226,7 @@ app.title = "Market-Making Dashboard"
 _label_style = {"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "fontSize": "0.8rem", "fontWeight": 600}
 
 app.layout = html.Div([
+    dcc.Location(id="url", refresh=False),
     html.Div([
         html.Div([
             html.Span("Market-Maker ", style={"fontWeight": 700, "fontSize": "1.05rem", "color": "#e8f1f0"}),
@@ -1303,14 +1316,24 @@ app.layout = html.Div([
 ], style={"background": PAGE, "padding": "1rem 1.5rem", "minHeight": "100vh", "fontFamily": FONT_FAMILY})
 
 
+@app.callback(Output("main-tabs", "value"), Output("track", "value"), Input("url", "search"))
+def apply_url(search):
+    """Deep links: ?tab=decision&track=usdt_demo (&session=<id>, applied by
+    refresh_session_options) open the page on that view."""
+    params = _url_params(search)
+    tab, track = params.get("tab"), params.get("track")
+    return (tab if tab in TAB_VALUES else no_update, track if track in TRACKS else no_update)
+
+
 @app.callback(Output("session", "options"), Output("session", "value"),
               Input("track", "value"), Input("tick", "n_intervals"),
-              State("session", "value"))
-def refresh_session_options(track_key, _, current_value):
+              State("session", "value"), State("url", "search"))
+def refresh_session_options(track_key, _, current_value, search=None):
     """Default the session picker to "All sessions (compare)" on first
-    load, not the newest single session, and keep the operator's choice
-    across auto-refresh ticks (State never fires a callback); fall back to
-    "all" only when the selected session no longer exists."""
+    load (or to the session named in the deep link), not the newest single
+    session, and keep the operator's choice across auto-refresh ticks
+    (State never fires a callback); fall back to "all" only when the
+    selected session no longer exists."""
     df = load_track(TRACKS[track_key]["path"])
     if df is None:
         return [], None
@@ -1318,6 +1341,10 @@ def refresh_session_options(track_key, _, current_value):
     options = [{"label": "All sessions (compare)", "value": "all"}] + [
         {"label": str(s), "value": s} for s in ids
     ]
+    if current_value is None:
+        wanted = _url_params(search).get("session")
+        if wanted == "all" or wanted in ids:
+            return options, wanted
     if current_value == "all" or current_value in ids:
         return options, current_value
     return options, "all"

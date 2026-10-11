@@ -170,6 +170,21 @@ def test_load_track_cache_refreshes_when_the_store_changes(tmp_path):
     assert dashboard.load_track(str(tmp_path / "missing.csv")) is None
 
 
+def test_deep_links_select_tab_track_and_session(monkeypatch):
+    from dash import no_update
+
+    assert dashboard.apply_url("?tab=decision&track=usdt_demo") == ("decision", "usdt_demo")
+    assert dashboard.apply_url("?tab=nope&track=nope") == (no_update, no_update)
+    assert dashboard.apply_url("") == (no_update, no_update)
+    assert dashboard.apply_url(None) == (no_update, no_update)
+
+    monkeypatch.setattr(dashboard, "load_track", lambda path: pd.DataFrame([{"Session_id": "s1"}, {"Session_id": "s2"}]))
+    assert dashboard.refresh_session_options("btc_real", 0, None, "?session=s2")[1] == "s2"
+    assert dashboard.refresh_session_options("btc_real", 0, None, "?session=all")[1] == "all"
+    assert dashboard.refresh_session_options("btc_real", 0, None, "?session=missing")[1] == "all"
+    assert dashboard.refresh_session_options("btc_real", 1, "s1", "?session=s2")[1] == "s1"   # a made choice wins
+
+
 # ---------- decisions ----------
 
 def test_quote_mode_counts_from_the_quote_mode_column():
