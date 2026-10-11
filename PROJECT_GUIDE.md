@@ -52,7 +52,7 @@ There are two run modes:
 ```mermaid
 flowchart TD
     U[You, in a browser] --> N[nginx, ports 80 and 443]
-    N --> A[Admin panel<br/>admin_app.py, port 18653]
+    N --> A[Admin panel<br/>admin_app.py in the Docker stack, port 8653<br/>same pages for Demo and the live forward test]
     N --> D[Charts dashboard<br/>dashboard.py, read-only]
     A -->|writes a command file| Q[Control queue<br/>files on disk]
     Q --> G[Forward agent<br/>forward_control_agent.py<br/>holds the Nobitex API keys]
@@ -89,7 +89,7 @@ The three systemd units are in `deploy/`:
 
 | Unit | Runs | Linux user | Port |
 |---|---|---|---|
-| `market-maker-forward-admin.service` | `admin_app.py` under gunicorn | `marketmaker-admin` | 18653 |
+| `market-maker-forward-admin.service` | `admin_app.py` under gunicorn (internal only: since 2026-10-11 nginx serves `/admin/` on both HTTP and HTTPS from the Docker stack's admin on 8653, which drives the live forward test through the mounted `/var/lib/market-maker-forward/control`; this service lacks the Demo control directory, so its Demo pages fail) | `marketmaker-admin` | 18653 |
 | `market-maker-forward-agent.service` | `deploy/forward_control_agent.py` | `marketmaker-forward` | none |
 | `market-maker-forward-dashboard.service` | `dashboard.py` | `marketmaker-admin` | 18652 |
 
