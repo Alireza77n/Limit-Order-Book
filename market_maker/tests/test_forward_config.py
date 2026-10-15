@@ -5,6 +5,7 @@ from demo_config import OverlayValidationError
 from forward_config import (
     FORWARD_MIN_COMMISSION_PERC,
     desired_config,
+    save_config,
     validate_forward_config,
 )
 
@@ -22,6 +23,17 @@ def test_forward_config_rejects_a_fee_below_verified_irt_rate(tmp_path):
 
     with pytest.raises(OverlayValidationError, match="at least 0.0025"):
         validate_forward_config(values, "btc", TRADING_PROFILES, tmp_path)
+
+
+def test_forward_config_keeps_a_saved_target_below_the_fee(tmp_path):
+    """desired_config used to clamp exp_ret_min back up to the fee floor on
+    every read, so a lower target saved from the Live Config page reappeared
+    as 0.0025 after the redirect (and at worker start)."""
+    values = desired_config("btc", TRADING_PROFILES, tmp_path)
+    values["exp_ret_min"] = 0.0001
+    save_config(values, "btc", TRADING_PROFILES, tmp_path)
+    assert desired_config("btc", TRADING_PROFILES, tmp_path)["exp_ret_min"] == 0.0001
+    assert desired_config("btc", TRADING_PROFILES, tmp_path)["commission_perc"] == FORWARD_MIN_COMMISSION_PERC
 
 
 def test_forward_config_allows_any_non_negative_target_return(tmp_path):

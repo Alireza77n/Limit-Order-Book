@@ -51,6 +51,9 @@ def config_path(pair: str, directory=None) -> Path:
 def desired_config(pair, profiles, directory=None):
     schema = editable_schema(pair, profiles)
     base = {key: profiles[pair][key] for key in schema if key in FORWARD_FIELDS}
+    # Conservative live default: the target starts at the fee when nothing
+    # has been saved yet; a value saved from the Live Config page wins.
+    base["exp_ret_min"] = max(float(base.get("exp_ret_min", 0.0)), FORWARD_MIN_COMMISSION_PERC)
     path = config_path(pair, directory)
     if path.exists():
         try:
@@ -63,9 +66,6 @@ def desired_config(pair, profiles, directory=None):
         base.update({key: value for key, value in loaded.items() if key in FORWARD_FIELDS})
     base["commission_perc"] = max(
         float(base.get("commission_perc", 0.0)), FORWARD_MIN_COMMISSION_PERC
-    )
-    base["exp_ret_min"] = max(
-        float(base.get("exp_ret_min", 0.0)), FORWARD_MIN_COMMISSION_PERC
     )
     base["buy_locked_cash_limit_enabled"] = bool(base.get("buy_locked_cash_limit_enabled"))
     base["sell_locked_inventory_limit_enabled"] = bool(base.get("sell_locked_inventory_limit_enabled"))
