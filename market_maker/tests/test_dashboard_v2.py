@@ -416,7 +416,7 @@ def test_track_settings_apply_the_demo_overlay(tmp_path, monkeypatch):
 
 # ---------- rendering (plain function calls) ----------
 
-@pytest.mark.parametrize("tab", ["overview", "decision", "fillmodel", "orderbook", "validation", "trading"])
+@pytest.mark.parametrize("tab", ["overview", "decision", "fillmodel", "orderbook", "validation", "trading", "attribution"])
 def test_every_tab_renders_for_a_v2_track(v2_track, tab):
     rendered = dashboard.render_tab_content(tab, "usdt_demo", "all", 0, 0.0, 0.0, None)
     assert "No data yet" not in _text_of(rendered)
@@ -610,3 +610,72 @@ def test_load_track_loads_one_session_and_lists_every_session(tmp_path, monkeypa
     options, value = dashboard.refresh_session_options("usdt_demo", 0, None)
     assert [o["value"] for o in options] == ["all", "new", "old"]
     assert dashboard.refresh_status_text("usdt_demo", "old", 0).startswith("3 rounds — session old")
+
+
+# ---------- PnL attribution ----------
+
+def _ledger_frame():
+    """Three rounds of the worked example in docs/algorithms/PNL_ATTRIBUTION.md:
+    start with 10 units and 1000 cash at mid 100; buy 2 at 98 while the mid
+    slips to 99; sell 1 at 102 with a 0.5 fee while the mid returns to 100."""
+    rows = [
+        _row("2026-10-01 10:00:00", 1, **{"inv_current": 10.0, "cash_current": 1000.0, "Mid Price": 100.0}),
+        _row("2026-10-01 10:01:00", 2, **{"inv_current": 12.0, "cash_current": 804.0, "Mid Price": 99.0}),
+        _row("2026-10-01 10:02:00", 3, **{"inv_current": 11.0, "cash_current": 905.5, "Mid Price": 100.0, "Round Fee": 0.5}),
+    ]
+    df = pd.DataFrame(rows)
+    df["Timestamp"] = pd.to_datetime(df["Timestamp"])
+    return df
+
+
+def test_pnl_attribution_splits_every_round_exactly():
+    att = dashboard.pnl_attribution(_ledger_frame())
+
+    assert list(att["Price PnL"]) == pytest.approx([0.0, -10.0, 12.0])      # 10·(99−100), 12·(100−99)
+    assert list(att["Trading PnL"]) == pytest.approx([0.0, 2.0, 1.5])      # 2·(99−98); 1·(102−100) − 0.5 fee
+    assert list(att["Total PnL"]) == pytest.approx([0.0, -8.0, 13.5])
+    assert list(att["Total PnL (cum)"]) == pytest.approx(list(att["Wealth"] - att["Wealth"].iloc[0]))
+    totals = dashboard.attribution_totals(att)
+    assert totals["total"] == pytest.approx(5.5)
+    assert totals["price"] == pytest.approx(2.0) and totals["trading"] == pytest.approx(3.5)
+    assert totals["fees"] == pytest.approx(0.5) and totals["start_wealth"] == pytest.approx(2000.0)
+    assert totals["verdict"] == "Mainly trading" and totals["sessions"] == 1
+
+
+def test_pnl_attribution_uses_the_book_midpoint_for_live_rows():
+    live = _ledger_frame().drop(columns=["Mid Price", "Round Fee"])
+    live["Best Bid"] = [99.0, 98.0, 99.0]
+    live["Best Ask"] = [101.0, 100.0, 101.0]
+
+    att = dashboard.pnl_attribution(live)
+
+    assert list(att["Price PnL"]) == pytest.approx([0.0, -10.0, 12.0])
+    assert list(att["Trading PnL"]) == pytest.approx([0.0, 2.0, 1.5])
+    assert dashboard.attribution_totals(att)["fees"] == 0.0
+
+
+def test_pnl_attribution_restarts_at_every_session():
+    first, second = _ledger_frame(), _ledger_frame()
+    second["Session_id"] = "s2"
+    second["Timestamp"] = second["Timestamp"] + pd.Timedelta(hours=1)
+
+    att = dashboard.pnl_attribution(pd.concat([second, first]))
+
+    assert list(att["Session_id"]) == ["s1"] * 3 + ["s2"] * 3
+    assert list(att["Total PnL (cum)"]) == pytest.approx([0.0, -8.0, 5.5] * 2)
+    totals = dashboard.attribution_totals(att)
+    assert totals["total"] == pytest.approx(11.0) and totals["sessions"] == 2
+
+
+def test_pnl_attribution_is_empty_without_the_ledger_columns():
+    bare = _ledger_frame().drop(columns=["inv_current", "cash_current"])
+    assert dashboard.pnl_attribution(bare).empty
+    assert dashboard.attribution_totals(dashboard.pnl_attribution(bare))["verdict"] == "Nothing yet"
+
+
+def test_attribution_tab_shows_the_verdict_and_the_chart(v2_track):
+    text = _text_of(dashboard.render_tab_content("attribution", "usdt_demo", "all", 0, 0.0, 0.0, None))
+    assert "Total PnL" in text and "Trading PnL (our fills, net of fees)" in text
+    assert "Price PnL (market moves on held inventory)" in text
+    assert "Verdict" in text and "Where the PnL came from" in text
+    assert "How to read it" in text

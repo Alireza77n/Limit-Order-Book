@@ -289,7 +289,7 @@ ask, teal = fills), each on its own single axis. Every line chart uses
 `hovermode="x unified"` for a crosshair-style tooltip.
 
 Pick a **track** (which result store) and a **session** (a specific run,
-or "All sessions (compare)" to overlay runs), then use the six tabs. The
+or "All sessions (compare)" to overlay runs), then use the seven tabs. The
 session picker lists every session in the store, however old; choosing
 one loads that session's own newest rounds, while the comparison view
 loads the newest rounds across all sessions (both views are capped at
@@ -333,6 +333,15 @@ stay in the store). The tabs:
   including the nine decision columns the engine writes (`Quote Mode`,
   `Selection Reason`, `Centre`, `Bid/Ask Distance`, `Bid/Ask Fill Prob`,
   `Expected Value`, `Reference Price`).
+* **PnL attribution** -- did the result come from our quotes or from the
+  price? Every round's change in wealth `W_t = cash_t + inv_t · mid_t` is
+  split exactly into price PnL `P_t = inv_{t−1} · (mid_t − mid_{t−1})` (the
+  market moved while we held inventory) and trading PnL
+  `T_t = Δcash_t + Δinv_t · mid_t` (our fills against the mid, net of fees),
+  so `W_t − W_{t−1} = P_t + T_t`. Shown as running sums (orange price, blue
+  trading, black total) with the session sums and a verdict on top; needs
+  only the inventory, cash and mid columns, so demo and live tracks both
+  work. Derivation and a worked example: `docs/algorithms/PNL_ATTRIBUTION.md`.
 
 Everything is derived from the rows the engine already writes, the
 strategy's diagnostics file and the fill table; the dashboard collects

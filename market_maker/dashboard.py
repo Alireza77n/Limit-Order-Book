@@ -105,7 +105,7 @@ ACTIVITY_COLUMNS = [
 # Buckets (relative distance) used for calibration tables; match the fill-table builder.
 CALIBRATION_BUCKETS = (0.001, 0.0015, 0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016, 0.024)
 
-TAB_VALUES = ("overview", "decision", "fillmodel", "orderbook", "validation", "trading")
+TAB_VALUES = ("overview", "decision", "fillmodel", "orderbook", "validation", "trading", "attribution")
 
 
 def _url_params(search) -> Dict[str, str]:
@@ -741,6 +741,87 @@ def gate_rows(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]
     ]
 
 
+# ---------- PnL attribution (docs/algorithms/PNL_ATTRIBUTION.md) ----------
+
+ATTRIBUTION_COLUMNS = ["Price PnL", "Trading PnL", "Total PnL", "Fees"]
+
+
+def pnl_attribution(df: pd.DataFrame) -> pd.DataFrame:
+    """Split every round's change in wealth  W_t = cash_t + inv_t * mid_t  into
+
+        price PnL    P_t = inv_{t-1} * (mid_t - mid_{t-1})
+                     (the market moved while we were holding inventory)
+        trading PnL  T_t = (cash_t - cash_{t-1}) + (inv_t - inv_{t-1}) * mid_t
+                     (our fills measured against the mid, net of fees)
+
+    so that  W_t - W_{t-1} = P_t + T_t  holds exactly in every round. The sums
+    restart at the first round of each session (that round is the baseline and
+    gets 0). Only inv_current, cash_current and a mid are needed: Mid Price when
+    the row has one, else the best bid/ask midpoint, so demo and live rows both
+    work. Returns one row per usable round, oldest first within each session,
+    with the per-round values and their running sums (the "(cum)" columns)."""
+    empty = pd.DataFrame(columns=["Session_id", "Timestamp", "Wealth"] + ATTRIBUTION_COLUMNS)
+    if df is None or df.empty:
+        return empty
+    frame = df.copy()
+    frame["Timestamp"] = pd.to_datetime(frame["Timestamp"], errors="coerce")
+    frame["_mid"] = _col(frame, "Mid Price").fillna((_col(frame, "Best Bid") + _col(frame, "Best Ask")) / 2)
+    frame["_inv"] = _col(frame, "inv_current")
+    frame["_cash"] = _col(frame, "cash_current")
+    frame["_fee"] = _col(frame, "Round Fee").fillna(0.0)
+    if "Session_id" not in frame.columns:
+        frame["Session_id"] = ""
+    frame = frame.dropna(subset=["Timestamp"]).sort_values(["Session_id", "Timestamp"], kind="stable")
+    parts = []
+    for session, group in frame.groupby("Session_id", sort=False):
+        g = group.copy()
+        g[["_mid", "_inv", "_cash"]] = g[["_mid", "_inv", "_cash"]].ffill()
+        g = g.dropna(subset=["_mid", "_inv", "_cash"])
+        if g.empty:
+            continue
+        price = (g["_inv"].shift(1) * g["_mid"].diff()).fillna(0.0)
+        trading = (g["_cash"].diff() + g["_inv"].diff() * g["_mid"]).fillna(0.0)
+        fees = g["_fee"].copy()
+        fees.iloc[0] = 0.0  # the baseline round attributes nothing
+        out = pd.DataFrame({
+            "Session_id": session, "Timestamp": g["Timestamp"].values,
+            "Mid": g["_mid"].values, "Inventory": g["_inv"].values, "Cash": g["_cash"].values,
+            "Wealth": (g["_cash"] + g["_inv"] * g["_mid"]).values,
+            "Price PnL": price.values, "Trading PnL": trading.values,
+            "Total PnL": (price + trading).values, "Fees": fees.values,
+        })
+        for column in ATTRIBUTION_COLUMNS:
+            out[f"{column} (cum)"] = out[column].cumsum()
+        parts.append(out)
+    if not parts:
+        return empty
+    return pd.concat(parts, ignore_index=True)
+
+
+def attribution_totals(att: pd.DataFrame) -> Dict[str, Any]:
+    """Session sums of pnl_attribution() (added across sessions in the
+    comparison view), the starting wealth, and the verdict: whichever of
+    |trading| and |price| is larger made the result."""
+    if att is None or att.empty:
+        return {"total": None, "trading": None, "price": None, "fees": None,
+                "start_wealth": None, "verdict": "Nothing yet", "sessions": 0}
+    total = float(att["Total PnL"].sum())
+    trading = float(att["Trading PnL"].sum())
+    price = float(att["Price PnL"].sum())
+    if abs(total) < 1e-9 and abs(trading) < 1e-9 and abs(price) < 1e-9:
+        verdict = "Nothing yet"
+    elif abs(trading) >= abs(price):
+        verdict = "Mainly trading"
+    else:
+        verdict = "Mainly price"
+    return {
+        "total": total, "trading": trading, "price": price,
+        "fees": float(att["Fees"].sum()),
+        "start_wealth": float(att.groupby("Session_id", sort=False)["Wealth"].first().sum()),
+        "verdict": verdict, "sessions": int(att["Session_id"].nunique()),
+    }
+
+
 def _demo_worker_running(pair: str) -> bool:
     """Read the pair worker's lease without mutating Dashboard state."""
     symbol = str(TRADING_PROFILES[pair]["pair"]).lower()
@@ -1063,6 +1144,25 @@ def _position_chart(df: pd.DataFrame, settings: Dict[str, Any]) -> go.Figure:
     return fig
 
 
+def _attribution_chart(att: pd.DataFrame, comparing: bool) -> go.Figure:
+    """Running sums of price PnL (orange), trading PnL (blue) and their total
+    (black). One set of lines per session; in the comparison view each
+    session gets its own dash pattern and the session id in the legend."""
+    fig = go.Figure()
+    dashes = ("solid", "dash", "dot", "dashdot", "longdash")
+    roles = (("Price PnL", ASK_COLOR, 2.0), ("Trading PnL", BID_COLOR, 2.0), ("Total PnL", TEXT_PRIMARY, 2.6))
+    for i, (session, group) in enumerate(att.groupby("Session_id", sort=False)):
+        suffix = f" — {session}" if comparing else ""
+        for column, color, width in roles:
+            fig.add_trace(go.Scatter(
+                x=group["Timestamp"], y=group[f"{column} (cum)"], mode="lines", name=column + suffix,
+                legendgroup=str(session),
+                line=dict(color=color, width=width, dash=dashes[i % len(dashes)]),
+            ))
+    fig.add_hline(y=0, line=dict(color=BASELINE, width=1))
+    return _style(fig, "Where the PnL came from — running sums, Total = Price + Trading (IRT)")
+
+
 def _ev_heatmap(document: Dict[str, Any]) -> go.Figure:
     results = document.get("candidate_results") or []
     if not results:
@@ -1274,6 +1374,7 @@ app.layout = html.Div([
                 dcc.Tab(label="Order book", value="orderbook", style=_tab_style(), selected_style=_tab_selected_style()),
                 dcc.Tab(label="Validation", value="validation", style=_tab_style(), selected_style=_tab_selected_style()),
                 dcc.Tab(label="Rounds", value="trading", style=_tab_style(), selected_style=_tab_selected_style()),
+                dcc.Tab(label="PnL attribution", value="attribution", style=_tab_style(), selected_style=_tab_selected_style()),
             ],
             style={"flex": "1 1 auto"},
             parent_style={"flex": "1 1 auto"},
@@ -1480,6 +1581,8 @@ def render_tab_content(active_tab, track_key, session_id, _, risk_free_rate_pct,
         return _render_orderbook_tab(df, comparing)
     elif active_tab == "trading":
         return _render_trading_tab(df, comparing)
+    elif active_tab == "attribution":
+        return _render_attribution_tab(df, comparing)
     elif active_tab == "validation":
         return _render_validation_tab(
             df, track_key, session_id,
@@ -1735,6 +1838,60 @@ def _render_trading_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
                 ],
             ),
         ),
+    ])
+
+
+def _render_attribution_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
+    """PnL attribution: did the result come from our quotes or from the price?
+    Tiles with the session sums and the verdict, then the one chart."""
+    att = pnl_attribution(df)
+    if att.empty:
+        return _no_data_message("PnL attribution (rows need inv_current, cash_current and a mid price)", "")
+    totals = attribution_totals(att)
+    start = totals["start_wealth"] or 0.0
+
+    def share(value: float) -> str:
+        return f"{value / start:+.3%} of starting wealth" if start else ""
+
+    def tone(value: float) -> str:
+        return STATUS_GOOD if value >= 0 else STATUS_CRITICAL
+
+    scope = f"across {totals['sessions']} sessions" if comparing and totals["sessions"] > 1 else "this session"
+    fees_detail = (f"gross edge {totals['trading'] + totals['fees']:+,.0f} · fees {totals['fees']:,.0f}"
+                   if totals["fees"] else "fees are already inside this number")
+    verdict_detail = (f"|trading| {abs(totals['trading']):,.0f} vs |price| {abs(totals['price']):,.0f} · "
+                      + ("our own quoting made the result" if totals["verdict"] == "Mainly trading"
+                         else "the price moved while we held inventory" if totals["verdict"] == "Mainly price"
+                         else "no fills and no price move yet"))
+    tiles = html.Div([
+        _metric_card("Total PnL", f"{totals['total']:+,.0f}", tone(totals["total"]),
+                     f"wealth − starting wealth, {scope} · {share(totals['total'])}"),
+        _metric_card("Trading PnL (our fills, net of fees)", f"{totals['trading']:+,.0f}", tone(totals["trading"]), fees_detail),
+        _metric_card("Price PnL (market moves on held inventory)", f"{totals['price']:+,.0f}", tone(totals["price"]),
+                     share(totals["price"])),
+        _metric_card("Verdict", totals["verdict"], TEXT_PRIMARY, verdict_detail),
+    ], style={"display": "flex", "gap": "0.75rem", "flexWrap": "wrap", "marginBottom": "1rem"})
+
+    text_style = {"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.9rem", "margin": "0 0 0.4rem"}
+    mono = {"fontFamily": "ui-monospace, Consolas, monospace", "fontSize": "0.85rem", "color": TEXT_PRIMARY}
+    how = _card(
+        _h3("How to read it"),
+        html.P("Every round the engine records cash, inventory and the mid price, so wealth is "
+               "W = cash + inventory × mid. The change of W from one round to the next splits "
+               "exactly into two parts:", style=text_style),
+        html.P(html.Span("Price PnL   = inventory held at the start of the round × (mid now − mid before)", style=mono), style=text_style),
+        html.P(html.Span("Trading PnL = change of cash + change of inventory × mid now   (our fills against the mid, net of fees)", style=mono), style=text_style),
+        html.P("Orange is what a passive holder of our inventory would have made; blue is what our quotes "
+               "earned if the price had never moved; black is their sum, the real result. Where black hugs "
+               "orange the market made the result; where it hugs blue, we did. Fills are marked at the mid "
+               "of the round they were processed in, so a few seconds of price drift inside a round leaks "
+               "into the blue line. Derivation and a worked example: docs/algorithms/PNL_ATTRIBUTION.md.",
+               style=text_style),
+    )
+    return html.Div([
+        tiles,
+        _card(dcc.Graph(figure=_attribution_chart(att, comparing), config={"displaylogo": False})),
+        how,
     ])
 
 
