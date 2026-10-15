@@ -51,11 +51,39 @@ Three components:
 | `/admin/recover` | GET | Read-only diagnostic report (stale locks / session mismatches / corrupt files) |
 | `/admin/recover/apply` | POST | Enqueues `recover_demo` (auto-clears only stale locks; never resets) |
 | `/admin/export` | GET | Streams a zip of a freshly created backup snapshot |
+| `/admin/sessions` | GET | Every Demo session in either pair's result store (read from the SQLite session summary, so old sessions never drop off the list) and every live forward-test session (see below) |
+| `/admin/sessions/<id>/delete` | POST | Requires `confirm=DELETE`; enqueues `delete_session`, which backs the stores up and removes that Demo session's rows |
+| `/admin/forward/sessions/<id>/delete` | POST | Requires `confirm=DELETE`; enqueues `delete_forward_session` on the forward agent, which removes that live session's rows from both pairs' real-money history files after backing them up, and refuses while a live worker runs |
 | `/admin/orders`, `/admin/balances`, `/admin/logs`, `/admin/audit` | GET | Read-only views (orders/balances reuse `dashboard.py`'s pure data functions where possible) |
 
 Every mutating route is `@login_required` + `@csrf_protected`. Destructive
-routes (`reset`, `restore_backup`) require the exact typed `confirm` value
-server-side — a JS confirm dialog alone is not trusted.
+routes (`reset`, `restore_backup`, both session deletes) require the exact
+typed `confirm` value server-side — a JS confirm dialog alone is not trusted.
+
+### Sessions page
+
+The Demo table lists every session recorded in either pair's result store
+(`<pair>_track_demo.sqlite3`, falling back to the CSV), with the stack's
+current session marked active. Deleting one removes only that session's
+rows; the agent snapshots the stores to `runtime/backups/delete-session-<stamp>/`
+first, and the Backups page can restore them. Because the Demo host agent
+runs as root while the workers, dashboard and admin run as the stack user,
+every writing command ends with `_restore_stack_ownership`, which hands any
+file the agent created or rewrote under `state/`, `results/` and `backups/`
+back to the stack user (a root-owned, 0600 round-history CSV left after a
+delete had the workers crash-looping on 2026-10-15).
+
+The **Live Forward Sessions** table lists every live (real-money) session
+found in the forward stack's round history (`<pair>_track.csv` under
+`LOB_FORWARD_RESULTS_DIR`, mounted read-only into the admin container from
+`/var/lib/market-maker-forward/results`). A live session id is the worker's
+start time as a Unix timestamp, shown next to it as a date; the newest
+session of a pair whose live worker is running is marked **Active**. Delete
+goes through the forward agent (`delete_forward_session`, a stack-wide
+action with `pair=None`): it refuses while any live worker runs, copies
+both CSVs to `results/backups/delete-live-session-<stamp>/`, then rewrites
+them without the session's rows. The page hides the Delete button for the
+active session and while the live workers run.
 
 ## Demo configuration synchronization
 

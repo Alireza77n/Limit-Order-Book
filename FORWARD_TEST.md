@@ -23,6 +23,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now market-maker-forward-agent market-maker-forward-admin market-maker-forward-dashboard
 ```
 
+The agent unit carries `KillMode=process`: the live workers it starts are its child processes, and a restart of the agent (every code deploy restarts it) must leave a running live worker alone. The agent finds its workers again through their lock files, so Stop keeps working after a restart. Stop live workers from the panel, never by stopping the unit.
+
 At the beginning of every real worker run, the engine reads the selected base-asset wallet (`btc` or `usdt`) and quote wallet (`rls`) through Nobitex's authenticated balance API and uses those values as the session's initial inventory and cash. These values are not editable in Live Config. If either request fails or returns an invalid value, the worker exits before sending orders. The API key must include `READ` access. Manual edits, external fills, and other bots after startup are not folded into that session's ledger; restart the worker to take a fresh starting snapshot.
 
 The Live Config page also requests a fresh, read-only snapshot of the RLS, BTC, and USDT wallets through the credentialed forward agent whenever the page is opened or refreshed. It displays the read time. The admin web service does not receive API credentials. If the forward agent lacks credentials or a wallet request fails, the page reports that balances are unavailable instead of showing zero. Inv Min and Inv Max remain configurable strategy limits, separate from current holdings.
@@ -43,6 +45,7 @@ Then use `http://127.0.0.1:18653/admin/login` for control and `http://127.0.0.1:
 4. Open **Live Forward Test**, choose one pair, and type the exact phrase shown (for example `START BTCIRT LIVE`). This starts only that profile with `algo1`, Nobitex, `--mode real`, and continuous operation.
 5. Use Stop to send SIGTERM. The engine's shutdown path attempts to cancel open orders owned by that worker before exiting. Confirm order status on Nobitex after stopping.
 6. Review output at the Charts page and logs in `/var/log/market-maker-forward/`.
+7. Every start creates a new live session (its id is the start time as a Unix timestamp). The admin **Sessions** page lists them all with the running worker's session marked Active, and can delete a closed one once the live workers are stopped: the forward agent backs both pairs' round-history CSVs up to `results/backups/delete-live-session-<stamp>/` and removes that session's rows.
 
 Only BTC/IRT and USDT/IRT are wired to this panel. The UI does not accept arbitrary symbols, algorithms, API endpoints, or credentials. A changed config is saved separately from Demo and requires a worker restart. The engine's existing order ownership checks scope shutdown cancellation to orders tracked by this worker; verify the exchange order list after a stop.
 

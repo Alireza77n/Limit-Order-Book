@@ -90,7 +90,7 @@ The three systemd units are in `deploy/`:
 | Unit | Runs | Linux user | Port |
 |---|---|---|---|
 | `market-maker-forward-admin.service` | `admin_app.py` under gunicorn (internal only: since 2026-10-11 nginx serves `/admin/` on both HTTP and HTTPS from the Docker stack's admin on 8653, which drives the live forward test through the mounted `/var/lib/market-maker-forward/control`; this service lacks the Demo control directory, so its Demo pages fail) | `marketmaker-admin` | 18653 |
-| `market-maker-forward-agent.service` | `deploy/forward_control_agent.py` | `marketmaker-forward` | none |
+| `market-maker-forward-agent.service` | `deploy/forward_control_agent.py` (`KillMode=process`: a restart of the agent, e.g. a deploy, leaves running live workers alive; they are its child processes) | `marketmaker-forward` | none |
 | `market-maker-forward-dashboard.service` | `dashboard.py` | `marketmaker-admin` | 18652 |
 
 Runtime state lives outside the code, under `/var/lib/market-maker-forward/`

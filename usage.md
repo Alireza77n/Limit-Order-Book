@@ -289,7 +289,13 @@ ask, teal = fills), each on its own single axis. Every line chart uses
 `hovermode="x unified"` for a crosshair-style tooltip.
 
 Pick a **track** (which result store) and a **session** (a specific run,
-or "All sessions (compare)" to overlay runs), then use the six tabs:
+or "All sessions (compare)" to overlay runs), then use the six tabs. The
+session picker lists every session in the store, however old; choosing
+one loads that session's own newest rounds, while the comparison view
+loads the newest rounds across all sessions (both views are capped at
+`LOB_DASHBOARD_MAX_ROWS` rounds, default 2000, so a long-running stack
+cannot push the dashboard container over its memory limit; older rows
+stay in the store). The tabs:
 
 * **Overview** -- six headline tiles: quote rate (split into pair / bid
   only / ask only / none), fills per hour, realised vs computed net spread
@@ -351,10 +357,13 @@ Nginx/Basic Auth in production). Runs as the `admin` service in both
 `docker-compose.yml` (local) and `deploy/docker-compose.production.yml`
 (server) -- `docker compose up -d admin`, or natively with
 `python3 admin_app.py` if you'd rather not use Docker locally -- see §7 for
-the full local/server walkthrough and the local host-agent command. It is
-Demo-only -- no Real Mode option exists anywhere in it
--- and never mutates state directly; see `docs/deployment/ADMIN_PAGE.md`
-for routes, security model, and deployment steps.
+the full local/server walkthrough and the local host-agent command. It
+never mutates state directly (every change goes through the control
+queue to a host agent); its Sessions page lists every Demo session and
+every live forward-test session (the running live worker's session marked
+Active) and can delete either kind -- live sessions only while the live
+workers are stopped. See `docs/deployment/ADMIN_PAGE.md` for routes,
+security model, and deployment steps.
 
 ---
 
