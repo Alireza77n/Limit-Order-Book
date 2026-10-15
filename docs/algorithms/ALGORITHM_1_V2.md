@@ -370,8 +370,8 @@ level-1 quote sat next to the touch, version 2's level index says nothing about
 distance, so paper fills come from the price path only (`price_touch`),
 consistent with the fill model.
 
-The live validator (`forward_config.py`) still forces `commission_perc` and
-`exp_ret_min` to at least 0.25 % and the exposure guards on, and additionally
+The live validator (`forward_config.py`) still forces `commission_perc` to at
+least 0.25 % (the target `exp_ret_min` may be any non-negative value) and the exposure guards on, and additionally
 requires `grid_min_perc ≤ grid_max_perc` and `one_sided_lo < one_sided_hi`.
 
 ---

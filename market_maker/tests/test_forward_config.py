@@ -24,6 +24,18 @@ def test_forward_config_rejects_a_fee_below_verified_irt_rate(tmp_path):
         validate_forward_config(values, "btc", TRADING_PROFILES, tmp_path)
 
 
+def test_forward_config_allows_any_non_negative_target_return(tmp_path):
+    """The target is policy; only the fee is pinned to Nobitex's rate."""
+    values = desired_config("usdt", TRADING_PROFILES, tmp_path)
+    values["exp_ret_min"] = 0.001
+    assert validate_forward_config(values, "usdt", TRADING_PROFILES, tmp_path)["exp_ret_min"] == 0.001
+    values["exp_ret_min"] = 0.0
+    assert validate_forward_config(values, "usdt", TRADING_PROFILES, tmp_path)["exp_ret_min"] == 0.0
+    values["exp_ret_min"] = -0.001
+    with pytest.raises(OverlayValidationError, match=">= 0"):
+        validate_forward_config(values, "usdt", TRADING_PROFILES, tmp_path)
+
+
 SIZING_FIELDS = (
     "inventory_sizing_enabled",
     "inventory_sizing_strength",

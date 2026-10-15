@@ -122,7 +122,7 @@ real trading or to MySQL: `safety.py` refuses to start.
 | `strategy/algo2.py` | Placeholder for Avellaneda-Stoikov. Not implemented. |
 | `strategy/base.py` | The interface every strategy implements (`decide_order`). |
 | `config.py` | The `MMConfig` dataclass and `TRADING_PROFILES`, the default parameters for `btc` and `usdt`. |
-| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts the 33 editable fields only, forces commission and minimum return to at least 0.25%, forces both exposure guards on with a ratio of at most 25%. |
+| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts the 33 editable fields only, forces the commission to at least 0.25% (any non-negative target return is allowed), forces both exposure guards on with a ratio of at most 25%. |
 | `demo_config.py` | Defines which fields the admin panel may edit, validates them, and reloads changed values into a running demo worker at round boundaries. |
 | `safety.py` | Refuses to start demo mode with a real exchange client or with MySQL persistence. |
 | `session.py` | Session ids and `WorkerLease`, a file lock that prevents two workers on the same pair. |

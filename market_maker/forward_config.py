@@ -98,10 +98,10 @@ def validate_forward_config(values, pair, profiles, directory=None):
         raise OverlayValidationError(
             "live forward testing requires commission_perc of at least 0.0025"
         )
-    if merged["exp_ret_min"] < FORWARD_MIN_COMMISSION_PERC:
-        raise OverlayValidationError(
-            "live forward testing requires exp_ret_min of at least 0.0025"
-        )
+    # The required net return is policy, not the exchange fee: any
+    # non-negative target is allowed live (validate_overrides already rejects
+    # negatives; the fee floor above still makes every submitted pair clear
+    # both commissions).
     if not merged["buy_locked_cash_limit_enabled"]:
         raise OverlayValidationError("live forward testing requires the BUY exposure limit")
     if not merged["sell_locked_inventory_limit_enabled"]:
