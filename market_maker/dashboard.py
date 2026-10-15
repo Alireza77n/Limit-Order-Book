@@ -172,15 +172,23 @@ def _track_signature(path: Path) -> tuple:
     return tuple(parts)
 
 
-def load_track(path: str) -> Optional[pd.DataFrame]:
-    """Read a track's result store (SQLite first, CSV fallback). Returns
-    None if it doesn't exist yet, is unreadable, or has no rows -- callers
-    show a "no data yet" state. Reads are cached until one of the files
-    changes, so the callbacks of one refresh tick share a single load."""
+def _session_filter(session_id):
+    """None for the comparison view, else the session to load."""
+    return None if session_id in (None, "all") else session_id
+
+
+def load_track(path: str, session_id=None) -> Optional[pd.DataFrame]:
+    """Read a track's result store (SQLite first, CSV fallback): the newest
+    MAX_ROWS rounds of every session, or of one session when ``session_id``
+    is given. Returns None if the store doesn't exist yet, is unreadable, or
+    has no rows -- callers show a "no data yet" state. Reads are cached
+    until one of the files changes, so the callbacks of one refresh tick
+    share a single load."""
+    key = (path, None if session_id is None else str(session_id))
     signature = _track_signature(Path(path))
     with _TRACK_CACHE_LOCK:
-        cached = _TRACK_CACHE.get(path)
-        load_lock = _TRACK_LOAD_LOCKS.setdefault(path, threading.Lock())
+        cached = _TRACK_CACHE.get(key)
+        load_lock = _TRACK_LOAD_LOCKS.setdefault(key, threading.Lock())
     if cached is not None and cached[0] == signature:
         frame = cached[1]
         return None if frame is None else frame.copy()
@@ -189,32 +197,56 @@ def load_track(path: str) -> Optional[pd.DataFrame]:
     # the container over its memory limit.
     with load_lock:
         with _TRACK_CACHE_LOCK:
-            cached = _TRACK_CACHE.get(path)
+            cached = _TRACK_CACHE.get(key)
         if cached is not None and cached[0] == signature:
             frame = cached[1]
             return None if frame is None else frame.copy()
-        frame = _read_track(path)
+        frame = _read_track(path, session_id=session_id)
         with _TRACK_CACHE_LOCK:
-            _TRACK_CACHE[path] = (signature, frame)
+            _TRACK_CACHE[key] = (signature, frame)
     return None if frame is None else frame.copy()
 
 
-def _read_track(path: str, max_rows: Optional[int] = None) -> Optional[pd.DataFrame]:
-    """The newest ``max_rows`` (default MAX_ROWS) rounds of a track."""
+def available_sessions(path: str) -> Optional[List]:
+    """Every session of a track, newest first, however old (from the
+    store's summary); falls back to the loaded frame for CSV-only tracks.
+    None when the track has no data."""
+    store_path = Path(path).with_suffix(".sqlite3")
+    if store_path.exists():
+        try:
+            summary = DemoResultStore.open_existing(store_path).session_summary()
+        except Exception:
+            summary = None
+        if summary:
+            return [row["session_id"] for row in summary][::-1]
+    df = load_track(path)
+    if df is None:
+        return None
+    return session_ids(df)
+
+
+def _read_track(path: str, max_rows: Optional[int] = None, session_id=None) -> Optional[pd.DataFrame]:
+    """The newest ``max_rows`` (default MAX_ROWS) rounds of a track, of one
+    session when ``session_id`` is given."""
     limit = MAX_ROWS if max_rows is None else max(1, int(max_rows))
     p = Path(path)
     store_path = p.with_suffix(".sqlite3")
     df = None
     if store_path.exists():
         try:
-            df = DemoResultStore.open_existing(store_path).load_view(limit=limit)
+            df = DemoResultStore.open_existing(store_path).load_view(
+                limit=limit, session_id=None if session_id is None else str(session_id),
+            )
         except Exception:
             df = None
     if df is None or df.empty:
         if not p.exists():
             return None
         try:
-            df = pd.read_csv(path).tail(limit).reset_index(drop=True)
+            df = pd.read_csv(path)
+            if session_id is not None and "Session_id" in df.columns:
+                df = df[df["Session_id"].astype(str) == str(session_id)]
+            df = df.tail(limit).reset_index(drop=True)
         except Exception:
             return None
     if df.empty:
@@ -1334,10 +1366,9 @@ def refresh_session_options(track_key, _, current_value, search=None):
     session, and keep the operator's choice across auto-refresh ticks
     (State never fires a callback); fall back to "all" only when the
     selected session no longer exists."""
-    df = load_track(TRACKS[track_key]["path"])
-    if df is None:
+    ids = available_sessions(TRACKS[track_key]["path"])
+    if ids is None:
         return [], None
-    ids = session_ids(df)
     options = [{"label": "All sessions (compare)", "value": "all"}] + [
         {"label": str(s), "value": s} for s in ids
     ]
@@ -1392,7 +1423,7 @@ def refresh_effective_config_panel(track_key, _):
 )
 def refresh_status_text(track_key, session_id, _):
     track = TRACKS[track_key]
-    df = load_track(track["path"])
+    df = load_track(track["path"], _session_filter(session_id))
     if df is None:
         return f"No data yet for {track['label']} ({track['path']})."
     df = filter_session(df, session_id)
@@ -1401,7 +1432,7 @@ def refresh_status_text(track_key, session_id, _):
     comparing = session_id in (None, "all")
     last = pd.to_datetime(df["Timestamp"], errors="coerce").max()
     status = f"{len(df)} rounds" + ("" if comparing else f" — session {session_id}")
-    if comparing and len(df) >= MAX_ROWS:
+    if len(df) >= MAX_ROWS:
         status += f" (the newest {MAX_ROWS:,} rounds; older rows stay in the store)"
     if pd.notna(last):
         status += f" — last round {last:%Y-%m-%d %H:%M:%S}"
@@ -1427,7 +1458,7 @@ def render_tab_content(active_tab, track_key, session_id, _, risk_free_rate_pct,
         return no_update
     track = TRACKS[track_key]
 
-    df = load_track(track["path"])
+    df = load_track(track["path"], _session_filter(session_id))
     if df is None:
         return _no_data_message(track["label"], track["path"])
 
@@ -1482,7 +1513,7 @@ def _triggered_by_tick() -> bool:
 )
 def refresh_rounds_table(_, track_key, session_id):
     """Refresh the Rounds table's rows without rebuilding the table."""
-    df = load_track(TRACKS[track_key]["path"])
+    df = load_track(TRACKS[track_key]["path"], _session_filter(session_id))
     if df is None:
         return no_update
     df = filter_session(df, session_id)

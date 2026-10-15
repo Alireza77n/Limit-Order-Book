@@ -103,4 +103,74 @@
     {% endif %}
   </div>
 </div>
+
+<div class="card">
+  <div class="card-header">
+    <h2>Live Forward Sessions</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">
+      Every live forward-test session recorded in the real-money round
+      history (a new session id is created each time a live worker starts).
+      A running worker's session is marked Active. Deleting a session removes
+      its rows from the live history files of BOTH pairs; the files are backed
+      up first. The live workers must be stopped before a session can be
+      deleted.
+    </p>
+    {% if live_sessions %}
+      <div class="table-wrapper">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Session ID</th>
+              <th>Started</th>
+              <th>Status</th>
+              <th>BTC Rounds</th>
+              <th>BTC Last Activity</th>
+              <th>USDT Rounds</th>
+              <th>USDT Last Activity</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in live_sessions %}
+              <tr>
+                <td class="mono">{{ s.session_id }}</td>
+                <td class="mono">{{ cell(s.started_at) }}</td>
+                <td>
+                  {% if s.is_active %}
+                    <span class="status-badge status-running">Active</span>
+                  {% else %}
+                    <span class="status-badge status-stopped">Closed</span>
+                  {% endif %}
+                </td>
+                <td class="mono text-right">{{ cell(s.pairs.btc.rounds if s.pairs.btc else none) }}</td>
+                <td class="mono">{{ cell(s.pairs.btc.last_timestamp if s.pairs.btc else none) }}</td>
+                <td class="mono text-right">{{ cell(s.pairs.usdt.rounds if s.pairs.usdt else none) }}</td>
+                <td class="mono">{{ cell(s.pairs.usdt.last_timestamp if s.pairs.usdt else none) }}</td>
+                <td>
+                  {% if s.is_active %}
+                    <span class="text-muted">Active — cannot delete</span>
+                  {% elif live_workers_running %}
+                    <span class="text-muted">Stop the live workers first</span>
+                  {% else %}
+                    <form method="post" action="{{ url_for('admin_forward_sessions_delete', session_id=s.session_id) }}"
+                          class="inline-form"
+                          data-confirm="Permanently delete live session {{ s.session_id }} from the real-money round history of both pairs? The files are backed up first.">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <input type="hidden" name="confirm" value="DELETE">
+                      <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                    </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">No live forward-test session recorded yet.</div>
+    {% endif %}
+  </div>
+</div>
 {% endblock %}

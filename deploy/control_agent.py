@@ -835,6 +835,50 @@ HANDLERS: Dict[str, Callable] = {
 assert set(HANDLERS) == set(ACTIONS)  # every queue action has exactly one handler
 
 
+# Handlers that write stack files. This agent runs as root while the workers,
+# the dashboard and the admin panel run as the stack user, so anything it
+# creates or rewrites must be handed back to that user afterwards (a
+# root-owned 0600 CSV left the workers crash-looping on 2026-10-15).
+WRITING_ACTIONS = frozenset({
+    "apply_config", "rollback_config", "new_session", "delete_session",
+    "create_backup", "reset_demo", "restore_backup", "recover_demo",
+})
+
+
+def _restore_stack_ownership(paths: AgentPaths) -> List[str]:
+    """Give every file under the state, results and backups directories the
+    directory's owner and a readable mode. No-op unless running as root."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return []
+    changed: List[str] = []
+    for directory in (paths.state_dir, paths.results_dir, paths.backups_dir):
+        try:
+            owner = _stat_entry(directory)
+        except OSError:
+            continue
+        for entry in _walk_files(directory):
+            try:
+                info = _stat_entry(entry)
+                if info.st_uid != owner.st_uid or info.st_gid != owner.st_gid:
+                    os.chown(entry, owner.st_uid, owner.st_gid)
+                    os.chmod(entry, 0o755 if entry.is_dir() else 0o644)
+                    changed.append(str(entry))
+            except OSError:
+                continue
+    return changed
+
+
+def _stat_entry(path: Path):
+    return path.stat()
+
+
+def _walk_files(directory: Path):
+    for entry in directory.iterdir():
+        yield entry
+        if entry.is_dir():
+            yield from _walk_files(entry)
+
+
 def process_command(paths: AgentPaths, command: dict, run_argv: Callable = None) -> AgentResult:
     action = command.get("action")
     if action not in HANDLERS:
@@ -844,6 +888,9 @@ def process_command(paths: AgentPaths, command: dict, run_argv: Callable = None)
         return handler(paths, command.get("pair"), command.get("payload"), run_argv)
     except Exception as exc:  # noqa: BLE001 -- always report, never crash the poll loop
         return AgentResult(False, {"error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        if action in WRITING_ACTIONS:
+            _restore_stack_ownership(paths)
 
 
 def poll_once(paths: AgentPaths, run_argv: Callable = None) -> int:

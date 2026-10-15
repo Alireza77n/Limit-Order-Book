@@ -118,3 +118,19 @@ def test_sqlite_indexes_order_ids(tmp_path):
 
     assert "idx_rounds_buy_order_id" in indexes
     assert "idx_rounds_sell_order_id" in indexes
+
+
+def test_load_view_by_session_and_session_summary(tmp_path):
+    store = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS)
+    for number in (1, 2):
+        store.append_round(row(number))
+    store.append_round({**row(3), "Session_id": "session-2"})
+    store.append_round({**row(4), "Session_id": "session-2"})
+
+    assert list(store.load_view(session_id="session-2")["Round"]) == [3, 4]
+    assert list(store.load_view(limit=1, session_id="session-1")["Round"]) == [2]
+    assert store.load_view(session_id="missing").empty
+    summary = store.session_summary()
+    assert [(s["session_id"], s["rounds"]) for s in summary] == [("session-1", 2), ("session-2", 2)]
+    assert summary[0]["first_timestamp"] == "2026-08-01 12:00:01"
+    assert summary[1]["last_timestamp"] == "2026-08-01 12:00:04"

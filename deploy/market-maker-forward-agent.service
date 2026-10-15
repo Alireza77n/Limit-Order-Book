@@ -16,6 +16,9 @@ Environment=LOB_FORWARD_LOG_DIR=/var/log/market-maker-forward
 Environment=LOB_RESULTS_DIR=/var/lib/market-maker-forward/results
 Environment=LOB_DISABLE_DOTENV=1
 ExecStart=/opt/market-maker-forward/venv/bin/python deploy/forward_control_agent.py
+# Live workers are children of this agent and must outlive an agent restart
+# (code deploys). Stop them from the admin panel, never through this unit.
+KillMode=process
 Restart=always
 RestartSec=2
 NoNewPrivileges=true

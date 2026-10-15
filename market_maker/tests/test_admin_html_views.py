@@ -863,13 +863,22 @@ SESSION_ROWS_BTC = [
 ]
 
 
+LIVE_ROWS_USDT = [
+    {"Session_id": "1790443247.368056", "Timestamp": "2026-09-26 20:50:48", "Round": 1},
+    {"Session_id": "1790443247.368056", "Timestamp": "2026-09-26 20:51:18", "Round": 2},
+    {"Session_id": "1792069104.17595", "Timestamp": "2026-10-15 16:28:24", "Round": 1},
+]
+
+
 @pytest.fixture
 def sessions_app(tmp_path):
-    for name in ("control", "state", "results", "backups"):
+    for name in ("control", "state", "results", "backups", "forward_results", "forward_locks", "forward_control"):
         (tmp_path / name).mkdir()
     csv_name = Path(demo_csv_path(TRADING_PROFILES["btc"]["output_csv"])).name
     pd.DataFrame(SESSION_ROWS_BTC).to_csv(tmp_path / "results" / csv_name, index=False)
     (tmp_path / "state" / "stack_session.json").write_text(json.dumps({"session_id": "s2"}))
+    live_name = Path(TRADING_PROFILES["usdt"]["output_csv"]).name
+    pd.DataFrame(LIVE_ROWS_USDT).to_csv(tmp_path / "forward_results" / live_name, index=False)
     return create_app({
         "ADMIN_USERNAME": "admin",
         "ADMIN_PASSWORD_HASH": generate_password_hash("correct horse", method="pbkdf2:sha256"),
@@ -878,6 +887,9 @@ def sessions_app(tmp_path):
         "STATE_DIR": str(tmp_path / "state"),
         "RESULTS_DIR": str(tmp_path / "results"),
         "BACKUPS_DIR": str(tmp_path / "backups"),
+        "FORWARD_RESULTS_DIR": str(tmp_path / "forward_results"),
+        "FORWARD_LOCK_DIR": str(tmp_path / "forward_locks"),
+        "FORWARD_CONTROL_DIR": str(tmp_path / "forward_control"),
         "TESTING": True,
     })
 
@@ -1028,3 +1040,57 @@ def test_live_config_save_sends_inventory_sizing_to_the_agent(forward_app, fake_
     assert overrides["inventory_sizing_enabled"] is False
     assert overrides["inventory_sizing_strength"] == 0.5
     assert overrides["inventory_sizing_min_fraction"] == 0.2
+
+
+# ---------- Live forward sessions: list + delete through the forward agent ----------
+
+def test_sessions_page_lists_live_sessions_with_dates_and_delete_forms(sessions_client):
+    _login(sessions_client)
+    html = _html(sessions_client.get("/admin/sessions", headers=HTML))
+    assert "Live Forward Sessions" in html
+    assert html.index("1792069104.17595") < html.index("1790443247.368056")      # newest first
+    assert "2026-10-15 12:58:24 UTC" in html                                        # the id is a start time
+    assert 'action="/admin/forward/sessions/1790443247.368056/delete"' in html    # no live worker runs
+
+
+def test_sessions_json_reports_live_sessions_per_pair(sessions_client):
+    _login(sessions_client)
+    body = sessions_client.get("/admin/sessions").get_json()
+    by_id = {row["session_id"]: row for row in body["live_sessions"]}
+    assert by_id["1790443247.368056"]["pairs"]["usdt"]["rounds"] == 2
+    assert by_id["1790443247.368056"]["is_active"] is False
+    assert "btc" not in by_id["1790443247.368056"]["pairs"]
+
+
+def test_sessions_page_keeps_every_demo_session_however_old(sessions_app, sessions_client, monkeypatch):
+    """The dashboard caps its view at MAX_ROWS rows; the session list must
+    not inherit that cap (it hid older sessions on 2026-10-15)."""
+    import dashboard
+    monkeypatch.setattr(dashboard, "MAX_ROWS", 1)
+    _login(sessions_client)
+    body = sessions_client.get("/admin/sessions").get_json()
+    assert {row["session_id"] for row in body["sessions"]} == {"s0", "s1", "s2"}
+
+
+def test_delete_live_session_goes_through_the_forward_agent(sessions_client, monkeypatch):
+    calls = []
+
+    def fake_enqueue(app, action, pair, payload=None):
+        calls.append((action, pair, payload))
+        return {"ok": True, "detail": {"removed": {"usdt": 2}}}
+
+    monkeypatch.setattr("admin_app.enqueue_forward", fake_enqueue)
+    token = _login(sessions_client)
+    response = sessions_client.post(
+        "/admin/forward/sessions/1790443247.368056/delete",
+        data={"csrf_token": token, "confirm": "DELETE"}, headers=HTML,
+    )
+    assert response.status_code == 302
+    assert calls == [("delete_forward_session", None, {"session_id": "1790443247.368056", "confirm": "DELETE"})]
+
+    response = sessions_client.post(
+        "/admin/forward/sessions/1790443247.368056/delete",
+        data={"csrf_token": token}, headers=HTML,
+    )
+    assert response.status_code == 400
+    assert len(calls) == 1

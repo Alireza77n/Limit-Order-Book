@@ -78,3 +78,17 @@ def test_audit_entries_are_well_formed_jsonl(tmp_path):
         record = json.loads(line)
         assert "logged_at" in record
         assert "action" in record
+
+
+def test_delete_forward_session_addresses_the_whole_live_history(tmp_path):
+    """It removes a session from both pairs' live files, so it takes no pair."""
+    import json
+
+    command_id = submit_command(
+        tmp_path, "delete_forward_session", pair=None, requested_by="admin",
+        payload={"session_id": "1790443247.368056", "confirm": "DELETE"},
+    )
+    document = json.loads((tmp_path / "commands" / f"{command_id}.json").read_text())
+    assert document["action"] == "delete_forward_session" and document["pair"] is None
+    with pytest.raises(QueueValidationError):
+        submit_command(tmp_path, "delete_forward_session", pair="btc", requested_by="admin")

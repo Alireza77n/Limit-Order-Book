@@ -264,12 +264,17 @@ def test_mounts_are_limited_to_separate_results_and_state_roots():
     assert _list(blocks["dashboard"], "    volumes:") == [
         "../runtime/results:/app/runtime/results:ro",
         "../runtime/state:/app/runtime/state:ro",
+        "/var/lib/market-maker-forward/results:/app/runtime/forward/results:ro",
     ]
     assert _list(blocks["admin"], "    volumes:") == [
         "../runtime/state:/app/runtime/state:ro",
         "../runtime/results:/app/runtime/results:ro",
         "../runtime/backups:/app/runtime/backups:ro",
         "../runtime/control:/app/runtime/control",
+        "/var/lib/market-maker-forward/control:/app/runtime/forward/control",
+        "/var/lib/market-maker-forward/config:/app/runtime/forward/config",
+        "/var/lib/market-maker-forward/locks:/app/runtime/forward/locks:ro",
+        "/var/lib/market-maker-forward/results:/app/runtime/forward/results:ro",
     ]
 
     local_blocks = _service_blocks(LOCAL_COMPOSE_PATH.read_text())

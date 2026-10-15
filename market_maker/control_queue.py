@@ -26,8 +26,10 @@ PathLike = Union[str, os.PathLike]
 
 FORWARD_ACTIONS = frozenset({
     "start_forward_worker", "stop_forward_worker", "apply_forward_config",
-    "read_wallet_balances",
+    "read_wallet_balances", "delete_forward_session",
 })
+# Forward actions that address the whole live history, not one pair.
+FORWARD_STACK_ACTIONS = frozenset({"delete_forward_session"})
 
 ACTIONS = frozenset({
     "start_worker", "stop_worker", "restart_worker",
@@ -38,10 +40,10 @@ ACTIONS = frozenset({
 })
 
 # Actions that operate on one pair; the rest are stack-wide (pair must be None).
-PAIR_ACTIONS = frozenset({
+PAIR_ACTIONS = (frozenset({
     "start_worker", "stop_worker", "restart_worker",
     "apply_config", "rollback_config", "cancel_orders",
-}) | FORWARD_ACTIONS
+}) | FORWARD_ACTIONS) - FORWARD_STACK_ACTIONS
 PAIRS = frozenset({"btc", "usdt"})
 
 

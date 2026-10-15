@@ -26,6 +26,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import pandas as pd
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session as flask_session, url_for
 from werkzeug.security import check_password_hash
 
@@ -56,6 +57,7 @@ from forward_config import (
 )
 from config import TRADING_PROFILES, demo_csv_path
 from dashboard import activity_records, filter_session, load_track
+from result_store import DemoResultStore
 from validation.validation_engine import create_validation_engine
 from validation.reports import generate_validation_report, format_metric_card
 
@@ -77,6 +79,7 @@ def create_app(config: Optional[dict] = None) -> Flask:
         "FORWARD_CONTROL_DIR": os.environ.get("LOB_FORWARD_CONTROL_DIR", "runtime/forward/control"),
         "FORWARD_CONFIG_DIR": os.environ.get("LOB_FORWARD_CONFIG_DIR", "runtime/forward/config"),
         "FORWARD_LOCK_DIR": os.environ.get("LOB_FORWARD_LOCK_DIR", "runtime/forward/locks"),
+        "FORWARD_RESULTS_DIR": os.environ.get("LOB_FORWARD_RESULTS_DIR", "runtime/forward/results"),
         "FORWARD_TRADING_ENABLED": os.environ.get("FORWARD_TRADING_ENABLED", "0") == "1",
         "FORWARD_ONLY_ADMIN": os.environ.get("LOB_FORWARD_ONLY_ADMIN", "0") == "1",
         "COMMAND_TIMEOUT": 40.0,
@@ -766,36 +769,96 @@ def _recovery_html_response(app: Flask):
     )
 
 
+def _session_rows(csv_path: Path):
+    """Per-session counts of one track: from the SQLite store when it exists
+    (every session, however old), else from the CSV."""
+    store_path = csv_path.with_suffix(".sqlite3")
+    if store_path.exists():
+        try:
+            return DemoResultStore.open_existing(store_path).session_summary()
+        except Exception:
+            pass
+    if not csv_path.exists():
+        return []
+    try:
+        df = pd.read_csv(csv_path, usecols=["Session_id", "Timestamp"], dtype={"Session_id": str})
+    except Exception:
+        return []
+    rows = []
+    for session_id, group in df.groupby("Session_id"):
+        stamps = group["Timestamp"].dropna()
+        rows.append({
+            "session_id": str(session_id), "rounds": int(len(group)),
+            "first_timestamp": str(stamps.min()) if not stamps.empty else None,
+            "last_timestamp": str(stamps.max()) if not stamps.empty else None,
+        })
+    return rows
+
+
 def _list_sessions(app: Flask):
-    """Every session recorded in either pair's round-history CSV, most
-    recent first. A pair's CSV accumulates rows from every session ever run
-    against it (see result_store.py) -- this aggregates both so a session
-    that only traded one pair, or traded both, is reported consistently."""
+    """Every Demo session recorded in either pair's round history, most
+    recent first. A pair's store accumulates rows from every session ever
+    run against it -- this aggregates both so a session that only traded
+    one pair, or traded both, is reported consistently."""
     active = _session_id(app)
     by_session: Dict[str, Dict[str, Any]] = {}
     for pair in PAIRS:
         csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
-        csv_path = os.path.join(app.config["RESULTS_DIR"], csv_name)
-        df = load_track(csv_path)
-        if df is None or df.empty or "Session_id" not in df.columns:
-            continue
-        for session_id, group in df.groupby("Session_id"):
+        for row in _session_rows(Path(app.config["RESULTS_DIR"]) / csv_name):
+            session_id = row["session_id"]
             if not session_id:
                 continue
             entry = by_session.setdefault(session_id, {
                 "session_id": session_id, "is_active": session_id == active, "pairs": {},
             })
-            timestamps = group["Timestamp"].dropna()
             entry["pairs"][pair] = {
-                "rounds": int(len(group)),
-                "last_timestamp": str(timestamps.max()) if not timestamps.empty else None,
+                "rounds": row["rounds"],
+                "first_timestamp": row.get("first_timestamp"),
+                "last_timestamp": row.get("last_timestamp"),
             }
+    return sorted(by_session.values(), key=lambda entry: entry["session_id"], reverse=True)
+
+
+def _live_session_started_at(session_id: str) -> Optional[str]:
+    """run.py --mode real names a session after its start time (a Unix
+    timestamp); show it as a date."""
+    try:
+        return datetime.fromtimestamp(float(session_id), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _list_live_sessions(app: Flask):
+    """Every live forward-test session recorded in the real-money round
+    history (<pair>_track.csv under FORWARD_RESULTS_DIR), most recent first.
+    A running live worker's session (the pair's newest) is marked active."""
+    by_session: Dict[str, Dict[str, Any]] = {}
+    for pair in PAIRS:
+        csv_path = Path(app.config["FORWARD_RESULTS_DIR"]) / os.path.basename(TRADING_PROFILES[pair]["output_csv"])
+        rows = [row for row in _session_rows(csv_path) if row["session_id"]]
+        running = _forward_worker_running(app, pair)
+        newest = max(rows, key=lambda row: row.get("last_timestamp") or "", default=None)
+        for row in rows:
+            session_id = row["session_id"]
+            entry = by_session.setdefault(session_id, {
+                "session_id": session_id, "started_at": _live_session_started_at(session_id),
+                "is_active": False, "pairs": {},
+            })
+            entry["pairs"][pair] = {
+                "rounds": row["rounds"],
+                "first_timestamp": row.get("first_timestamp"),
+                "last_timestamp": row.get("last_timestamp"),
+            }
+            if running and row is newest:
+                entry["is_active"] = True
     return sorted(by_session.values(), key=lambda entry: entry["session_id"], reverse=True)
 
 
 def _sessions_html_response(app: Flask):
     return render_template(
         "admin/sessions.html", sessions=_list_sessions(app),
+        live_sessions=_list_live_sessions(app),
+        live_workers_running=any(_forward_worker_running(app, pair) for pair in PAIRS),
         csrf_token=get_csrf_token(), session_id=_session_id(app),
     )
 
@@ -1199,7 +1262,42 @@ def _register_routes(app: Flask) -> None:
     def admin_sessions():
         if _wants_html():
             return _sessions_html_response(app)
-        return jsonify({"sessions": _list_sessions(app)})
+        return jsonify({"sessions": _list_sessions(app), "live_sessions": _list_live_sessions(app)})
+
+    @app.route("/admin/forward/sessions/<session_id>/delete", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_forward_sessions_delete(session_id):
+        """Delete one live forward-test session's rows from the real-money
+        round history, through the forward agent (it backs the files up and
+        refuses while a live worker runs)."""
+        if request.form.get("confirm") != "DELETE":
+            message = "Confirmation required."
+            if _wants_html():
+                flash(message, "error")
+                return _sessions_html_response(app), 400
+            return (message, 400)
+        try:
+            result = enqueue_forward(
+                app, "delete_forward_session", None,
+                payload={"session_id": session_id, "confirm": "DELETE"},
+            )
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
+            if _wants_html():
+                flash(message, "warning")
+                return _sessions_html_response(app), status
+            return (message, status)
+        if not result.get("ok"):
+            message = _command_failure_message(result)
+            if _wants_html():
+                flash(message, "error")
+                return _sessions_html_response(app), 502
+            return jsonify(result), 502
+        if _wants_html():
+            flash(f"Live session {session_id} deleted.", "success")
+            return redirect(url_for("admin_sessions"))
+        return jsonify(result)
 
     @app.route("/admin/sessions/<session_id>/delete", methods=["POST"])
     @login_required

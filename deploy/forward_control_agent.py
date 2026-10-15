@@ -7,9 +7,12 @@ EnvironmentFile, separate from the web app.
 """
 from __future__ import annotations
 
+import csv
 import json
 import math
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -128,6 +131,55 @@ def _start_worker(paths, pair):
     raise RuntimeError("worker did not acquire its live lock before startup timeout")
 
 
+_SESSION_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
+
+def _delete_live_session(paths, session_id):
+    """Remove one live session's rows from every pair's real-money round
+    history (<pair>_track.csv), after copying the files to a backup folder.
+    Refused while a live worker runs: the running worker appends to these
+    files and its own session must stay intact."""
+    if not isinstance(session_id, str) or not _SESSION_ID.match(session_id):
+        raise ValueError("invalid or missing session_id")
+    running = [pair for pair in PAIRS if worker_running(paths, pair)]
+    if running:
+        raise RuntimeError(
+            "stop the live workers before deleting a live session (running: "
+            + ", ".join(running) + ")"
+        )
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup_dir = paths.results / "backups" / f"delete-live-session-{stamp}"
+    removed = {}
+    for pair in PAIRS:
+        source = paths.results / f"{pair}_track.csv"
+        if not source.exists():
+            continue
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, backup_dir / source.name)
+        temporary = source.with_name(f".{source.name}.{os.getpid()}.tmp")
+        dropped = 0
+        with source.open("r", newline="", encoding="utf-8") as src:
+            with temporary.open("w", newline="", encoding="utf-8") as dst:
+                reader = csv.reader(src)
+                writer = csv.writer(dst)
+                header = next(reader, None)
+                if header is None:
+                    continue
+                writer.writerow(header)
+                column = header.index("Session_id") if "Session_id" in header else None
+                for row in reader:
+                    if column is not None and column < len(row) and row[column] == session_id:
+                        dropped += 1
+                        continue
+                    writer.writerow(row)
+        os.chmod(temporary, source.stat().st_mode & 0o777)
+        os.replace(temporary, source)
+        removed[pair] = dropped
+    if not any(removed.values()):
+        raise RuntimeError("session not found")
+    return {"session_id": session_id, "removed": removed, "backup": str(backup_dir)}
+
+
 def _load_command(path):
     document = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(document, dict):
@@ -136,9 +188,13 @@ def _load_command(path):
     action, pair = document.get("action"), document.get("pair")
     if not isinstance(command_id, str) or not command_id.isalnum():
         raise ValueError("invalid command id")
-    if pair not in PAIRS:
+    stack_actions = {"delete_forward_session"}          # address both pairs' history
+    if action in stack_actions:
+        if pair is not None:
+            raise ValueError("invalid pair")
+    elif pair not in PAIRS:
         raise ValueError("invalid pair")
-    if action not in {"start_forward_worker", "stop_forward_worker", "apply_forward_config", "read_wallet_balances"}:
+    if action not in {"start_forward_worker", "stop_forward_worker", "apply_forward_config", "read_wallet_balances"} | stack_actions:
         raise ValueError("action is not supported by the forward-test agent")
     return document
 
@@ -204,6 +260,10 @@ def process_command(paths, document):
         if result.get("stopped") is not True:
             raise RuntimeError(result.get("error") or "worker is still running")
         return result
+    if action == "delete_forward_session":
+        if payload.get("confirm") != "DELETE":
+            raise ValueError("confirmation required")
+        return _delete_live_session(paths, payload.get("session_id"))
     if action == "apply_forward_config":
         from forward_config import save_config
         from config import TRADING_PROFILES

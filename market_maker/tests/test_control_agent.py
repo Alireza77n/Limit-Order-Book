@@ -981,3 +981,47 @@ def test_delete_session_never_calls_docker_or_stops_workers(tmp_path):
 
     assert result.ok is True
     assert runner.calls == []
+
+
+def test_writing_commands_hand_files_back_to_the_stack_user(tmp_path, monkeypatch):
+    """The agent runs as root; a root-owned 0600 CSV it left behind kept the
+    workers (uid 1000) crash-looping on 2026-10-15. After any writing
+    command every file under state/results/backups gets the directory's
+    owner and a readable mode."""
+    import os as _os
+
+    paths = make_paths(tmp_path)
+    rogue = paths.results_dir / "btc_track_demo.csv"
+    rogue.write_text("t,v\n")
+    nested = paths.backups_dir / "delete-session-x"
+    nested.mkdir(parents=True)
+    (nested / "usdt_track_demo.csv").write_text("t,v\n")
+
+    class Stat:
+        def __init__(self, uid, gid, mode):
+            self.st_uid, self.st_gid, self.st_mode = uid, gid, mode
+
+    def fake_stat(path):            # directories belong to the stack user, files to root
+        if path.is_dir():
+            return Stat(1000, 1000, 0o40755)
+        return Stat(0, 0, 0o100600)
+
+    chowned, chmodded = [], []
+    monkeypatch.setattr(ca.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(ca.os, "chown", lambda path, uid, gid: chowned.append((str(path), uid, gid)), raising=False)
+    monkeypatch.setattr(ca.os, "chmod", lambda path, mode: chmodded.append((str(path), mode)))
+    monkeypatch.setattr(ca, "_stat_entry", fake_stat)
+
+    changed = ca._restore_stack_ownership(paths)
+
+    assert (str(rogue), 1000, 1000) in chowned
+    assert (str(nested / "usdt_track_demo.csv"), 1000, 1000) in chowned
+    assert (str(rogue), 0o644) in chmodded
+    assert str(rogue) in changed
+    assert "delete_session" in ca.WRITING_ACTIONS and "apply_config" in ca.WRITING_ACTIONS
+
+
+def test_restore_stack_ownership_is_a_no_op_without_root(tmp_path, monkeypatch):
+    paths = make_paths(tmp_path)
+    monkeypatch.setattr(ca.os, "geteuid", lambda: 1000, raising=False)
+    assert ca._restore_stack_ownership(paths) == []

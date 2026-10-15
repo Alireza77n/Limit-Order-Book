@@ -188,20 +188,42 @@ class DemoResultStore:
                     changed += 1
         return changed
 
-    def load_view(self, limit: Optional[int] = None) -> pd.DataFrame:
-        query = "SELECT payload_json FROM rounds ORDER BY id"
-        parameters: tuple = ()
+    def load_view(
+        self, limit: Optional[int] = None, session_id: Optional[str] = None,
+    ) -> pd.DataFrame:
+        """Rows as a DataFrame, oldest first; the newest ``limit`` rows when
+        given, and only one session's rows when ``session_id`` is given."""
+        where = "WHERE session_id=?" if session_id is not None else ""
+        parameters: list = [str(session_id)] if session_id is not None else []
+        query = f"SELECT payload_json FROM rounds {where} ORDER BY id"
         if limit is not None:
             query = (
                 "SELECT payload_json FROM ("
-                "SELECT id, payload_json FROM rounds ORDER BY id DESC LIMIT ?"
+                f"SELECT id, payload_json FROM rounds {where} ORDER BY id DESC LIMIT ?"
                 ") ORDER BY id"
             )
-            parameters = (max(0, int(limit)),)
+            parameters.append(max(0, int(limit)))
         with self._connect() as connection:
-            rows = connection.execute(query, parameters).fetchall()
+            rows = connection.execute(query, tuple(parameters)).fetchall()
         documents = [json.loads(record[0]) for record in rows]
         return pd.DataFrame(documents, columns=self.columns, dtype=object)
+
+    def session_summary(self) -> list:
+        """Every session in the store, oldest first: id, row count, first and
+        last timestamp. Cheap (one aggregate query), however large the store."""
+        query = (
+            "SELECT session_id, COUNT(*), "
+            "MIN(json_extract(payload_json, '$.Timestamp')), "
+            "MAX(json_extract(payload_json, '$.Timestamp')) "
+            "FROM rounds GROUP BY session_id ORDER BY MIN(id)"
+        )
+        with self._connect() as connection:
+            rows = connection.execute(query).fetchall()
+        return [
+            {"session_id": str(session_id), "rounds": int(count),
+             "first_timestamp": first, "last_timestamp": last}
+            for session_id, count, first, last in rows
+        ]
 
     def export_bounded_csv(self) -> bool:
         """Write the newest ``csv_export_max_rows`` rows (oldest first) to
@@ -221,6 +243,10 @@ class DemoResultStore:
             suffix=".tmp",
             dir=self.csv_export_path.parent,
         )
+        if hasattr(os, "fchmod"):
+            # mkstemp creates 0600; the export is read by other users (the
+            # dashboard, and the worker when the host agent re-exports as root)
+            os.fchmod(fd, 0o644)
         try:
             with os.fdopen(fd, "w", newline="", encoding="utf-8") as stream:
                 writer = csv.writer(stream)

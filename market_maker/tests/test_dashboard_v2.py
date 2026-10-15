@@ -583,3 +583,30 @@ def test_track_view_is_bounded_to_the_newest_rows(tmp_path, monkeypatch):
     monkeypatch.setitem(dashboard.TRACKS, "usdt_demo", dict(dashboard.TRACKS["usdt_demo"], path=str(path)))
     text = dashboard.refresh_status_text("usdt_demo", "all", 0)
     assert text.startswith("3 rounds (the newest 3 rounds")
+
+
+def test_load_track_loads_one_session_and_lists_every_session(tmp_path, monkeypatch):
+    """The view is capped at MAX_ROWS newest rows, but every session stays
+    selectable: the picker lists them from the store's summary and a selected
+    session is loaded on its own, however old it is."""
+    from result_store import DemoResultStore
+
+    monkeypatch.setattr(dashboard, "MAX_ROWS", 3)
+    path = tmp_path / "usdt_track_demo.csv"
+    store = DemoResultStore(path.with_suffix(".sqlite3"), list(_row("2026-10-01 10:00:00", 1)))
+    for n in range(1, 4):
+        store.append_round({**_row(f"2026-10-01 09:00:{n:02d}", n), "Session_id": "old"})
+    for n in range(4, 9):
+        store.append_round({**_row(f"2026-10-01 10:00:{n:02d}", n), "Session_id": "new"})
+
+    assert dashboard.available_sessions(str(path)) == ["new", "old"]
+    assert list(dashboard.load_track(str(path))["Round"]) == [6, 7, 8]           # newest rows overall
+    assert list(dashboard.load_track(str(path), "old")["Round"]) == [1, 2, 3]    # the old session itself
+    assert list(dashboard.load_track(str(path), "new")["Round"]) == [6, 7, 8]
+    assert dashboard.load_track(str(path), "missing") is None
+    assert dashboard.available_sessions(str(tmp_path / "none.csv")) is None
+
+    monkeypatch.setitem(dashboard.TRACKS, "usdt_demo", dict(dashboard.TRACKS["usdt_demo"], path=str(path)))
+    options, value = dashboard.refresh_session_options("usdt_demo", 0, None)
+    assert [o["value"] for o in options] == ["all", "new", "old"]
+    assert dashboard.refresh_status_text("usdt_demo", "old", 0).startswith("3 rounds — session old")
