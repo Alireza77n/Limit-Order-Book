@@ -25,31 +25,63 @@ class DemoResultStore:
         columns: Sequence[str],
         csv_export_path=None,
         csv_export_max_rows: int = 10_000,
+        read_only: bool = False,
     ):
         self.db_path = Path(db_path)
         self.columns = list(columns)
         self.csv_export_path = Path(csv_export_path) if csv_export_path else None
         self.csv_export_max_rows = max(1, int(csv_export_max_rows))
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        self.read_only = bool(read_only)
+        if self.read_only:
+            if not self.db_path.exists():
+                raise FileNotFoundError(self.db_path)
+        else:
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._initialize()
+
+    @staticmethod
+    def _read_only_uri(path: Path) -> str:
+        return Path(path).resolve().as_uri() + "?mode=ro"
+
+    @classmethod
+    def _writable(cls, path: Path) -> bool:
+        return os.access(path, os.W_OK) and os.access(Path(path).parent, os.W_OK)
 
     def _connect(self):
-        connection = sqlite3.connect(self.db_path, timeout=5.0)
-        connection.execute("PRAGMA journal_mode=WAL")
+        if self.read_only:
+            # A reader on a read-only mount (the dashboard and admin
+            # containers mount results :ro). mode=ro never attempts a
+            # write; the WAL pragma is skipped because the writer set it
+            # and re-setting it would need write access.
+            connection = sqlite3.connect(self._read_only_uri(self.db_path), uri=True, timeout=5.0)
+        else:
+            connection = sqlite3.connect(self.db_path, timeout=5.0)
+            connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("PRAGMA busy_timeout=5000")
         return connection
 
     @classmethod
-    def open_existing(cls, db_path, csv_export_path=None, csv_export_max_rows=10_000):
+    def open_existing(
+        cls, db_path, csv_export_path=None, csv_export_max_rows=10_000, read_only=None,
+    ):
         """Reopen a store an earlier process created, recovering its column
         schema from the db itself. csv_export_path is NOT stored in the db --
         pass it explicitly if this instance needs to call
         export_bounded_csv(); omitted, exports silently no-op (csv_export_path
-        stays None), which is correct for read-only callers like dashboard.py."""
+        stays None), which is correct for read-only callers like dashboard.py.
+
+        read_only=None opens the store read-only when the file or its
+        directory is not writable (a :ro container mount): such a reader
+        must never run the schema/metadata upsert of a writer, which fails
+        with "attempt to write a readonly database" and used to push the
+        dashboard and admin onto the bounded CSV export, hiding every
+        session older than its newest rows."""
         path = Path(db_path)
         if not path.exists():
             raise FileNotFoundError(path)
-        with sqlite3.connect(path, timeout=5.0) as connection:
+        if read_only is None:
+            read_only = not cls._writable(path)
+        with sqlite3.connect(cls._read_only_uri(path), uri=True, timeout=5.0) as connection:
             record = connection.execute(
                 "SELECT value FROM metadata WHERE key='columns'"
             ).fetchone()
@@ -58,6 +90,7 @@ class DemoResultStore:
         return cls(
             path, json.loads(record[0]),
             csv_export_path=csv_export_path, csv_export_max_rows=csv_export_max_rows,
+            read_only=read_only,
         )
 
     def _initialize(self) -> None:

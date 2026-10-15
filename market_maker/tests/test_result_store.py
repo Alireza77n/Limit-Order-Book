@@ -1,7 +1,10 @@
+import os
 import sqlite3
 
 import pandas as pd
+import pytest
 
+import result_store
 from result_store import DemoResultStore
 
 
@@ -134,3 +137,40 @@ def test_load_view_by_session_and_session_summary(tmp_path):
     assert [(s["session_id"], s["rounds"]) for s in summary] == [("session-1", 2), ("session-2", 2)]
     assert summary[0]["first_timestamp"] == "2026-08-01 12:00:01"
     assert summary[1]["last_timestamp"] == "2026-08-01 12:00:04"
+
+
+def test_read_only_reader_sees_every_row_and_never_writes(tmp_path):
+    """The dashboard and admin containers mount the results directory
+    read-only; a reader opened there must read the writer's WAL store
+    without touching it."""
+    writer = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS)
+    writer.append_round(row(1))
+    writer.append_round({**row(2), "Session_id": "session-2"})
+
+    reader = DemoResultStore.open_existing(writer.db_path, read_only=True)
+
+    assert reader.read_only
+    assert list(reader.load_view()["Round"]) == [1, 2]
+    assert [s["session_id"] for s in reader.session_summary()] == ["session-1", "session-2"]
+    assert reader.latest_round_no("session-1", "BTCIRT") == 1
+    with pytest.raises(sqlite3.OperationalError):
+        reader.append_round(row(3))
+    writer.append_round(row(3))
+    assert list(reader.load_view(session_id="session-1")["Round"]) == [1, 3]
+
+
+def test_open_existing_goes_read_only_on_an_unwritable_store(tmp_path, monkeypatch):
+    writer = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS)
+    writer.append_round(row(1))
+    real_access = os.access
+    monkeypatch.setattr(
+        result_store.os, "access",
+        lambda path, mode, **kw: False if mode == os.W_OK else real_access(path, mode, **kw),
+    )
+
+    reader = DemoResultStore.open_existing(writer.db_path)
+    forced_writer = DemoResultStore.open_existing(writer.db_path, read_only=False)
+
+    assert reader.read_only and not forced_writer.read_only
+    assert len(reader.load_view()) == 1
+    assert forced_writer.append_round(row(2)) > 0
