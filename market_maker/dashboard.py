@@ -34,7 +34,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import pandas as pd
 import plotly.graph_objects as go
-from dash import Dash, dash_table, dcc, html, no_update
+from dash import Dash, ctx, dash_table, dcc, html, no_update
 from dash.dependencies import Input, Output, State
 
 from config import DEMO_STATE_DIR, RESULTS_DIR, TRADING_PROFILES, demo_csv_path
@@ -1420,7 +1420,11 @@ def refresh_status_text(track_key, session_id, _):
 )
 def render_tab_content(active_tab, track_key, session_id, _, risk_free_rate_pct, target_return_pct,
                        decision_round=None):
-    """Render content for the active tab."""
+    """Render content for the active tab. On a refresh tick the Rounds tab
+    is left alone: rebuilding the table resets the operator's scroll
+    position, so refresh_rounds_table swaps its rows in place instead."""
+    if active_tab == "trading" and _triggered_by_tick():
+        return no_update
     track = TRACKS[track_key]
 
     df = load_track(track["path"])
@@ -1460,6 +1464,31 @@ def remember_decision_round(selected):
     """Keep the operator's round choice across the 20 s refresh ticks, which
     rebuild the whole tab (and therefore the dropdown)."""
     return selected
+
+
+def _triggered_by_tick() -> bool:
+    try:
+        return ctx.triggered_id == "tick"
+    except Exception:          # called outside a callback (tests)
+        return False
+
+
+@app.callback(
+    Output("activity-table", "data"),
+    Input("tick", "n_intervals"),
+    State("track", "value"),
+    State("session", "value"),
+    prevent_initial_call=True,
+)
+def refresh_rounds_table(_, track_key, session_id):
+    """Refresh the Rounds table's rows without rebuilding the table."""
+    df = load_track(TRACKS[track_key]["path"])
+    if df is None:
+        return no_update
+    df = filter_session(df, session_id)
+    if df.empty:
+        return no_update
+    return activity_records(with_derived_spreads(df).sort_values("Timestamp"))
 
 
 @app.callback(

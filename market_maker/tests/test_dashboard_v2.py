@@ -479,6 +479,18 @@ def test_validation_tab_puts_the_gate_first(v2_track):
     assert "not measurable yet" in text or "pass" in text
 
 
+def test_rounds_table_refreshes_rows_in_place(v2_track):
+    """The 20 s tick must not rebuild the Rounds table (that resets the
+    operator's scroll): the rows are swapped through their own callback."""
+    from dash import no_update
+
+    rows = dashboard.refresh_rounds_table(3, "usdt_demo", "all")
+    assert [r["Round"] for r in rows] == [5, 4, 3, 2, 1]
+    assert rows[0]["Quote Mode"] == "pair"
+    assert dashboard.refresh_rounds_table(3, "usdt_demo", "no-such-session") is no_update
+    assert dashboard._triggered_by_tick() is False          # outside a callback
+
+
 def test_status_text_counts_rounds_and_no_quote_rounds(v2_track):
     text = dashboard.refresh_status_text("usdt_demo", "all", 0)
     assert text.startswith("5 rounds")
