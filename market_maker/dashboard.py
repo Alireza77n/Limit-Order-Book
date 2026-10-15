@@ -1156,11 +1156,16 @@ def _attribution_chart(att: pd.DataFrame, comparing: bool) -> go.Figure:
         for column, color, width in roles:
             fig.add_trace(go.Scatter(
                 x=group["Timestamp"], y=group[f"{column} (cum)"], mode="lines", name=column + suffix,
-                legendgroup=str(session),
+                legendgroup=str(session) if comparing else None,
                 line=dict(color=color, width=width, dash=dashes[i % len(dashes)]),
             ))
     fig.add_hline(y=0, line=dict(color=BASELINE, width=1))
-    return _style(fig, "Where the PnL came from — running sums, Total = Price + Trading (IRT)")
+    fig = _style(fig, "Where the PnL came from — running sums, Total = Price + Trading (IRT)")
+    # Legend groups stack vertically and would cover the title: keep the
+    # legend under the plot instead.
+    fig.update_layout(legend=dict(orientation="h", yanchor="top", y=-0.14, x=0),
+                      margin=dict(l=48, r=24, t=56, b=84))
+    return fig
 
 
 def _ev_heatmap(document: Dict[str, Any]) -> go.Figure:
