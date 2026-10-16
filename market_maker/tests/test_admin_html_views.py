@@ -1171,3 +1171,38 @@ def test_overview_shows_the_algorithm_in_force_for_demo_and_live(forward_app, fa
     body = _html(client.get("/admin/", headers=HTML))
     assert "Algorithm in force" in body
     assert 'data-demo-algorithm="btc:algo3"' in body and 'data-live-algorithm="usdt:algo3"' in body
+
+
+def test_live_forward_page_shows_the_algorithm_of_each_pair(forward_app, fake_agent, monkeypatch, tmp_path):
+    """The forward-only admin lands on this page, so it carries the
+    algorithm in force too; a running worker shows the algorithm of its
+    newest round (older rows without a Strategy column are Algorithm 1)."""
+    from forward_config import save_config
+
+    results = tmp_path / "forward-results"
+    results.mkdir()
+    (results / "btc_track.csv").write_text(
+        "Session_id,Algorithm,Strategy,Crypto,Timestamp\n"
+        "1,1btc,algo1,BTCIRT,2026-10-17 01:00:00\n"
+        "2,1btc,algo3,BTCIRT,2026-10-17 01:01:00\n")
+    (results / "usdt_track.csv").write_text(
+        "Session_id,Algorithm,Crypto,Timestamp\n1,1usdt,USDTIRT,2026-10-17 01:00:00\n")
+    forward_app.config["FORWARD_RESULTS_DIR"] = str(results)
+    save_config({"algorithm": "algo3"}, "usdt", TRADING_PROFILES, forward_app.config["FORWARD_CONFIG_DIR"])
+    monkeypatch.setattr(admin_app_module, "_forward_worker_running", lambda _app, pair: True)
+    client = forward_app.test_client()
+    _login(client)
+
+    body = _html(client.get("/admin/forward", headers=HTML))
+
+    assert "Algorithm in force" in body
+    assert 'data-live-algorithm="usdt:algo3"' in body and 'data-live-algorithm="btc:algo1"' in body
+    assert 'data-running-algorithm="btc:algo3"' in body          # newest row of the running worker
+    assert 'data-running-algorithm="usdt:algo1"' in body         # legacy rows: Algorithm 1
+
+
+def test_live_running_algorithm_handles_missing_and_empty_histories(forward_app, tmp_path):
+    forward_app.config["FORWARD_RESULTS_DIR"] = str(tmp_path)
+    assert admin_app_module._live_running_algorithm(forward_app, "btc") is None
+    (tmp_path / "btc_track.csv").write_text("Session_id,Strategy\n")
+    assert admin_app_module._live_running_algorithm(forward_app, "btc") is None

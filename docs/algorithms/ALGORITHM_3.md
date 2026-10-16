@@ -237,7 +237,8 @@ $h_{\min} = 0.255\%$ at live fees. Days of book data with volumes are needed bef
   `algo3`. A Demo worker switches at its next round (same session, same ledger; its strategy memory starts
   empty). A live worker reads the value when it is started: the forward agent starts
   `run.py --algorithm <value>`; a running live worker keeps the algorithm it started with. The admin overview
-  shows the algorithm in force for each pair, Demo and live.
+  and the Live Forward page show the algorithm in force for each pair, Demo and live; for a running live
+  worker the Live Forward page shows the algorithm its newest round recorded.
 * **Command line:** `run.py --algorithm algo3` overrides the configured value.
 * **Results:** every round row carries `Strategy` (`algo1` / `algo3`; older rows count as `algo1`) and the
   Algorithm 3 numbers `Imbalance` and `Microprice`; the diagnostics JSONL documents carry `algorithm` and, for

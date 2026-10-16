@@ -14,6 +14,7 @@ control-queue actions (see control_queue.ACTIONS).
 
 from __future__ import annotations
 
+import csv
 import fcntl
 import hmac
 import io
@@ -716,6 +717,34 @@ def _algorithms_in_force(app: Flask) -> Dict[str, Dict[str, Optional[str]]]:
     return {"demo": demo, "live": live}
 
 
+def _live_running_algorithm(app: Flask, pair: str) -> Optional[str]:
+    """The algorithm a running live worker is using, read from the Strategy
+    cell of the newest row of its round history (<pair>_track.csv): the
+    process itself runs under another user and is not visible from here.
+    Rows written before the Strategy column existed mean Algorithm 1; None
+    when the history cannot be read."""
+    path = Path(app.config["FORWARD_RESULTS_DIR"]) / f"{pair}_track.csv"
+    try:
+        with path.open("rb") as stream:
+            header = stream.readline().decode("utf-8", "replace")
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            stream.seek(max(0, size - 65536))
+            tail = stream.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return None
+    last = next((line for line in reversed(tail) if line.strip()), "")
+    if not header.strip() or not last or last.strip() == header.strip():
+        return None
+    try:
+        columns = next(csv.reader([header]))
+        values = next(csv.reader([last]))
+    except (StopIteration, csv.Error):
+        return None
+    row = dict(zip(columns, values))
+    return (row.get("Strategy") or "").strip() or DEFAULT_ALGORITHM
+
+
 def _form_value(definition, values):
     """Coerce the submitted form value(s) of one field to the type its
     definition declares (None = unparseable)."""
@@ -1015,6 +1044,8 @@ def _register_routes(app: Flask) -> None:
             "admin/forward.html", workers=workers,
             trading_enabled=app.config["FORWARD_TRADING_ENABLED"],
             csrf_token=get_csrf_token(), session_id=None,
+            algorithms=_algorithms_in_force(app), algorithm_labels=_algorithm_labels(),
+            live_running={pair: _live_running_algorithm(app, pair) if workers[pair] else None for pair in PAIRS},
         )
 
     @app.route("/admin/forward/<action>", methods=["POST"])
