@@ -1,12 +1,18 @@
 # Crypto Market-Making Project
 
+> **This branch, `MM_algo1v2`, holds Algorithm 1 version 2 only.** The newer branch
+> [`MM_algo2`](https://github.com/Alireza77n/Limit-Order-Book/tree/MM_algo2) — the default branch and
+> what the server runs — adds Algorithm 3, the choice of algorithm per pair in the admin panel and the
+> dashboard's **Algorithm** tab. There the algorithms are named after their branches: **MM_algo1v2**
+> (Algorithm 1 version 2) and **MM_algo2** (Algorithm 3).
+
 ## Project info
 
 This repository contains implementations and experiments focused on **limit order book (LOB) dynamics** in cryptocurrency markets.
 
 The project currently includes:
 
-* **Algorithm 1:** a custom depth-aware, inventory-skewed quoting strategy — **implemented, tested, and runnable live** against Nobitex.
+* **Algorithm 1 (version 2):** distance-anchored, expected-value quoting — **implemented, tested, and runnable live** against Nobitex.
 * **Algorithm 2:** the Avellaneda-Stoikov optimal market-making model — **not implemented**. Only documented below and explored in parameter-estimation notebooks (`market_maker/research/`). See [Algorithm 2](#algorithm-2-avellaneda-stoikov-model) for the full model and [Known limitations / next steps](#known-limitations--next-steps) for the honest picture of what's missing.
 
 The goal of this project is to simulate, backtest, and compare different market-making approaches on cryptocurrency order book data.
@@ -65,7 +71,7 @@ The goal of this project is to simulate, backtest, and compare different market-
 # Limit order book and market-making fundamentals
 
 This section is a from-scratch primer. If you already know what a bid, an
-ask, and a spread are, skip to [Algorithm 1](#algorithm-1-depth-aware-inventory-skewed-quoting-strategy).
+ask, and a spread are, skip to [Algorithm 1](#algorithm-1-distance-anchored-expected-value-quoting-version-2).
 
 ## What is a limit order book?
 
@@ -139,7 +145,7 @@ comes from.
   symmetrically to maximize fill rate and spread capture, or skew quotes
   to manage inventory and accept fewer/worse fills. Both algorithms in
   this repo exist specifically to answer that tradeoff — Algorithm 1 by
-  a direct, rule-based inventory skew (see [Step 2](#step-2-inventory-dependent-level-pair-generation)); Algorithm 2 by solving
+  a direct, rule-based inventory skew of the quote centre (see [Step 1](#step-1-inventory-position-and-quote-centre)); Algorithm 2 by solving
   it as a formal utility-maximization problem (see [The formulas](#the-formulas)).
 * **Adverse selection risk.** A market maker's quotes are filled
   precisely when someone *wants* to trade against them — and the people
@@ -164,24 +170,26 @@ comes from.
   just because it looks profitable on paper — it has to land on an
   allowed tick, and it has to clear the exchange's trading commission
   *and* whatever minimum profit margin the strategy requires, or the
-  "profit" is actually a loss once fees are paid. Both algorithms enforce
-  this explicitly rather than assuming it away — see Algorithm 1's
-  [Step 3](#step-3-spread-feasibility-condition) and this project's `commission_perc`/`exp_ret_min` config fields.
+  "profit" is actually a loss once fees are paid. Algorithm 1 enforces
+  this explicitly rather than assuming it away — see its
+  [Step 4](#step-4-expected-value-and-selection) and this project's `commission_perc`/`exp_ret_min` config fields.
 
 ## Two approaches in this repository
 
-1. A **deterministic depth-aware strategy** ([Algorithm 1](#algorithm-1-depth-aware-inventory-skewed-quoting-strategy)):
-   a rule-based heuristic that reads inventory and order book depth
-   directly and picks quotes from a fixed decision procedure — no
-   probability model, no calibration required.
+1. **Expected-value quoting** ([Algorithm 1](#algorithm-1-distance-anchored-expected-value-quoting-version-2)):
+   candidate prices at fixed distances from an inventory-skewed centre,
+   each scored by the chance it fills (measured from the project's own
+   data) times its profit after fees; the best pair that clears the fee
+   bar is quoted.
 2. A **model-based optimal strategy** ([Algorithm 2](#algorithm-2-avellaneda-stoikov-model)):
    the Avellaneda-Stoikov framework, which models the market
    stochastically and *solves* for the utility-maximizing quotes given
    that model, at the cost of needing calibrated parameters for how the
    market actually behaves.
 
-Algorithm 1 is a practical baseline that works today with no data-fitting
-step. Algorithm 2 is a theoretical benchmark — more principled in theory,
+Algorithm 1 is the practical baseline that runs today; its fill
+probabilities come from the project's own measured data, with a formula as
+fallback. Algorithm 2 is a theoretical benchmark — more principled in theory,
 but only as good as its calibration in practice, and not yet implemented
 in this repository (see [Known limitations / next steps](#known-limitations--next-steps)).
 
@@ -436,12 +444,12 @@ and ask are placed equally far from the reservation price.)
 
 ## Reading the formulas in plain English
 
-The reservation price is what Algorithm 1's inventory skew ([Step 2](#step-2-inventory-dependent-level-pair-generation))
-is doing informally, made precise: instead of picking a *level* to shift
-toward, Avellaneda-Stoikov computes an actual *price* — a "fair value"
-that has already been shifted away from the true mid-price (`s`) to
-account for inventory risk, and centers both quotes on that adjusted
-price instead of on the raw mid-price.
+The reservation price is what Algorithm 1's inventory skew
+([Step 1](#step-1-inventory-position-and-quote-centre)) does with a fixed
+percentage (`skew_perc`), made precise: Avellaneda-Stoikov derives the size
+of the shift from the model — a "fair value" that has already been shifted
+away from the true mid-price (`s`) to account for inventory risk — and
+centers both quotes on that adjusted price instead of on the raw mid-price.
 
 * **`-q * gamma * sigma^2 * (T-t)`** is the size of that shift. It grows
   with three things, each for an intuitive reason:
@@ -474,9 +482,10 @@ price instead of on the raw mid-price.
     spread per fill" against "don't quote so wide that fills stop
     arriving at all."
 
-The practical difference from Algorithm 1: Algorithm 1 answers "which
-*existing order-book level* should I quote at?" using today's real book
-depth. Avellaneda-Stoikov answers "what *price* is optimal?" using a
+The practical difference from Algorithm 1: Algorithm 1 answers "which of
+these candidate prices, each anchored to a real order-book level, has the
+best expected value?" using today's real book and measured fill rates.
+Avellaneda-Stoikov answers "what *price* is optimal?" using a
 model of how the market behaves — which is more principled if that model
 is correctly calibrated to the real market ((\sigma) and (\kappa) fit from
 data), but produces nothing meaningful if it isn't.
@@ -614,7 +623,7 @@ If you're missing `market_maker/.env`, copy `market_maker/.env.example` and fill
 
 Full details — environment setup, every way to run the bot (which modes touch a real account/real money and which don't), and how to run the test suite — are in **[usage.md](usage.md)**, kept as its own document so this README stays focused on what the project *is* rather than how to operate it.
 
-Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with a deterministic simulated paper-order lifecycle instead (open-first, partial fills, queue/stale/shutdown cancellation) — no real orders, no MySQL required (see usage.md §1b). The test suite (`python3 -m pytest -q` from the repo root) needs neither a real account, MySQL, nor network/Telegram access — all 171 tests are deterministic (mocks and replay fixtures).
+Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with a deterministic simulated paper-order lifecycle instead (open-first, partial fills, queue/stale/shutdown cancellation) — no real orders, no MySQL required (see usage.md §1b). The test suite (`python3 -m pytest -q` from the repo root) needs neither a real account, MySQL, nor network/Telegram access — all of its tests are deterministic (mocks and replay fixtures).
 
 An investor-facing update on Algorithm 1 version 2 and the demo (the quoting rule with formulas and pseudocode, the fill model, every dashboard figure explained, the demo-to-real gate, and Algorithm 3 as the next step) is in **[docs/reports/INVESTOR_UPDATE_2026-10-11.md](docs/reports/INVESTOR_UPDATE_2026-10-11.md)**.
 
