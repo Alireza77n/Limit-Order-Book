@@ -215,6 +215,13 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.02em;
 }
+/* Algorithm names are git branch names (MM_algo1v2, MM_algo2): shown exactly as written, never upper-cased. */
+.status-badge.algo-name {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
 .status-badge::before {
   content: "";
   width: 6px;

@@ -63,7 +63,7 @@
             {% elif field_type.__name__ == 'str' %}
               <select id="{{ field_name }}" name="{{ field_name }}" class="form-select">
                 {% for choice in definition.choices %}
-                  <option value="{{ choice }}" {% if current_value == choice %}selected{% endif %}>{{ choice }}{% if choice_labels and choice_labels.get(field_name, {}).get(choice) %} — {{ choice_labels[field_name][choice] }}{% endif %}</option>
+                  <option value="{{ choice }}" {% if current_value == choice %}selected{% endif %}>{% if choice_labels and choice_labels.get(field_name, {}).get(choice) %}{{ choice_labels[field_name][choice] }} ({{ choice }}){% else %}{{ choice }}{% endif %}</option>
                 {% endfor %}
               </select>
             {% elif field_type.__name__ == 'int' %}

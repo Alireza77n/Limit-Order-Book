@@ -100,7 +100,7 @@ def test_algorithm_comparison_measures_each_algorithm_on_its_own_rounds():
     assert rows["algo1"]["rounds"] == 5 and rows["algo3"]["rounds"] == 3
     assert rows["algo3"]["quote_rate"] == 1.0 and rows["algo1"]["quote_rate"] == pytest.approx(0.8)
     assert rows["algo3"]["round_trips"] == 1 and rows["algo3"]["fills"] == 2
-    assert rows["algo3"]["label"] == "Algorithm 3"
+    assert rows["algo3"]["label"] == "MM_algo2"
 
 
 def test_track_settings_carry_the_algorithm_and_algorithm_3_minimum_half_spread(tmp_path, monkeypatch):
@@ -144,7 +144,7 @@ def test_deep_link_selects_the_algorithm():
 def test_sessions_are_labelled_with_their_algorithm(mixed_track):
     options, value = dashboard.refresh_session_options("usdt_demo", 0, None)
     labels = {o["value"]: o["label"] for o in options}
-    assert labels["s1"] == "s1 · Algorithm 1" and labels["s2"] == "s2 · Algorithm 3"
+    assert labels["s1"] == "s1 · MM_algo1v2" and labels["s2"] == "s2 · MM_algo2"
     assert value == "all"
 
 
@@ -153,14 +153,14 @@ def test_sessions_are_labelled_with_their_algorithm(mixed_track):
 def test_all_algorithms_side_by_side(mixed_track):
     text = _text_of(dashboard.render_tab_content("algorithm", "usdt_demo", "all", 0, 0.0, 0.0, "all"))
     assert "Side by side" in text and "2 algorithm(s) in this view" in text
-    assert "Algorithm 1" in text and "Algorithm 3" in text
+    assert "MM_algo1v2" in text and "MM_algo2" in text
     assert "Net PnL after fees — running sum per algorithm" in text
     assert "Algorithms side by side — same track, each on its own rounds" in text
 
 
 def test_one_algorithm_shows_its_own_panels(mixed_track):
     text = _text_of(dashboard.render_tab_content("algorithm", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
-    assert "Algorithm 3 — Order-book imbalance, microprice and a fixed spread" in text
+    assert "MM_algo2" in text and "Algorithm 3: order-book imbalance, microprice and a fixed spread" in text
     assert "Measures the imbalance of the resting volumes" in text
     assert "Order-book imbalance I = (V_bid − V_ask)" in text
     assert "Where the centre sat" in text
@@ -178,9 +178,9 @@ def test_an_algorithm_that_has_not_run_yet_says_how_to_start_it(tmp_path, monkey
     monkeypatch.setitem(dashboard.TRACKS, "usdt_demo", dict(dashboard.TRACKS["usdt_demo"], path=str(csv_path)))
     monkeypatch.setattr(dashboard, "DEMO_STATE_DIR", str(tmp_path / "state"))
     text = _text_of(dashboard.render_tab_content("algorithm", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
-    assert "No rounds of Algorithm 3 in this view yet" in text
-    assert "Config USDT → Algorithm" in text
-    assert "No rounds of Algorithm 3" in _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
+    assert "No rounds of MM_algo2 in this view yet" in text
+    assert "Config USDT → Algorithm and choose MM_algo2:" in text
+    assert "No rounds of MM_algo2" in _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
 
 
 # ---------- every other tab follows the choice ----------
@@ -194,7 +194,7 @@ def test_every_tab_renders_for_each_choice(mixed_track, tab, algorithm):
 
 
 def test_status_line_counts_the_chosen_algorithm_only(mixed_track):
-    assert dashboard.refresh_status_text("usdt_demo", "all", 0, "algo3").startswith("3 rounds — Algorithm 3 only")
+    assert dashboard.refresh_status_text("usdt_demo", "all", 0, "algo3").startswith("3 rounds — MM_algo2 only")
     assert dashboard.refresh_status_text("usdt_demo", "all", 0, "all").startswith("8 rounds")
 
 
@@ -208,17 +208,17 @@ def test_quote_decision_shows_the_round_as_the_algorithm_that_made_it(mixed_trac
     dropdown = next(c for c in _components(rendered) if getattr(c, "id", None) == "decision-round")
     assert [o["value"] for o in dropdown.options] == ["s2:2", "s2:1"]
     text = _text_of(rendered)
-    assert "Top-k book levels" in text and "Decision trace" in text and "Algorithm 3, this round" in text
+    assert "Top-k book levels" in text and "Decision trace" in text and "MM_algo2, this round" in text
     assert "h_min" in text
 
     rendered = dashboard.render_tab_content("decision", "usdt_demo", "all", 0, 0.0, 0.0, "all")
     dropdown = next(c for c in _components(rendered) if getattr(c, "id", None) == "decision-round")
     assert len(dropdown.options) == 5
-    assert any("Algorithm 3" in o["label"] for o in dropdown.options)
-    assert any("Algorithm 1" in o["label"] for o in dropdown.options)
+    assert any("MM_algo2" in o["label"] for o in dropdown.options)
+    assert any("MM_algo1v2" in o["label"] for o in dropdown.options)
 
-    assert "Algorithm 1, this round" in _text_of(dashboard.refresh_decision_panels("s1:6", "usdt_demo", "algo1"))
-    assert "Algorithm 3, this round" in _text_of(dashboard.refresh_decision_panels("s2:1", "usdt_demo", "algo3"))
+    assert "MM_algo1v2, this round" in _text_of(dashboard.refresh_decision_panels("s1:6", "usdt_demo", "algo1"))
+    assert "MM_algo2, this round" in _text_of(dashboard.refresh_decision_panels("s2:1", "usdt_demo", "algo3"))
 
 
 def test_fill_model_tab_explains_that_algorithm_3_has_no_forecast(mixed_track):
@@ -236,3 +236,14 @@ def test_algorithm_3_decision_trace_walks_the_specification_steps():
     assert any(name.startswith("our bid") for name in names) and any(name.startswith("centre") for name in names)
     prices = [trace.y[0] for trace in ladder.data]
     assert prices == sorted(prices, reverse=True)          # the legend reads like the price axis
+
+
+def test_the_picker_and_the_headings_show_the_exact_branch_names(mixed_track):
+    picker = next(c for c in _components(dashboard.app.layout) if getattr(c, "id", None) == "algorithm-choice")
+    names = [o["label"].children[0].children for o in picker.options]
+    assert names == ["MM_algo1v2", "MM_algo2", "All algorithms"]
+    # the description heading is not the upper-cased generic heading
+    rendered = dashboard.render_tab_content("algorithm", "usdt_demo", "all", 0, 0.0, 0.0, "algo1")
+    heading = next(c for c in _components(rendered)
+                   if getattr(c, "children", None) == "MM_algo1v2" and type(c).__name__ == "Span")
+    assert "textTransform" not in (heading.style or {})

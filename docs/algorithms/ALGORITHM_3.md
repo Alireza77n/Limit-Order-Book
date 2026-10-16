@@ -1,5 +1,8 @@
 # Algorithm 3 — order-book imbalance and microprice market maker
 
+> On the dashboard and in the admin panel this algorithm is called **MM_algo2**, after the git branch it
+> was built on; Algorithm 1 version 2 is called **MM_algo1v2**. The configuration value is `algo3`.
+
 **Code:** [`market_maker/strategy/algo3.py`](../../market_maker/strategy/algo3.py) (`Algo3Strategy`),
 shared arithmetic in [`market_maker/strategy/common.py`](../../market_maker/strategy/common.py),
 the list of algorithms in [`market_maker/strategy/catalog.py`](../../market_maker/strategy/catalog.py).
@@ -233,8 +236,8 @@ $h_{\min} = 0.255\%$ at live fees. Days of book data with volumes are needed bef
 
 ## 9. Choosing and comparing algorithms
 
-* **Admin panel:** the `Algorithm` field (first on *Config BTC/USDT* and *Live Config BTC/USDT*) takes `algo1` or
-  `algo3`. A Demo worker switches at its next round (same session, same ledger; its strategy memory starts
+* **Admin panel:** the `Algorithm` field (first on *Config BTC/USDT* and *Live Config BTC/USDT*) offers
+  **MM_algo1v2** (`algo1`) and **MM_algo2** (`algo3`). A Demo worker switches at its next round (same session, same ledger; its strategy memory starts
   empty). A live worker reads the value when it is started: the forward agent starts
   `run.py --algorithm <value>`; a running live worker keeps the algorithm it started with. The admin overview
   and the Live Forward page show the algorithm in force for each pair, Demo and live; for a running live
@@ -243,7 +246,8 @@ $h_{\min} = 0.255\%$ at live fees. Days of book data with volumes are needed bef
 * **Results:** every round row carries `Strategy` (`algo1` / `algo3`; older rows count as `algo1`) and the
   Algorithm 3 numbers `Imbalance` and `Microprice`; the diagnostics JSONL documents carry `algorithm` and, for
   Algorithm 3, the levels, the imbalance, the microprice, the centre and $h$.
-* **Dashboard:** the **Algorithm** tab lists the algorithms. Choosing one shows its description, the settings in
+* **Dashboard:** the **Algorithm** tab (the first tab of the top bar) lists **MM_algo1v2**, **MM_algo2** and
+  **All algorithms**. Choosing one shows its description, the settings in
   force, its headline numbers and its own charts (Algorithm 3: imbalance and centre shift over time; Algorithm 1:
   expected value and fill probabilities), and every other tab then shows that algorithm's rounds only (the Quote
   decision tab draws an Algorithm 3 round as its book levels, a price ladder and a step-by-step trace).

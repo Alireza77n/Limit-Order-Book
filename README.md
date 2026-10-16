@@ -6,9 +6,9 @@ This repository contains implementations and experiments focused on **limit orde
 
 The project currently includes:
 
-* **Algorithm 1:** a custom depth-aware, inventory-skewed quoting strategy — **implemented, tested, and runnable live** against Nobitex.
+* **Algorithm 1 (version 2):** distance-anchored, expected-value quoting — **implemented, tested, and runnable live** against Nobitex (branch `MM_algo1v2`; shown on the dashboard and in the admin panel as **MM_algo1v2**).
 * **Algorithm 2:** the Avellaneda-Stoikov optimal market-making model — **not implemented**. Only documented below and explored in parameter-estimation notebooks (`market_maker/research/`). See [Algorithm 2](#algorithm-2-avellaneda-stoikov-model) for the full model and [Known limitations / next steps](#known-limitations--next-steps) for the honest picture of what's missing.
-* **Algorithm 3:** an order-book imbalance and microprice market maker — **implemented and tested** (branch `MM_algo2`). It centres its quotes on the microprice, leans them with the volume imbalance of the top levels, skews them by inventory and quotes the smallest symmetric spread that clears the fee bar. Specification and proofs: [`docs/algorithms/ALGORITHM_3.md`](docs/algorithms/ALGORITHM_3.md).
+* **Algorithm 3:** an order-book imbalance and microprice market maker — **implemented and tested** (branch `MM_algo2`; shown on the dashboard and in the admin panel as **MM_algo2**). It centres its quotes on the microprice, leans them with the volume imbalance of the top levels, skews them by inventory and quotes the smallest symmetric spread that clears the fee bar. Specification and proofs: [`docs/algorithms/ALGORITHM_3.md`](docs/algorithms/ALGORITHM_3.md).
 
 Which algorithm a worker runs is a setting (`algorithm`: `algo1` or `algo3`), chosen per pair in the admin panel (Demo: applied at the next round; live: when the worker is started). The results dashboard has an **Algorithm** tab: pick one algorithm to see its own panels (every other tab then shows its rounds only), or all of them side by side to compare.
 
@@ -19,6 +19,7 @@ The goal of this project is to simulate, backtest, and compare different market-
 | Status | Implemented, tested | **Not implemented** (stub only) | Implemented, tested |
 | Code | `market_maker/strategy/algo1.py` | `market_maker/strategy/algo2.py` (raises `NotImplementedError`) | `market_maker/strategy/algo3.py` |
 | Runnable | Yes: `algorithm = algo1` (default) or `run.py --algorithm algo1` | No | Yes: `algorithm = algo3` in the admin panel, or `run.py --algorithm algo3` |
+| Name on the dashboard and in the admin | **MM_algo1v2** | — | **MM_algo2** |
 
 ---
 
@@ -29,7 +30,7 @@ The goal of this project is to simulate, backtest, and compare different market-
   - [Key order book terms](#key-order-book-terms)
   - [What is market making?](#what-is-market-making)
   - [Core risks a market maker faces](#core-risks-a-market-maker-faces)
-  - [Two approaches in this repository](#two-approaches-in-this-repository)
+  - [Three approaches in this repository](#three-approaches-in-this-repository)
 - [Algorithm 1: Distance-Anchored, Expected-Value Quoting (version 2)](#algorithm-1-distance-anchored-expected-value-quoting-version-2)
   - [Main idea](#main-idea)
   - [Order book notation](#order-book-notation)
@@ -47,6 +48,19 @@ The goal of this project is to simulate, backtest, and compare different market-
   - [Stage 6 — the strategy, function by function](#stage-6--the-strategy-function-by-function)
   - [Stage 7 — engine-side checks](#stage-7--engine-side-checks)
   - [Logical weaknesses: status after version 2](#logical-weaknesses-status-after-version-2)
+- [Algorithm 3: Order-Book Imbalance and Microprice](#algorithm-3-order-book-imbalance-and-microprice)
+  - [Main idea](#main-idea-1)
+  - [Step 1: order-book imbalance](#step-1-order-book-imbalance)
+  - [Step 2: microprice](#step-2-microprice)
+  - [Step 3: quote centre](#step-3-quote-centre)
+  - [Step 4: half-spread from the fee bar](#step-4-half-spread-from-the-fee-bar)
+  - [Step 5: tick rounding, the touch and the final check](#step-5-tick-rounding-the-touch-and-the-final-check)
+  - [Step 6: hysteresis](#step-6-hysteresis-1)
+  - [Algorithm 3 summary](#algorithm-3-summary)
+  - [Output of Algorithm 3](#output-of-algorithm-3)
+  - [Algorithm 3 in practice: the example book](#algorithm-3-in-practice-the-example-book)
+  - [Algorithm 1 vs. Algorithm 3](#algorithm-1-vs-algorithm-3)
+- [Choosing and comparing algorithms](#choosing-and-comparing-algorithms)
 - [Algorithm 2: Avellaneda-Stoikov Model](#algorithm-2-avellaneda-stoikov-model)
   - [The idea](#the-idea)
   - [The formulas](#the-formulas)
@@ -68,7 +82,7 @@ The goal of this project is to simulate, backtest, and compare different market-
 # Limit order book and market-making fundamentals
 
 This section is a from-scratch primer. If you already know what a bid, an
-ask, and a spread are, skip to [Algorithm 1](#algorithm-1-depth-aware-inventory-skewed-quoting-strategy).
+ask, and a spread are, skip to [Algorithm 1](#algorithm-1-distance-anchored-expected-value-quoting-version-2).
 
 ## What is a limit order book?
 
@@ -140,9 +154,11 @@ comes from.
   whatever spread it earned getting into it. This is *the* central
   tension a market-making strategy has to manage: quote tightly and
   symmetrically to maximize fill rate and spread capture, or skew quotes
-  to manage inventory and accept fewer/worse fills. Both algorithms in
-  this repo exist specifically to answer that tradeoff — Algorithm 1 by
-  a direct, rule-based inventory skew (see [Step 2](#step-2-inventory-dependent-level-pair-generation)); Algorithm 2 by solving
+  to manage inventory and accept fewer/worse fills. Every algorithm in
+  this repo exists specifically to answer that tradeoff — Algorithms 1
+  and 3 by a direct, rule-based inventory skew of the quote centre (see
+  Algorithm 1's [Step 1](#step-1-inventory-position-and-quote-centre) and
+  Algorithm 3's [Step 3](#step-3-quote-centre)); Algorithm 2 by solving
   it as a formal utility-maximization problem (see [The formulas](#the-formulas)).
 * **Adverse selection risk.** A market maker's quotes are filled
   precisely when someone *wants* to trade against them — and the people
@@ -167,26 +183,31 @@ comes from.
   just because it looks profitable on paper — it has to land on an
   allowed tick, and it has to clear the exchange's trading commission
   *and* whatever minimum profit margin the strategy requires, or the
-  "profit" is actually a loss once fees are paid. Both algorithms enforce
-  this explicitly rather than assuming it away — see Algorithm 1's
-  [Step 3](#step-3-spread-feasibility-condition) and this project's `commission_perc`/`exp_ret_min` config fields.
+  "profit" is actually a loss once fees are paid. Both implemented
+  algorithms enforce this explicitly rather than assuming it away — see
+  Algorithm 1's [Step 4](#step-4-expected-value-and-selection), Algorithm 3's
+  [Step 4](#step-4-half-spread-from-the-fee-bar) and this project's `commission_perc`/`exp_ret_min` config fields.
 
-## Two approaches in this repository
+## Three approaches in this repository
 
-1. A **deterministic depth-aware strategy** ([Algorithm 1](#algorithm-1-depth-aware-inventory-skewed-quoting-strategy)):
-   a rule-based heuristic that reads inventory and order book depth
-   directly and picks quotes from a fixed decision procedure — no
-   probability model, no calibration required.
-2. A **model-based optimal strategy** ([Algorithm 2](#algorithm-2-avellaneda-stoikov-model)):
+1. **Expected-value quoting** ([Algorithm 1](#algorithm-1-distance-anchored-expected-value-quoting-version-2),
+   shown as **MM_algo1v2**): candidate prices at fixed distances from an
+   inventory-skewed centre, each scored by the chance it fills (measured from
+   the project's own data) times its profit after fees; the best pair that
+   clears the fee bar is quoted. Implemented, the default.
+2. **A model-based optimal strategy** ([Algorithm 2](#algorithm-2-avellaneda-stoikov-model)):
    the Avellaneda-Stoikov framework, which models the market
    stochastically and *solves* for the utility-maximizing quotes given
    that model, at the cost of needing calibrated parameters for how the
-   market actually behaves.
+   market actually behaves. Not implemented yet.
+3. **Order-book signal quoting** ([Algorithm 3](#algorithm-3-order-book-imbalance-and-microprice),
+   shown as **MM_algo2**): the quote centre follows the *volumes* resting in
+   the book (microprice and imbalance) and the inventory; one symmetric spread,
+   the smallest that clears the fee bar, is quoted around it. Implemented.
 
-Algorithm 1 is a practical baseline that works today with no data-fitting
-step. Algorithm 2 is a theoretical benchmark — more principled in theory,
-but only as good as its calibration in practice, and not yet implemented
-in this repository (see [Known limitations / next steps](#known-limitations--next-steps)).
+Which algorithm runs is a per-pair setting, chosen in the admin panel; the
+results dashboard shows one algorithm or all of them side by side — see
+[Choosing and comparing algorithms](#choosing-and-comparing-algorithms).
 
 ---
 
@@ -396,6 +417,199 @@ orders after a crash (PROJECT_GUIDE.md §9).
 
 ---
 
+# Algorithm 3: Order-Book Imbalance and Microprice
+
+> Shown on the dashboard and in the admin panel as **MM_algo2** (the branch it was built on).
+> Full specification with proofs, the worked example and the test map:
+> [`docs/algorithms/ALGORITHM_3.md`](docs/algorithms/ALGORITHM_3.md).
+> Code: [`market_maker/strategy/algo3.py`](market_maker/strategy/algo3.py) (`Algo3Strategy`).
+> Tests: `market_maker/tests/test_strategy_algo3.py`.
+
+## Main idea
+
+Algorithm 1 looks at the *prices* in the book. Algorithm 3 also uses the
+*volumes* resting at those prices: when much more is waiting to buy than to
+sell near the top of the book, the ask side is the one likely to be consumed
+and the next price move is more likely to be up. Once per round it
+
+1. measures that **imbalance** over the top $k$ levels;
+2. starts the quote centre at the **microprice**, the mid pulled toward the
+   side with less volume;
+3. **leans** the centre in the direction of the imbalance and **skews** it
+   against the inventory (the same skew as Algorithm 1);
+4. quotes **one symmetric half-spread** around the centre: the smallest that
+   clears the fee bar, plus one tick;
+5. rounds the prices outward to the tick, never crosses the book, and checks
+   the fee bar again on the prices actually sent;
+6. keeps a resting pair that barely moved.
+
+It never reads a fill probability: the lean and the skew move the **centre**
+only, so the ratio of the two prices, and therefore the profit of a filled
+round trip, is fixed by the half-spread alone. The engine sizes, caps and
+sends the orders exactly as for Algorithm 1.
+
+## Step 1: order-book imbalance
+
+$$V^b = \sum_{i=0}^{k-1}\rho^{\,i}\,v^b_i,\qquad V^a = \sum_{i=0}^{k-1}\rho^{\,i}\,v^a_i,\qquad
+I = \frac{V^b - V^a}{V^b + V^a}\in[-1,1]$$
+
+$k$ = `algo3_depth_k` (3) and $\rho$ = `algo3_decay_rho` (0.5): deeper levels
+count less. $I > 0$ means buying pressure. Two guards: if $V^b + V^a$ is below
+`algo3_min_volume_orders` × `order_size` the top of the book carries no signal
+($I = 0$, centre at the mid); otherwise $I$ is clipped to
+± `algo3_imbalance_clip` (0.8) so one large, possibly spoofed, level cannot push
+the lean to its maximum.
+
+## Step 2: microprice
+
+$$p_{\text{micro}} = \frac{a_0\,v^b_0 + b_0\,v^a_0}{v^b_0 + v^a_0}
+= m + \frac{s}{2}\,I_0,\qquad s = a_0 - b_0,\quad I_0 = \frac{v^b_0 - v^a_0}{v^b_0 + v^a_0}$$
+
+The identity (proved in the specification) shows that the microprice always
+lies between the best bid and the best ask.
+
+## Step 3: quote centre
+
+$$c = p_{\text{micro}}\,\bigl(1 + \beta I\bigr)\,\bigl(1 - \sigma_q\,(2x - 1)\bigr)$$
+
+$\beta$ = `algo3_beta` is the expected price move per unit of imbalance. It is
+**0 until it is estimated** from order-book data: on the only sample with
+volumes (two hours on 3 October 2026) the estimate was not significant. $x$ and
+$\sigma_q$ (`skew_perc`) are Algorithm 1's inventory position and skew.
+
+## Step 4: half-spread from the fee bar
+
+With $B = c(1-h)$ and $A = c(1+h)$ the round trip returns
+$R_{\text{net}} = (1-f)^2\,\frac{1+h}{1-h} - 1$, which depends on $h$ only.
+Requiring $R_{\text{net}} > r_{\min}$:
+
+$$\frac{1+h}{1-h} > 1 + G \iff h > h_{\min} = \frac{G}{2+G},\qquad G = \frac{1+r_{\min}}{(1-f)^2} - 1$$
+
+The strategy uses $h = \max(\texttt{algo3\_half\_spread},\ h_{\min} + \epsilon/c)$,
+one tick of margin above the bar. At the live settings ($f = 0.25\%$,
+$r_{\min} = 0.01\%$) $h_{\min} = 0.2553\%$; at the profile defaults
+($f = r_{\min} = 0.10\%$) $h_{\min} = 0.1500\%$.
+
+## Step 5: tick rounding, the touch and the final check
+
+$$B = \epsilon\left\lfloor\frac{\min(c(1-h),\ a_0-\epsilon)}{\epsilon}\right\rfloor,\qquad
+A = \epsilon\left\lceil\frac{\max(c(1+h),\ b_0+\epsilon)}{\epsilon}\right\rceil$$
+
+The rounding and the clip at the touch only *lower* the bid and *raise* the
+ask, so $A/B \ge (1+h)/(1-h) > 1+G$: every quote sent clears the fee bar (the
+code checks it again on the exact prices). This corrects the design note, which
+said the clip could make a quote unprofitable.
+
+## Step 6: hysteresis
+
+The previous pair is sent again while both new prices are within
+`hysteresis_ticks` of it and it is younger than `refresh_seconds`; the engine's
+resting-order guard and the stale-order cancellation work as for Algorithm 1.
+
+## Algorithm 3 summary
+
+```text
+inputs : book {bids, asks}, inventory q, cfg
+if fewer than k levels on a side or a crossed book: no quote
+V_b, V_a = sum of rho^i * volume over the top k levels;  I = (V_b - V_a) / (V_b + V_a)
+if V_b + V_a < V_min: I = 0, start at the mid     else: clip I to +-I_max, start at the microprice
+c = start * (1 + beta * I) * (1 - skew * (2x - 1))
+h = max(algo3_half_spread, G / (2 + G) + tick / c)
+B = floor_tick(min(c(1 - h), a0 - tick));   A = ceil_tick(max(c(1 + h), b0 + tick))
+if (1 - f)^2 * A / B - 1 <= r_min: no quote      (cannot happen with h > h_min)
+apply hysteresis;  return {bid, ask, levels, economics, imbalance, microprice, reason}
+```
+
+## Output of Algorithm 3
+
+The same keys as Algorithm 1 (`bid`, `ask`, `bid level`, `ask level`, `mid
+price`, `centre`, `inventory position`, `gross return`, `net return`, `relative
+quoted spread`, `min required return`, `bid distance`, `ask distance`, `quote
+mode` = `pair`, `selection reason` = `microprice_pair` or `microprice_pair_kept`)
+plus `imbalance` and `microprice`; the fill-probability and expected-value keys
+are empty. No-quote reasons: `invalid_or_single_level_order_book`,
+`book_shallower_than_depth_k`, `net_return_below_bar`.
+
+## Algorithm 3 in practice: the example book
+
+The design note's example, run through `Algo3Strategy` (pinned by
+`test_spec_worked_example_reproduces_every_number`): USDT/IRT, best bid
+2,658,990 (20,000 USDT), best ask 2,659,010 (5,000 USDT), top three levels
+20,000 / 8,000 / 6,000 against 5,000 / 4,000 / 3,000; $k = 3$, $\rho = 1$,
+$\beta = 0.001$, $\sigma_q = 0.002$, $h = 0.38\%$, $f = r_{\min} = 0.25\%$,
+inventory 10 of 50.
+
+| Step | Value |
+|---|---|
+| imbalance $I$ | $(34{,}000 - 12{,}000)/46{,}000 = 0.478$ |
+| microprice | 2,659,006 |
+| lean, skew | × 1.000478, × 1.0012 |
+| centre $c$ | 2,663,470 |
+| $h_{\min}$, $h$ | 0.3752 %, 0.38 % |
+| quote | bid **2,653,340** / ask **2,673,600** |
+| $R_{\text{net}}$ | 0.2604 % > 0.25 % |
+
+Symmetric quotes around the mid with the same $h$ would be 2,648,890 /
+2,669,110: the book shows buying pressure and the inventory is low, so both
+prices sit higher.
+
+## Algorithm 1 vs. Algorithm 3
+
+| | Algorithm 1 (**MM_algo1v2**) | Algorithm 3 (**MM_algo2**) |
+|---|---|---|
+| Centre | mid × inventory skew | microprice × imbalance lean × the same inventory skew |
+| Prices | best pair from a grid of candidates, each one tick inside a book level | one symmetric pair at ±$h$ around the centre |
+| Choice | largest expected value $J$ above `ev_min` | none: $h$ is the smallest half-spread that clears the bar |
+| Fill probabilities | measured table (formula fallback) | not used |
+| One-sided quotes | at the band edges and as a fallback | never; the engine's linear sizing makes a side zero at the band edges |
+| Fee bar, sizes, caps, cancels, hysteresis | the same | the same |
+
+---
+
+# Choosing and comparing algorithms
+
+**Names.** The dashboard and the admin panel name each algorithm after the git
+branch it was built on: **MM_algo1v2** is Algorithm 1 version 2 and **MM_algo2**
+is Algorithm 3. The setting values, the `--algorithm` flag and the `Strategy`
+column keep the short keys `algo1` and `algo3`.
+
+**In the admin panel.** The first field on *Config BTC* / *Config USDT* (Demo)
+and *Live Config BTC* / *Live Config USDT* is **Algorithm**, a drop-down with
+`MM_algo1v2` and `MM_algo2`. On a Demo page the change applies at the worker's
+next round (same session and ledger; the new strategy starts with empty
+memory). On a Live Config page it applies when the live worker is started: the
+forward agent starts `run.py --algorithm <saved value>`, and a running live
+worker keeps the algorithm it started with. The Overview and the Live Forward
+page show the algorithm in force for each pair. Algorithm 3's own settings
+(`algo3_*`) are on the same pages.
+
+**On the results dashboard.** The first tab in the top bar is **Algorithm**. It
+lists **MM_algo1v2**, **MM_algo2** and **All algorithms — side by side**:
+
+* choosing one algorithm shows its description, the settings in force, its
+  headline numbers (rounds, quote rate, fills per hour, realised vs computed
+  spread, adverse selection, net PnL) and its own charts — MM_algo2: the
+  imbalance over time and where the centre sat relative to the mid; MM_algo1v2:
+  the expected value and the fill probabilities of the quotes sent — and every
+  other tab then shows that algorithm's rounds only (the Quote decision tab
+  draws an MM_algo2 round as its book levels, a price ladder and a
+  step-by-step trace);
+* *All algorithms* shows a comparison table, the headline numbers as bars and
+  the running net PnL of each algorithm.
+
+The choice is remembered per browser tab; deep link `?tab=algorithm&algo=algo3`.
+Sessions in the session picker are labelled with the algorithm(s) they ran. An
+algorithm that has not run on the selected track yet says how to start it.
+
+**Command line.** `python run.py --profile btc --mode demo --algorithm algo3`
+overrides the configured value.
+
+**Data.** Every round row carries `Strategy` (`algo1` / `algo3`; rows written
+before this column existed count as `algo1`) and Algorithm 3's `Imbalance` and
+`Microprice`; the per-round diagnostics documents carry `algorithm`.
+
+---
+
 # Algorithm 2: Avellaneda-Stoikov Model
 
 **Current status: not implemented.** This section documents the model this repository intends to implement, not a working feature. `market_maker/strategy/algo2.py` (`Algo2Strategy`) is a placeholder whose `decide_order()` raises `NotImplementedError`; `market_maker/research/` holds notebooks that estimate two of the model's parameters (see below) but do not implement the quoting decision itself.
@@ -439,12 +653,13 @@ and ask are placed equally far from the reservation price.)
 
 ## Reading the formulas in plain English
 
-The reservation price is what Algorithm 1's inventory skew ([Step 2](#step-2-inventory-dependent-level-pair-generation))
-is doing informally, made precise: instead of picking a *level* to shift
-toward, Avellaneda-Stoikov computes an actual *price* — a "fair value"
-that has already been shifted away from the true mid-price (`s`) to
-account for inventory risk, and centers both quotes on that adjusted
-price instead of on the raw mid-price.
+The reservation price is what the inventory skew of Algorithms 1 and 3
+(Algorithm 1's [Step 1](#step-1-inventory-position-and-quote-centre)) does
+with a fixed percentage (`skew_perc`), made precise: Avellaneda-Stoikov
+derives the size of the shift from the model — a "fair value" that has
+already been shifted away from the true mid-price (`s`) to account for
+inventory risk — and centers both quotes on that adjusted price instead of
+on the raw mid-price.
 
 * **`-q * gamma * sigma^2 * (T-t)`** is the size of that shift. It grows
   with three things, each for an intuitive reason:
@@ -477,9 +692,10 @@ price instead of on the raw mid-price.
     spread per fill" against "don't quote so wide that fills stop
     arriving at all."
 
-The practical difference from Algorithm 1: Algorithm 1 answers "which
-*existing order-book level* should I quote at?" using today's real book
-depth. Avellaneda-Stoikov answers "what *price* is optimal?" using a
+The practical difference from Algorithm 1: Algorithm 1 answers "which of
+these candidate prices, each anchored to a real order-book level, has the
+best expected value?" using today's real book and measured fill rates.
+Avellaneda-Stoikov answers "what *price* is optimal?" using a
 model of how the market behaves — which is more principled if that model
 is correctly calibrated to the real market ((\sigma) and (\kappa) fit from
 data), but produces nothing meaningful if it isn't.
@@ -501,36 +717,31 @@ data), but produces nothing meaningful if it isn't.
 
 # Architecture
 
-```
-                  ┌─────────────────────┐
-   run.py  ─────► │  SimpleMarketMaker   │  (the engine: run() loop,
-  --algorithm     │      (engine.py)      │   inventory/cash/PnL bookkeeping,
-  --exchange      └──────────┬───────────┘   CSV + MySQL persistence,
-  --profile                  │               optional Telegram notify)
-  --mode         ┌───────────┼───────────┐
-                 ▼                       ▼
-        ┌─────────────────┐      ┌──────────────────┐
-        │     Strategy      │      │   ExchangeClient   │
-        │ (strategy/base.py) │      │ (exchange/base.py)  │
-        └────────┬─────────┘      └─────────┬────────┘
-                 │                           │
-     ┌───────────┴───────────┐    ┌──────────┼──────────────┐
-     ▼                       ▼    ▼                          ▼
-Algo1Strategy          Algo2Strategy   NobitexExchangeClient   DemoExchangeClient
-(implemented,           (stub, raises  (get_orderbook,          (wraps a real
- fully tested)           NotImplementedError) send_order,        NobitexExchangeClient for
-                                              wallet_balance,     market data; send_order is
-                                              order status/       simulated -- --mode demo)
-                                              cancellation via
-                                              order_status.py)
+```text
+run.py  --algorithm  --exchange  --profile  --mode
+  │
+  ▼
+SimpleMarketMaker (engine.py)       the run() loop, inventory / cash / PnL bookkeeping,
+  │                                 CSV + SQLite + MySQL persistence, optional Telegram
+  │
+  ├── Strategy (strategy/base.py)   built by strategy/catalog.py from cfg.algorithm
+  │     ├── Algo1Strategy (algo1.py)   MM_algo1v2: Algorithm 1 version 2, the default
+  │     ├── Algo3Strategy (algo3.py)   MM_algo2: Algorithm 3
+  │     └── Algo2Strategy (algo2.py)   stub, raises NotImplementedError
+  │
+  └── ExchangeClient (exchange/base.py)
+        ├── NobitexExchangeClient (nobitex.py)   get_orderbook, send_order, wallet_balance,
+        │                                        order status / cancellation via order_status.py
+        └── DemoExchangeClient (demo.py)         real market data from Nobitex, simulated
+                                                 fills (--mode demo)
 ```
 
-* **`Strategy`** (`market_maker/strategy/base.py`): the only method the engine relies on is `decide_order(orderbook, inventory) -> quote_dict | None`. Anything implementing this can be plugged into `SimpleMarketMaker` via its optional `strategy=` constructor argument (defaults to `Algo1Strategy` if omitted).
+* **`Strategy`** (`market_maker/strategy/base.py`): the only method the engine relies on is `decide_order(orderbook, inventory) -> quote_dict | None`. Anything implementing this can be plugged into `SimpleMarketMaker` via its optional `strategy=` constructor argument; if it is omitted, `strategy/catalog.py` builds the algorithm named by `cfg.algorithm` (`algo1` or `algo3`), and a Demo worker switches at the next round when that setting changes.
 * **`ExchangeClient`** (`market_maker/exchange/base.py`): `get_orderbook`, `send_order`, `wallet_balance`, `get_order_list_status`, `cancel_order`, `cancel_all_open_orders`, `cancel_old_orders`. `SimpleMarketMaker` takes an `exchange=` constructor argument (required) implementing this. Two implementations exist: `NobitexExchangeClient` (real) and `DemoExchangeClient` (real market data, simulated fills — see usage.md §1b).
 * **`portfolio.py`** (`Nobitex_portfolio`): read-only wallet/portfolio valuation helper, independent of the trading engine. **Still Nobitex-specific** — not behind `ExchangeClient` (see [Known limitations](#known-limitations--next-steps)).
 * **`order_status.py`** (`OrderStatusChecker`, `OrderCanceller`): raw Nobitex order-status/cancellation HTTP calls, composed inside `NobitexExchangeClient` rather than called directly by the engine.
 * **`config.py`** (`MMConfig`): a single dataclass holding both strategy knobs (`inv_max`, `depth_max`, `commission_perc`, ...) and exchange config (`token`, `url_send_order`, ...). Not yet split — see [Known limitations](#known-limitations--next-steps). Also defines `TRADING_PROFILES` (every currency pair's full config, including its demo starting inventory) and `RESULTS_DIR`/`demo_csv_path` (where `run.py` and `dashboard.py` both write/read CSV output) — the single source of truth both modules import from, so they can never disagree about a pair's settings or file locations.
-* **`run.py`**: the single entry point. `STRATEGIES`/`EXCHANGES` registries (algorithm/exchange choices) plus `config.TRADING_PROFILES` (currency-pair configs) select what actually runs; `--mode real|demo` selects real vs. simulated order placement.
+* **`run.py`**: the single entry point. `STRATEGIES` (the `--algorithm` choices, from `strategy/catalog.py`; without the flag the configured `algorithm` runs) and `EXCHANGES` plus `config.TRADING_PROFILES` (currency-pair configs) select what actually runs; `--mode real|demo` selects real vs. simulated order placement.
 * **Telegram notifications & cost tracking** (`engine.py` + `telegram_lifecycle.py`, optional): `SimpleMarketMaker` can push a startup message, a per-round summary (quote, market data, inventory/cash/wealth, buy/sell activity, transaction cost this round, and cumulative cost per-symbol and combined), and threaded order-lifecycle replies (opened/partial/filled/cancelled, each reason-tagged) to a Telegram chat if `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are set. Each round's summary is the parent message that lifecycle updates reply to. Cumulative fee totals persist across restarts in `results/paper_fee_scopes.json`. Entirely best-effort — never raises, never required. See usage.md §1.7/§6.8.
 
 ---
@@ -586,7 +797,7 @@ market_maker/
     kappa_estimation.ipynb    Estimates Algorithm 2's kappa parameter
     sigma_estimation.ipynb     Estimates Algorithm 2's sigma parameter
     algo2.ipynb                 Empty -- was meant to hold Algorithm 2's implementation
-  tests/                   pytest suite (171 deterministic tests; run from repo root)
+  tests/                   pytest suite (about 960 deterministic tests; run from repo root)
   results/                 stack_session.json, *_track_demo.sqlite3 (canonical),
                             *_track_demo.csv (bounded export), paper_<session>_<symbol>.json
                             (hot ledger) + *_archive*.jsonl (rotated terminal orders),
@@ -620,11 +831,11 @@ If you're missing `market_maker/.env`, copy `market_maker/.env.example` and fill
 
 Full details — environment setup, every way to run the bot (which modes touch a real account/real money and which don't), and how to run the test suite — are in **[usage.md](usage.md)**, kept as its own document so this README stays focused on what the project *is* rather than how to operate it.
 
-Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with a deterministic simulated paper-order lifecycle instead (open-first, partial fills, queue/stale/shutdown cancellation) — no real orders, no MySQL required (see usage.md §1b). The test suite (`python3 -m pytest -q` from the repo root) needs neither a real account, MySQL, nor network/Telegram access — all 171 tests are deterministic (mocks and replay fixtures).
+Quick summary: `run.py --profile btc|usdt` places **real orders on Nobitex with real money** and needs a live MySQL server. `--mode demo` trades against the same real market data with a deterministic simulated paper-order lifecycle instead (open-first, partial fills, queue/stale/shutdown cancellation) — no real orders, no MySQL required (see usage.md §1b). The test suite (`python3 -m pytest -q` from the repo root) needs neither a real account, MySQL, nor network/Telegram access — all of its tests (about 960) are deterministic (mocks and replay fixtures).
 
 An investor-facing update on Algorithm 1 version 2 and the demo (the quoting rule with formulas and pseudocode, the fill model, every dashboard figure explained, the demo-to-real gate, and Algorithm 3 as the next step) is in **[docs/reports/INVESTOR_UPDATE_2026-10-11.md](docs/reports/INVESTOR_UPDATE_2026-10-11.md)**.
 
-A live-updating results dashboard (`python dashboard.py`) shows, for every real/demo × BTC/USDT track, the headline numbers (quote rate, fills per hour, realised vs computed spread, adverse selection, PnL, inventory position), one round's quote decision (candidate ladder, expected-value heat map, decision trace), the fill model (measured table vs formula, calibration), the order-book view, the demo-to-real validation gate and every round as a table — see usage.md §3. A separate, authenticated admin control page (`python admin_app.py`, Demo-only, no Real Mode surface) adds worker/session/config/backup control on top of that read-only view — see usage.md §3 and `docs/deployment/ADMIN_PAGE.md`.
+A live-updating results dashboard (`python dashboard.py`) shows, for every real/demo × BTC/USDT track and for the algorithm chosen on its first tab, **Algorithm** (MM_algo1v2, MM_algo2, or all algorithms side by side), the headline numbers (quote rate, fills per hour, realised vs computed spread, adverse selection, PnL, inventory position), one round's quote decision (candidate ladder, expected-value heat map, decision trace), the fill model (measured table vs formula, calibration), the order-book view, the demo-to-real validation gate and every round as a table — see usage.md §3. A separate, authenticated admin control page (`python admin_app.py`, Demo-only, no Real Mode surface) adds worker/session/config/backup control on top of that read-only view, including the algorithm each pair runs — see usage.md §3 and `docs/deployment/ADMIN_PAGE.md`.
 
 `docker compose up -d --build --wait` (repo root) runs a shared session initializer, both pairs in continuous demo mode, the dashboard, and the authenticated Admin service, sharing bind-mounted runtime data. Admin mutations use the separate local host agent (`python3 deploy/control_agent.py --mode local`) rather than a Docker socket — see usage.md §6–7.
 
@@ -638,6 +849,7 @@ A live-updating results dashboard (`python dashboard.py`) shows, for every real/
 * **Git history contains the original hardcoded secrets** (the Nobitex token and MySQL password, from commits predating the `.env` migration). Moving them to `.env` stops new exposure but doesn't erase history — rotating both credentials is recommended and is a team/repo-owner decision.
 * **Demo mode's fills are still an approximation, not a matching engine** — `--mode demo` now runs a paper-order lifecycle with level-1 delay/fraction, explicit trade evidence, finite per-observation fill budgets, optional queue-ahead consumption, adverse/non-adverse fill probabilities, and partial fills against real market data. It does not model Nobitex's real slippage or true queue priority. Transaction cost *is* simulated realistically from `commission_perc`, tracked per-symbol and combined across symbols, and reported via optional Telegram notifications. See usage.md §1b/§1.7/§6.8.
 * **Algorithm 2 has no real implementation**, only a stub and this README's math — see [Algorithm 2](#algorithm-2-avellaneda-stoikov-model).
+* **Algorithm 3's lean is off until it is estimated** (`algo3_beta` = 0): the only order-book sample with volumes (two hours, 3 October 2026) gave no significant estimate. Algorithm 3 (MM_algo2) has not run on demo or real market data yet; switch a Demo pair to MM_algo2 in the admin panel to start collecting its results.
 
 ---
 
@@ -659,7 +871,7 @@ A typical experiment follows this workflow:
 1. Load cryptocurrency order book data.
 2. Initialize the portfolio and configuration.
 3. For each order book snapshot:
-       a. Compute bid and ask quotes using Algorithm 1 or Algorithm 2.
+       a. Compute bid and ask quotes with the selected algorithm (MM_algo1v2 or MM_algo2; Algorithm 2 once implemented).
        b. Submit or simulate limit orders.
        c. Track order status.
        d. Update portfolio inventory and cash balance.
@@ -675,7 +887,7 @@ This project is designed for experimentation with cryptocurrency market-making s
 
 Possible experiments include:
 
-* comparing Algorithm 1 with Avellaneda-Stoikov (once implemented)
+* comparing MM_algo1v2 (Algorithm 1) with MM_algo2 (Algorithm 3) on the same market (the dashboard's *All algorithms* view), and both with Avellaneda-Stoikov once it is implemented
 * studying how inventory limits affect performance
 * testing different depth caps
 * evaluating the effect of tick size

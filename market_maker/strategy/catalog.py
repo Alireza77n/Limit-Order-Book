@@ -5,6 +5,12 @@ strategy when the Demo configuration's ``algorithm`` field changes, the
 admin panel offers the selectable keys, and the dashboard labels rounds and
 sessions with them. Adding an algorithm means one ``AlgorithmInfo`` entry
 plus its ``strategy/<key>.py``.
+
+Names: the dashboard and the admin show each algorithm under the name of the
+git branch it was built on (``MM_algo1v2`` = Algorithm 1 version 2,
+``MM_algo2`` = Algorithm 3 of the design documents); the configuration, the
+command line and the recorded rounds keep the short keys ``algo1`` / ``algo3``,
+so saved settings and history stay valid.
 """
 from __future__ import annotations
 
@@ -19,9 +25,9 @@ from strategy.algo3 import Algo3Strategy
 @dataclass(frozen=True)
 class AlgorithmInfo:
     key: str                 # config value, CLI --algorithm, "Strategy" column of every round row
-    number: int              # the number in the project's documents ("Algorithm 3")
-    label: str               # short display name
-    title: str               # one-line description
+    number: int              # the number in the project's design documents ("Algorithm 3")
+    label: str               # display name on the dashboard and in the admin: the git branch it was built on
+    title: str               # one-line description, starting with the design-document name
     cls: type                # the Strategy class
     implemented: bool
     doc: str                 # where it is specified
@@ -32,8 +38,8 @@ class AlgorithmInfo:
 
 ALGORITHMS: Mapping[str, AlgorithmInfo] = {
     "algo1": AlgorithmInfo(
-        key="algo1", number=1, label="Algorithm 1",
-        title="Distance grid, fill probabilities and expected value (version 2)",
+        key="algo1", number=1, label="MM_algo1v2",
+        title="Algorithm 1, version 2: distance grid, fill probabilities and expected value",
         cls=Algo1Strategy, implemented=True, doc="docs/algorithms/ALGORITHM_1_V2.md",
         summary=(
             "Moves a quote centre away from the mid as the inventory fills: c = mid · (1 − skew · (2x − 1)).",
@@ -49,8 +55,8 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
         uses_fill_model=True,
     ),
     "algo3": AlgorithmInfo(
-        key="algo3", number=3, label="Algorithm 3",
-        title="Order-book imbalance, microprice and a fixed spread",
+        key="algo3", number=3, label="MM_algo2",
+        title="Algorithm 3: order-book imbalance, microprice and a fixed spread",
         cls=Algo3Strategy, implemented=True, doc="docs/algorithms/ALGORITHM_3.md",
         summary=(
             "Measures the imbalance of the resting volumes in the top k levels, I = (V_bid − V_ask) / (V_bid + V_ask), deeper levels weighted ρ^i.",

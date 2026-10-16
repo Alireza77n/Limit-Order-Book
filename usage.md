@@ -9,7 +9,7 @@ project *is* and how it's architected, see [README.md](README.md).
 |---|---|---|---|---|
 | [Live trading](#1-live-trading-real-money-real-account) | `python run.py --profile btc\|usdt` | Yes | **Yes -- real money** | **Yes** |
 | [Demo / paper trading](#1b-demo-mode-real-market-data-simulated-orders) | `python run.py --profile btc\|usdt --mode demo` | **Yes** | No -- simulated | No |
-| [Automated tests](#2-automated-tests-no-account-no-money-no-database) | `pytest -q` | No | No | No |
+| [Automated tests](#2-automated-tests) | `pytest -q` | No | No | No |
 | [History dashboard](#3-history-dashboard) | `python dashboard.py` | No (reads local SQLite/CSV results) | No | No |
 | [Research notebooks](#4-research-notebooks-read-only) | open in Jupyter | No | No | No |
 | [Docker](#6-docker) | `docker compose up -d --build --wait` | Yes (demo mode) | No -- simulated | No |
@@ -304,8 +304,9 @@ loads the newest rounds across all sessions (both views are capped at
 cannot push the dashboard container over its memory limit; older rows
 stay in the store). The tabs:
 
-* **Algorithm** -- the list of algorithms (Algorithm 1, Algorithm 3, "All
-  algorithms"). Choosing one shows its description, the settings in force,
+* **Algorithm** -- the first tab: the list of algorithms, named after the git
+  branch each was built on (**MM_algo1v2** = Algorithm 1 v2, **MM_algo2** =
+  Algorithm 3, and "All algorithms"). Choosing one shows its description, the settings in force,
   its headline numbers and its own charts (Algorithm 3: the imbalance and
   where the centre sat relative to the mid; Algorithm 1: the expected value
   and the fill probabilities of the quotes sent), and every other tab then

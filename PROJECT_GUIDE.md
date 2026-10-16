@@ -15,7 +15,7 @@ Contents
 3. [What every file is](#3-what-every-file-is)
 4. [Where configuration values come from](#4-where-configuration-values-come-from)
 5. [One round of the trading loop](#5-one-round-of-the-trading-loop)
-6. [Algorithm 1 in detail](#6-algorithm-1-in-detail)
+6. [Algorithm 1 in detail](#6-algorithm-1-in-detail-version-2-2026-10-11)
 7. [How order sizes are decided](#7-how-order-sizes-are-decided)
 8. [What changed on 2026-10-03](#8-what-changed-on-2026-10-03)
 9. [Problems found in review](#9-problems-found-in-review)
@@ -33,9 +33,13 @@ There are three algorithms in the code:
 
 | | Status |
 |---|---|
-| Algorithm 1 (`strategy/algo1.py`) | Implemented. The default (`algorithm = algo1`). |
+| Algorithm 1 (`strategy/algo1.py`), shown as **MM_algo1v2** | Implemented. The default (`algorithm = algo1`). |
 | Algorithm 2, Avellaneda-Stoikov (`strategy/algo2.py`) | Placeholder only. Not implemented. |
-| Algorithm 3, order-book imbalance and microprice (`strategy/algo3.py`) | Implemented. Selected per pair with `algorithm = algo3` ([`docs/algorithms/ALGORITHM_3.md`](docs/algorithms/ALGORITHM_3.md)). |
+| Algorithm 3, order-book imbalance and microprice (`strategy/algo3.py`), shown as **MM_algo2** | Implemented. Selected per pair with `algorithm = algo3` ([`docs/algorithms/ALGORITHM_3.md`](docs/algorithms/ALGORITHM_3.md)). |
+
+The dashboard and the admin panel name each algorithm after the git branch it
+was built on (**MM_algo1v2**, **MM_algo2**); settings and recorded rounds keep
+the keys `algo1` and `algo3`.
 
 Which one a worker runs is the `algorithm` setting, chosen per pair on the admin
 panel's config pages: a demo worker switches at its next round, a live worker
@@ -271,7 +275,7 @@ currency and of `rls`. If either read fails it exits without trading.
 | A | `GET /v3/orderbook/<pair>`. If it fails, the round is skipped. | `exchange/nobitex.py` |
 | B | Lists the worker's own open and closed orders. For each, takes the newly matched amount since the last round. A buy adds `matched − fee` to inventory and subtracts `matched × price` from cash. A sell subtracts `matched` from inventory and adds `matched × price − fee` to cash. | `update_inventory_and_cash` |
 | C | Cancels the worker's own open orders older than `cancel_after_minutes`. Orders it did not send are never touched. | `_cancel_owned_stale_orders` |
-| D, E | [Section 6](#6-algorithm-1-in-detail). | `strategy/algo1.py` |
+| D, E | [Section 6](#6-algorithm-1-in-detail-version-2-2026-10-11). | `strategy/algo1.py` |
 | F, G | [Section 7](#7-how-order-sizes-are-decided). | `run()` |
 | H | One row appended to the CSV, one Telegram message, then `sleep(time_step)`. | `run()` |
 

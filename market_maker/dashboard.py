@@ -4,7 +4,9 @@ Reads the CSV/SQLite result stores run.py writes (real and demo, BTC and
 USDT), the fill-probability tables and the per-round decision diagnostics,
 and serves a live-updating Dash app with these tabs:
 
-* Algorithm     -- pick Algorithm 1, Algorithm 3 or "all": one algorithm's
+* Algorithm     -- pick MM_algo1v2 (Algorithm 1 v2), MM_algo2 (Algorithm 3)
+                   or "all" (each algorithm is shown under the name of the
+                   git branch it was built on): one algorithm's
                    own panels (what it does, its settings in force, its
                    signals over time) and a filter every other tab follows,
                    or every algorithm side by side (comparison table, PnL
@@ -1305,7 +1307,7 @@ def _imbalance_chart(df: pd.DataFrame) -> go.Figure:
     df = _with_breaks(df)
     imbalance = _col(df, "Imbalance")
     if imbalance.notna().sum() == 0:
-        return _empty_fig("No Algorithm 3 rounds with a quote yet")
+        return _empty_fig(f"No {algorithm_label('algo3')} rounds with a quote yet")
     fig = go.Figure(go.Scatter(x=df["Timestamp"], y=imbalance, mode="lines+markers", name="imbalance I",
                                line=dict(color=BID_COLOR, width=1.5), marker=dict(size=4), connectgaps=False))
     fig.add_hline(y=0, line=dict(color=BASELINE, width=1))
@@ -1341,7 +1343,7 @@ def _expected_value_chart(df: pd.DataFrame) -> go.Figure:
     ev = _col(df, "Expected Value") * 100
     net = _col(df, "Net Return") * 100
     if ev.notna().sum() == 0:
-        return _empty_fig("No Algorithm 1 rounds with a quote yet")
+        return _empty_fig(f"No {algorithm_label('algo1')} rounds with a quote yet")
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df["Timestamp"], y=net, mode="lines", name="net return R_net of the quote",
                              line=dict(color=MUTED, width=1.5), connectgaps=False))
@@ -1704,9 +1706,14 @@ def _algorithm_picker(choice: str) -> html.Div:
     """The Algorithm tab's list of algorithms. It lives in the fixed layout
     (shown only while the Algorithm tab is open) so that every callback
     reading it always finds it, and ?algo= deep links work from any tab."""
-    options = [{"label": f"{info.label} — {info.title}", "value": key}
+    name_style = {"fontWeight": 700, "fontFamily": MONO, "color": TEXT_PRIMARY}
+    note_style = {"color": TEXT_SECONDARY}
+    options = [{"label": html.Span([html.Span(info.label, style=name_style), html.Span(f"  —  {info.title}", style=note_style)]),
+                "value": key}
                for key, info in ALGORITHMS.items() if info.implemented]
-    options.append({"label": "All algorithms — side by side", "value": ALGORITHM_VIEW_ALL})
+    options.append({"label": html.Span([html.Span("All algorithms", style=dict(name_style, fontFamily=FONT_FAMILY)),
+                                        html.Span("  —  side by side", style=note_style)]),
+                    "value": ALGORITHM_VIEW_ALL})
     return _card(
         _h3("Algorithm", "the choice applies to every tab"),
         dcc.RadioItems(
@@ -2096,7 +2103,7 @@ def _no_rounds_for_algorithm(algorithm, track_key: str) -> html.Div:
     return html.Div([
         _card(html.P([
             html.Strong(f"No rounds of {algorithm_label(algorithm)} in this view yet. "),
-            f"To run it, open the admin panel → Config {pair} → Algorithm and choose {algorithm}: a Demo worker "
+            f"To run it, open the admin panel → Config {pair} → Algorithm and choose {algorithm_label(algorithm)}: a Demo worker "
             "switches at its next round, a live worker when it is started. Pick \"All algorithms\" on the "
             "Algorithm tab to see every round again.",
         ], style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "textAlign": "center", "padding": "2rem"})),
@@ -2165,14 +2172,14 @@ def _decision_panels(document: Dict[str, Any], settings: Dict[str, Any]) -> html
                 _card(_h3("Top-k book levels", "inputs of the imbalance"), _algo3_levels_table(document),
                       dcc.Graph(figure=_algo3_levels_chart(document), config={"displaylogo": False})),
                 _card(dcc.Graph(figure=_algo3_ladder_chart(document), config={"displaylogo": False})),
-                _card(_h3("Decision trace", "Algorithm 3, this round"), _algo3_decision_trace(document, settings)),
+                _card(_h3("Decision trace", f"{algorithm_label('algo3')}, this round"), _algo3_decision_trace(document, settings)),
             ], style={"display": "grid", "gridTemplateColumns": "1.1fr 1fr 1.1fr", "gap": "1rem"}),
         ])
     return html.Div([
         html.Div([
             _card(_h3("Candidates", "highlighted = sent"), _candidate_table(document)),
             _card(dcc.Graph(figure=_ev_heatmap(document), config={"displaylogo": False})),
-            _card(_h3("Decision trace", "Algorithm 1, this round"), _decision_trace(document, settings)),
+            _card(_h3("Decision trace", f"{algorithm_label('algo1')}, this round"), _decision_trace(document, settings)),
         ], style={"display": "grid", "gridTemplateColumns": "1fr 1.3fr 1fr", "gap": "1rem"}),
     ])
 
@@ -2247,9 +2254,9 @@ def _render_fill_model_tab(df: pd.DataFrame, track_key: str, settings: Dict[str,
     note = []
     if algorithms_in_rows(df) == ["algo3"]:
         note.append(_card(html.P(
-            "These rounds were made by Algorithm 3, which quotes a fixed spread and never reads a fill "
-            "probability: there is no forecast to calibrate here. The table below is still measured from "
-            "the price path every night and is what Algorithm 1 uses.",
+            f"These rounds were made by {algorithm_label('algo3')} (Algorithm 3), which quotes a fixed spread and "
+            "never reads a fill probability: there is no forecast to calibrate here. The table below is still "
+            f"measured from the price path every night and is what {algorithm_label('algo1')} uses.",
             style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "margin": 0})))
     return html.Div([
         *note,
@@ -2402,7 +2409,10 @@ def _algorithm_description(key: str, settings: Dict[str, Any], track_key: str) -
         style={"color": STATUS_GOOD if selected else STATUS_WARN, "fontWeight": 600, "fontSize": "0.85rem"})
     text_style = {"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.9rem", "margin": "0 0 0.35rem"}
     return _card(
-        html.Div([_h3(f"{info.label} — {info.title}"), status],
+        html.Div([html.H3([html.Span(info.label, style={"fontFamily": MONO, "fontWeight": 700, "color": TEXT_PRIMARY}),
+                           html.Span(f"  —  {info.title}", style={"fontWeight": 400, "color": TEXT_SECONDARY})],
+                          style={"fontFamily": FONT_FAMILY, "fontSize": "0.95rem", "margin": "0 0 0.5rem"}),
+                  status],
                  style={"display": "flex", "justifyContent": "space-between", "alignItems": "baseline", "gap": "1rem", "flexWrap": "wrap"}),
         html.Ol([html.Li(line, style=text_style) for line in info.summary], style={"paddingLeft": "1.2rem", "margin": "0 0 0.6rem"}),
         html.Div(f"Specification: {info.doc} · code: market_maker/strategy/{key}.py"
@@ -2462,7 +2472,9 @@ def _comparison_table(rows: List[Dict[str, Any]]) -> html.Div:
         columns=[{"name": c, "id": c} for c in columns], data=data, style_table={"overflowX": "auto"},
         style_header={"backgroundColor": PAGE, "fontWeight": 600, "color": TEXT_PRIMARY, "fontFamily": FONT_FAMILY, "border": f"1px solid {GRIDLINE}"},
         style_cell={"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.84rem", "border": f"1px solid {GRIDLINE}", "padding": "0.4rem 0.6rem", "textAlign": "right"},
-        style_cell_conditional=[{"if": {"column_id": "algorithm"}, "textAlign": "left", "fontWeight": 600, "color": TEXT_PRIMARY}],
+        # The names are git branch names (MM_algo1v2, MM_algo2): monospace keeps the underscore visible.
+        style_cell_conditional=[{"if": {"column_id": "algorithm"}, "textAlign": "left", "fontWeight": 600,
+                                 "color": TEXT_PRIMARY, "fontFamily": MONO}],
     )
 
 

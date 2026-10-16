@@ -1108,7 +1108,8 @@ def test_config_page_offers_the_algorithms_as_a_drop_down(client):
     options = re.findall(r'<option value="([^"]+)"\s*(selected)?\s*>', select.group(1))
     assert [value for value, _ in options] == ["algo1", "algo3"]
     assert dict(options) == {"algo1": "selected", "algo3": ""}   # the profile default is selected
-    assert "Algorithm 3: Order-book imbalance, microprice and a fixed spread" in select.group(1)
+    assert ">MM_algo1v2 — Algorithm 1, version 2: distance grid, fill probabilities and expected value (algo1)<" in select.group(1)
+    assert ">MM_algo2 — Algorithm 3: order-book imbalance, microprice and a fixed spread (algo3)<" in select.group(1)
     for field in ("algo3_depth_k", "algo3_beta", "algo3_half_spread"):
         assert f'name="{field}"' in body
 
@@ -1206,3 +1207,15 @@ def test_live_running_algorithm_handles_missing_and_empty_histories(forward_app,
     assert admin_app_module._live_running_algorithm(forward_app, "btc") is None
     (tmp_path / "btc_track.csv").write_text("Session_id,Strategy\n")
     assert admin_app_module._live_running_algorithm(forward_app, "btc") is None
+
+
+def test_algorithm_names_are_shown_exactly_as_the_branch_names(forward_app, fake_agent):
+    """MM_algo1v2 / MM_algo2 are git branch names: the badges carry the
+    algo-name class, which turns off the badges' upper-casing."""
+    client = forward_app.test_client()
+    _login(client)
+    for page in ("/admin/", "/admin/forward"):
+        body = _html(client.get(page, headers=HTML))
+        assert re.search(r'class="status-badge algo-name" data-demo-algorithm="btc:algo1">\s*MM_algo1v2\s*<', body), page
+    css = (Path(admin_app_module.__file__).parent / "static" / "admin" / "admin.css").read_text(encoding="utf-8")
+    assert re.search(r"\.status-badge\.algo-name\s*\{[^}]*text-transform:\s*none", css)

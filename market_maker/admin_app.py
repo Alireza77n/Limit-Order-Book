@@ -689,7 +689,7 @@ def _serialized_schema(pair: str) -> dict:
 
 def _choice_labels() -> Dict[str, Dict[str, str]]:
     """Display text for the choices of the str fields (the algorithm drop-down)."""
-    return {"algorithm": {key: f"{info.label}: {info.title}" for key, info in ALGORITHMS.items()}}
+    return {"algorithm": {key: f"{info.label} — {info.title}" for key, info in ALGORITHMS.items()}}
 
 
 def _algorithm_labels() -> Dict[str, str]:

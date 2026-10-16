@@ -59,11 +59,11 @@
       <div>
         <strong>{{ pair.upper() }}/IRT</strong>
         <div>Demo:
-          <span class="status-badge" data-demo-algorithm="{{ pair }}:{{ algorithms.demo[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.demo[pair], algorithms.demo[pair] or "unavailable") }}</span>
+          <span class="status-badge algo-name" data-demo-algorithm="{{ pair }}:{{ algorithms.demo[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.demo[pair], algorithms.demo[pair] or "unavailable") }}</span>
           <a href="{{ url_for('admin_config', pair=pair) }}" class="btn btn-ghost btn-sm">change</a>
         </div>
         <div>Live (next start):
-          <span class="status-badge" data-live-algorithm="{{ pair }}:{{ algorithms.live[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.live[pair], algorithms.live[pair] or "unavailable") }}</span>
+          <span class="status-badge algo-name" data-live-algorithm="{{ pair }}:{{ algorithms.live[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.live[pair], algorithms.live[pair] or "unavailable") }}</span>
           <a href="{{ url_for('admin_forward_config', pair=pair) }}" class="btn btn-ghost btn-sm">change</a>
         </div>
       </div>
