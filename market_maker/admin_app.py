@@ -725,14 +725,11 @@ def _live_running_algorithm(app: Flask, pair: str) -> Optional[str]:
     when the history cannot be read."""
     path = Path(app.config["FORWARD_RESULTS_DIR"]) / f"{pair}_track.csv"
     try:
-        with path.open("rb") as stream:
-            header = stream.readline().decode("utf-8", "replace")
-            stream.seek(0, os.SEEK_END)
-            size = stream.tell()
-            stream.seek(max(0, size - 65536))
-            tail = stream.read().decode("utf-8", "replace").splitlines()
+        data = path.read_bytes()        # read-only: admin_app never opens files itself
     except OSError:
         return None
+    header = data.split(b"\n", 1)[0].decode("utf-8", "replace")
+    tail = data[-65536:].decode("utf-8", "replace").splitlines()
     last = next((line for line in reversed(tail) if line.strip()), "")
     if not header.strip() or not last or last.strip() == header.strip():
         return None
