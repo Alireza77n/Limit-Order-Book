@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Market Maker, Explained</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=Libertinus+Serif:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
   /* Layout: one reading column. Every part: the idea in plain words, the exact rule (formula or pseudocode), its proof where a property is claimed, and a worked example produced by running the bot's own code. */
   :root {
@@ -80,33 +80,50 @@
   table.cases td { font-size: .86rem; }
   .finder { border: 2px solid var(--accent); border-radius: 12px; padding: .8rem 1.1rem; margin: 0 0 1.6rem; background: var(--card); }
   @media (max-width: 520px) { .dstep { grid-template-columns: 1fr; } }
-  /* Pseudocode (part 11), in the style of a typeset algorithm listing. */
-  .algo { border: 1px solid var(--rule); border-top: 3px solid var(--accent); border-radius: 4px 4px 10px 10px; background: var(--card); margin: 1.1rem 0 1.5rem; padding: 0 0 .5rem; overflow-x: auto; }
-  .algo-overview { border-top-color: var(--good); }
-  .algo-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .6rem; padding: .6rem .9rem .5rem; border-bottom: 1px solid var(--rule); background: var(--box); }
-  .algo-n { font-weight: 700; color: var(--accent); }
-  .algo-overview .algo-n { color: var(--good); }
-  .algo-name { font-variant: small-caps; font-weight: 700; letter-spacing: .03em; font-size: 1.05rem; }
-  .algo-args { font-style: italic; color: var(--muted); }
-  .algo-ref { margin-left: auto; font-size: .8rem; color: var(--muted); }
-  ol.algo-lines { list-style: none; counter-reset: ln; margin: .5rem 0 0; padding: 0 .9rem 0 0; font-size: .93rem; line-height: 1.75; min-width: 34rem; }
-  ol.algo-lines li { counter-increment: ln; position: relative; padding-left: calc(3rem + var(--ind, 0) * 1.6rem); margin: 0; }
-  ol.algo-lines li::before { content: counter(ln); position: absolute; left: 0; width: 2.1rem; text-align: right; color: var(--muted); font-family: var(--font-mono); font-size: .76rem; }
-  ol.algo-lines li.gap { counter-increment: none; height: .7rem; } ol.algo-lines li.gap::before { content: ""; }
-  ol.algo-lines.nonum li::before { content: "•"; color: var(--good); }
-  ol.algo-lines li::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3rem; width: calc(var(--ind, 0) * 1.6rem); background: repeating-linear-gradient(to right, var(--rule) 0 1px, transparent 1px 1.6rem); opacity: .7; }
-  .kw { font-weight: 700; }
-  .fn { font-variant: small-caps; font-weight: 600; letter-spacing: .02em; color: var(--accent); }
-  .cm { color: var(--muted); font-style: italic; font-size: .88em; margin-left: .6rem; }
-  li.only-cm .cm { margin-left: 0; }
-  code.lit { color: var(--ask); background: transparent; }
+  /* Pseudocode (part 11): set like an algorithm in a paper, in Libertinus Serif. Heavy rules above and below,
+     one statement per line, bold keywords, the explaining section in a quiet right-hand column. */
+  .alg { font-family: "Libertinus Serif", var(--font-body); font-size: 1.07rem; line-height: 1.75; margin: 2.2rem 0 2.6rem; border-top: 1.6px solid var(--fg); }
+  .alg figcaption { margin: 0; padding: .5rem 0 .45rem; border-bottom: .8px solid var(--fg); color: var(--fg); font-size: 1.04em; }
+  .alg-n { font-weight: 700; margin-right: .65em; }
+  .alg-io { padding: .45rem 0 .4rem; border-bottom: .8px solid var(--rule); }
+  .alg-io > div { padding-left: 4.3em; text-indent: -4.3em; }
+  .io-k { display: inline-block; width: 4.3em; text-indent: 0; font-weight: 700; }
+  .alg-lines { padding: .5rem 0 .6rem; border-bottom: 1.6px solid var(--fg); }
+  .alg-lines .l { display: grid; grid-template-columns: 1.5em minmax(0, 1fr) auto; column-gap: 1.1em; align-items: baseline; }
+  .alg-lines .ln { text-align: right; font-size: .72em; color: var(--muted); font-variant-numeric: lining-nums tabular-nums; }
+  .alg-lines .code { padding-left: calc(var(--ind, 0) * 1.6em + 1.2em); text-indent: -1.2em; }
+  .alg-lines .ref { font-size: .76em; font-style: italic; white-space: nowrap; }
+  .alg-lines .ref a { color: var(--muted); text-decoration: none; }
+  .alg-lines .ref a:hover { color: var(--accent); text-decoration: underline; }
+  .alg-lines .step { margin-top: .75rem; }
+  .alg-lines .step:first-child { margin-top: .1rem; }
+  .alg-lines .step .code { padding-left: 0; text-indent: 0; line-height: 1.4; font-variant: small-caps; letter-spacing: .045em; font-weight: 600; color: var(--accent); }
+  .alg .kw { font-weight: 700; }
+  .alg .fn { font-variant: small-caps; letter-spacing: .03em; }
+  .alg mjx-container { text-indent: 0; }
+  .alg-notes-t { margin: .75rem 0 .15rem; font-variant: small-caps; letter-spacing: .05em; font-weight: 600; color: var(--muted); font-size: .92em; }
+  .alg-notes { margin: 0; padding-left: 1.5em; font-size: .9em; line-height: 1.6; color: var(--muted); }
+  .alg-notes li { margin-bottom: .3rem; padding-left: .2em; }
+  .alg-notes a { color: inherit; }
   [hidden] { display: none !important; }
   /* Narrow screens: long paths wrap; a long inline formula scrolls inside its own line instead of widening the page. */
   code { overflow-wrap: anywhere; }
   @media (max-width: 640px) {
-    mjx-container:not([display="true"]) { display: inline-block; max-width: 100%; overflow-x: auto; overflow-y: hidden; vertical-align: middle; }
+    mjx-container:not([display="true"]) { display: inline-block; max-width: 100%; overflow-x: auto; overflow-y: hidden; vertical-align: middle; scrollbar-width: none; }
+    mjx-container::-webkit-scrollbar { display: none; }
+    /* Phones: the listing keeps code and line numbers only; the section references stay in the notes. */
+    .alg { font-size: .95rem; }
+    .alg-lines .l { grid-template-columns: 1.3em minmax(0, 1fr); column-gap: .6em; }
+    .alg-lines .code { padding-left: calc(var(--ind, 0) * 1em + 1em); text-indent: -1em; }
+    .alg-lines .ref { display: none; }
+    .alg-io > div { padding-left: 0; text-indent: 0; }
+    .io-k { display: inline; width: auto; margin-right: .45em; }
   }
 </style>
+<script>
+  /* Typeset after the web fonts have loaded, so formulas are scaled to the text they sit in. */
+  window.MathJax = { startup: { pageReady: () => (document.fonts ? document.fonts.ready : Promise.resolve()).then(() => MathJax.startup.defaultPageReady()) } };
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-svg.js"></script>
 </head>
 <body>
@@ -132,13 +149,13 @@
 
   <div class="finder">
     <p style="margin:0"><strong>Where does the bot decide whether to place an order?</strong> In <a href="#decision"><strong>4.0, "The order decision, step by step"</strong></a>: every condition in the order the code checks it (gate 1: is a price worth quoting; gate 2: is the order sent), what happens after each check, and three real cases showing where each one stopped.</p>
-    <p style="margin:.5rem 0 0"><strong>The whole bot as pseudocode:</strong> <a href="#p11"><strong>part 11</strong></a>, nine algorithms from starting a worker to the nightly fill table, in the order the code runs them.</p>
+    <p style="margin:.5rem 0 0"><strong>The whole bot as pseudocode:</strong> <a href="#p11"><strong>part 11</strong></a>, three listings: one round of a worker, how the prices are chosen, and how the fill probability is measured.</p>
   </div>
   <h2 id="p1">1. The idea: what a market maker does</h2>
   <p>An exchange keeps two lists: people who want to <strong>buy</strong> and the price they offer (bids), and people who want to <strong>sell</strong> and the price they ask (asks). A market maker places its own orders in both lists: a buy a little <em>below</em> the market price and a sell a little <em>above</em> it, and waits for other traders to trade against them. When both fill, it has bought low and sold high. The difference, minus the exchange fee on each trade, is its profit. It does not try to predict where the price goes; it earns a small margin for always offering a price to others.</p>
   <p>This bot does that on the Nobitex exchange for two pairs, <strong>BTC/IRT</strong> (bitcoin against Iranian rial) and <strong>USDT/IRT</strong> (tether against rial).</p>
 
-  <h3>1.1 The order book</h3>
+  <h3 id="s1-1">1.1 The order book</h3>
   <p>The order book is the two lists, sorted best price first. Level 0 is the best price on each side, level 1 the next, and so on. A real-shaped USDT/IRT example (prices in rial per USDT, volumes in USDT), used throughout this page:</p>
   <div class="wrap"><table>
     <tr><th class="r">Level</th><th class="r">Bid price \(b_i\)</th><th class="r">Bid volume</th><th class="r">Ask price \(a_i\)</th><th class="r">Ask volume</th></tr>
@@ -160,7 +177,7 @@
     </ul>
   </div>
 
-  <h3>1.2 Orders, fills and the fee</h3>
+  <h3 id="s1-2">1.2 Orders, fills and the fee</h3>
   <p>The bot uses <strong>limit orders</strong>: "buy up to 5 USDT at 2,650,010 or better". The order rests in the book until someone trades against it (a <strong>fill</strong>; a <strong>partial fill</strong> if only part of it trades), or until the bot cancels it. Each bot order lives at most \(\tau\) = <code>cancel_after_minutes</code> = 10 minutes.</p>
   <p>The fee \(f\) (<code>commission_perc</code>) is taken from what you <em>receive</em>: on a buy you receive \((1-f)\) of the coins you paid for; on a sell you receive \((1-f)\) of the rials. A <strong>round trip</strong> is a buy followed by a sell of the same coins.</p>
   <div class="key">
@@ -180,12 +197,12 @@
   </div>
 
 
-  <h3>1.3 Inventory, cash and wealth</h3>
+  <h3 id="s1-3">1.3 Inventory, cash and wealth</h3>
   <p>At any moment the bot holds \(q\) coins (its <strong>inventory</strong>) and \(c\) rial of <strong>cash</strong>. Its <strong>wealth</strong> is the cash plus the coins valued at a market price \(v\):</p>
   <div class="eq">\[ W = c + q\,v \]</div>
   <p>Each pair has an inventory band \([q_{\min}, q_{\max}]\) (<code>inv_min</code>, <code>inv_max</code>): the least and the most coins the bot is willing to hold. It tries to stay near the middle.</p>
 
-  <h3>1.4 Where profit and loss come from</h3>
+  <h3 id="s1-4">1.4 Where profit and loss come from</h3>
   <ul>
     <li><strong>Completed round trips.</strong> If both the buy and the sell fill, the profit is \(R(B,A)\) times the amount, fixed by the two prices. The bot only quotes pairs where this is above a required return (part 4).</li>
     <li><strong>One leg only.</strong> If only the buy fills, the bot holds coins whose value moves with the market until it sells them. That is gain or loss from the price, not from the bot's quoting. Part 6 splits every result into these two pieces exactly.</li>
@@ -193,7 +210,7 @@
   </ul>
   <p>So every round the bot must choose prices that (a) earn more than the fees if both sides fill, (b) are likely enough to fill, and (c) keep the inventory near the middle of its band. Part 4 shows how Algorithm 1 v2 does all three.</p>
 
-  <h3>1.5 Two modes</h3>
+  <h3 id="s1-5">1.5 Two modes</h3>
   <ul>
     <li><strong>Demo</strong> (paper trading): reads the real Nobitex order book every round, but orders go into a simulated ledger with simulated money. A simulated order fills when the real market price touches it.</li>
     <li><strong>Live</strong> (the forward test): the same code sends real orders with real money to Nobitex.</li>
@@ -233,7 +250,7 @@ flowchart LR
   CRON --> R2
 </pre>
 
-  <h3>2.1 The processes</h3>
+  <h3 id="s2-1">2.1 The processes</h3>
   <div class="wrap"><table>
     <tr><th>Process</th><th>What it runs</th><th>How and as whom</th><th>Address</th></tr>
     <tr><td>demo workers <code>lob-btc-demo</code>, <code>lob-usdt-demo</code></td><td><code>run.py --profile btc|usdt --mode demo --continuous</code></td><td>Docker containers, user 1000, read-only file system, 256 MB each</td><td>—</td></tr>
@@ -247,7 +264,7 @@ flowchart LR
   </table></div>
   <p class="note">The forward stack also has its own admin (port 18653) and dashboard (port 18652) units, used only internally; nginx sends <code>/admin/</code> to the Docker admin, which drives both stacks. The repository's sample unit for the demo agent (user <code>ubuntu</code>, <code>/home/ubuntu/limit-order-book</code>) differs from the server, where it runs as root in <code>/opt/limit-order-book</code>.</p>
 
-  <h3>2.2 The files</h3>
+  <h3 id="s2-2">2.2 The files</h3>
   <div class="wrap"><table>
     <tr><th>File</th><th>Holds</th><th>Written by</th><th>Read by</th></tr>
     <tr><td><code>&lt;pair&gt;_track_demo.sqlite3</code> (+ <code>.csv</code> copy)</td><td>one row per demo round, all demo sessions</td><td>demo worker</td><td>dashboard, admin, nightly job</td></tr>
@@ -262,7 +279,7 @@ flowchart LR
   </table></div>
   <p>Demo files live in <code>/opt/limit-order-book/runtime/{results,state,backups,control}</code>; live files in <code>/var/lib/market-maker-forward/{results,config,locks,control}</code>, with worker logs in <code>/var/log/market-maker-forward</code>.</p>
 
-  <h3>2.3 The code, file by file</h3>
+  <h3 id="s2-3">2.3 The code, file by file</h3>
   <div class="wrap"><table>
     <tr><th>File (in <code>market_maker/</code> unless noted)</th><th>Role</th><th>Part</th></tr>
     <tr><td><code>run.py</code></td><td>starts a worker: builds the configuration, session id, exchange, lock</td><td>3.0</td></tr>
@@ -295,7 +312,7 @@ flowchart TD
   A -. "book unavailable" .-> H
 </pre>
 
-  <h3>3.0 Starting a run</h3>
+  <h3 id="s3-0">3.0 Starting a run</h3>
   <p>The command is <code>python run.py --profile usdt|btc --mode demo|real --continuous</code> (the live agent adds <code>--algorithm algo1 --exchange nobitex</code>). It builds the configuration from the pair's profile in <code>config.py</code>, then applies the saved overrides:</p>
   <ul>
     <li><strong>Demo</strong>: the admin overrides in <code>demo_config_&lt;pair&gt;.json</code>, re-read at every round boundary so most changes apply at once (part 7.2). The session id comes from the shared stack session file and looks like <code>demo-20261015T131629Z-2f38f0a407fa</code> (start time and a random suffix). The worker takes a lock file so only one worker per pair can run.</li>
@@ -303,10 +320,10 @@ flowchart TD
   </ul>
   <p><strong>Live wallet snapshot.</strong> Before the first round a live worker reads two balances from Nobitex (a signed request to <code>/users/wallets/balance</code>): the coin (BTC or USDT) and the rial wallet. They become its starting inventory and cash. If either read fails, is not a number, or is negative, the worker refuses to start and never trades.</p>
 
-  <h3>3.1 Reading the market</h3>
+  <h3 id="s3-1">3.1 Reading the market</h3>
   <p>Every round both modes read the public order book, <code>GET /v3/orderbook/&lt;PAIR&gt;</code>, with a 5-second timeout. The bot uses the price levels (price and volume, best first), the best bid and ask, and the last trade price. If the reply is not HTTP 200 or a field is missing, the read counts as failed: a demo worker waits for the next round; a live worker rewrites its history file without adding a row and waits. No round is recorded either way. (This is what happens to USDT during the outage in part 8.3.)</p>
 
-  <h3>3.2 Settling fills and cancelling old orders</h3>
+  <h3 id="s3-2">3.2 Settling fills and cancelling old orders</h3>
   <p>Before deciding anything, the worker brings its view of its own orders up to date.</p>
   <h4>Demo: the paper ledger decides the fills</h4>
   <p>The simulated exchange (<code>PaperLedger.process_market</code> in <code>paper.py</code>) checks every resting paper order against the real book of this round:</p>
@@ -316,10 +333,10 @@ flowchart TD
   <h4>Live: the exchange decides, the worker reads</h4>
   <p>The worker asks Nobitex for its recently closed orders and keeps only those with a <code>clientOrderId</code> it created on this pair. For each, the newly matched amount since the last round (the "cumulative delta") is booked into cash and coins (3.6). Then every owned open order older than 10 minutes is cancelled with a signed request to <code>/market/orders/update-status</code>. Live inventory and cash are tracked from these fills; the wallet is read only once, at start.</p>
 
-  <h3>3.3 Deciding prices</h3>
+  <h3 id="s3-3">3.3 Deciding prices</h3>
   <p>The strategy receives the book and the current inventory and returns a buy price, a sell price, both, or nothing. <strong>Every condition that decides whether an order is placed, in the order the code checks it, is in <a href="#decision">4.0, "The order decision, step by step"</a></strong>; the rest of part 4 explains each step in full.</p>
 
-  <h3>3.4 Sizes and caps</h3>
+  <h3 id="s3-4">3.4 Sizes and caps</h3>
   <p><strong>This is gate 2 of the order decision (steps 7 and 8 of <a href="#decision">4.0</a>).</strong></p>
   <p><strong>Target sizes.</strong> With \(S\) = <code>order_size</code>, slope \(k_s\) = <code>inventory_sizing_strength</code> (1 in both profiles) and floor \(\phi\) = <code>inventory_sizing_min_fraction</code> (0):</p>
   <div class="eq">\[ \pi(e) = 2\,\operatorname{clamp}\!\Big(\frac{e - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\Big) - 1, \qquad \text{buy} = S\cdot\operatorname{clamp}\big(1 - k_s\,\pi(q + o_b),\ \phi,\ 1+k_s\big), \qquad \text{sell} = S\cdot\operatorname{clamp}\big(1 + k_s\,\pi(q - o_s),\ \phi,\ 1+k_s\big) \]</div>
@@ -345,20 +362,20 @@ flowchart TD
   <div class="ex">Demo, part 4's example: \(S = 5\), \(x = 0.5\), no open orders: buy target \(2 \cdot 5 \cdot 0.5 = 5\), sell target 5. With 100,000,000 rial free: affordable \(100{,}000{,}000/2{,}650{,}010 = 37.7 \ge 5\); band check \(0 + 25 + 5 = 30 \le 50\). <strong>Send buy 5 at 2,650,010 and sell 5 at 2,669,990.</strong> With a buy of 5 already resting at a different price: \(\pi(25 + 5) = 2 \times 0.6 - 1 = 0.2\), buy target \(5 \times (1 - 0.2) = 4\). Live USDT: a buy of 1 USDT at 2,650,000 locks \(2{,}650{,}000/57{,}637{,}520 = 4.6\% \le 25\%\) of the rial wallet, so the guard allows it.</div>
   <p class="src">_inventory_sized_order_targets(), _min_tradable_size(), _locked_exposure_guard_reason()</p>
 
-  <h3>3.5 Sending orders</h3>
+  <h3 id="s3-5">3.5 Sending orders</h3>
   <ul>
     <li><strong>Demo</strong>: <code>PaperLedger.submit_order</code> rejects a buy if size \(\times B\) exceeds the free cash, and a sell if size exceeds the free coins. Nothing moves at submission: "locked" cash and coins are computed from the open orders whenever a snapshot is taken. Order ids look like <code>usdtirt-buy-10118-1792170000000</code> (pair, side, round, milliseconds).</li>
     <li><strong>Live</strong>: a signed request to <code>/market/orders/add</code> with type, the two currencies, the amount as text, the price and a <code>clientOrderId</code> such as <code>buy-12-1792170000000</code>. The order counts as placed only if Nobitex answers "ok" and echoes the same client id. The worker then tracks it by that id.</li>
   </ul>
 
-  <h3>3.6 Accounting: cash, coins and fees</h3>
+  <h3 id="s3-6">3.6 Accounting: cash, coins and fees</h3>
   <p>The fee rule of part 1.2, applied to a fill of \(F\) coins at price \(P\):</p>
   <div class="key"><div class="eq">\[ \text{buy fill: } \ c \leftarrow c - F\,P, \quad q \leftarrow q + F - fF \qquad\qquad \text{sell fill: } \ q \leftarrow q - F, \quad c \leftarrow c + F\,P - fFP \]</div>
   <p style="margin:0">The buy fee \(fF\) is paid in coins, the sell fee \(fFP\) in rial. The demo ledger applies exactly this (<code>apply_cumulative_fill</code>); a live worker applies the same shape with the fee Nobitex reports for each fill.</p></div>
   <div class="key"><p style="margin:0"><strong>Claim.</strong> Buying \(F\) coins at \(B\) and then selling everything received at \(A\) changes cash by exactly \(F B \cdot R(B, A)\), with \(R\) from Proposition 1. <em>Proof:</em> after the buy, cash fell by \(FB\) and coins rose by \(F(1-f)\). Selling \(F(1-f)\) coins at \(A\) adds \(F(1-f)A - fF(1-f)A = F(1-f)^2A\). Net change: \(F(1-f)^2A - FB = FB\big((1-f)^2A/B - 1\big)\). ∎ (Part 1.2's ledger run shows it numerically: +33,233.69 rial on 13,250,050.)</p></div>
   <p>The ledger's <strong>snapshot</strong> gives locked cash \(= \sum_{\text{open buys}} (\text{remaining} \times \text{limit})\), locked coins \(= \sum_{\text{open sells}} \text{remaining}\), free cash and free coins (the totals minus the locked parts), and wealth \(W = c + q \times\) the last trade price.</p>
 
-  <h3>3.7 Recording the round</h3>
+  <h3 id="s3-7">3.7 Recording the round</h3>
   <ul>
     <li><strong>Demo</strong>: one row of 69 columns per round: identity (session, round, time), book (best bid and ask, levels), portfolio (cash, coins, locked and free amounts, wealth), the quote's economics (prices, mid, net return, required return), twelve fields per side (order id, status, why not sent, amounts, fill reason, limit price, locked amount), the fee totals, and the strategy's nine decision fields (mode, reason, centre, both distances, both fill chances, expected value, reference price). Rows go into a SQLite store (one row per session and round) and a CSV copy of the newest 10,000 rows is rewritten every 60 seconds.</li>
     <li><strong>Live</strong>: one row of 29 columns appended to <code>&lt;pair&gt;_track.csv</code> (all live sessions share the file), rewritten every round.</li>
@@ -366,7 +383,7 @@ flowchart TD
     <li><strong>Telegram</strong>: a message at start, one per round in live mode, and in demo order notifications plus an alert after 30 rounds or 300 seconds without a quote.</li>
   </ul>
 
-  <h3>3.8 Waiting, and stopping</h3>
+  <h3 id="s3-8">3.8 Waiting, and stopping</h3>
   <p>A demo worker keeps a fixed rhythm: the next round is due at the previous due time plus <code>time_step</code> (10 s for USDT, 60 s for BTC); if it falls behind, missed slots are skipped rather than run late. A live worker sleeps <code>time_step</code> after finishing its work, so its period is <code>time_step</code> plus the work time.</p>
   <p>Stopping is a <code>SIGTERM</code> (the Stop button). A live worker then cancels every open order it owns on its pair (and only those), books any last fills, and exits. A demo worker cancels all its paper orders when its session ends. Inside the live round loop only a failed order-book read is handled; any other error from Nobitex (order status, cancel, open orders) ends the worker the same way, after cancelling its own orders.</p>
   <h2 id="p4">4. The decision: Algorithm 1, version 2</h2>
@@ -497,7 +514,7 @@ flowchart TD
     <p><strong>Settings used in this part's example</strong> (chosen to keep the arithmetic readable; the settings actually running are in part 8): the book of 1.1, \(q = 25\) USDT in a band of 0 to 50, fee \(f = 0.25\%\), required return \(r_{\min} = 0.25\%\), lifetime 10 minutes, <code>skew_perc</code> 0.002, distance grid 0.05 % × 1.4 up to 2 %, <code>ev_min</code> \(J_{\min} = 10^{-5}\), adverse-selection cost \(\eta = 0\), and fill chances from the formula \(p = 1 - e^{-e^{-400\delta}}\) instead of the table (part 5 explains both). Every number below comes from running <code>Algo1Strategy</code> with exactly these settings.</p>
   </div>
 
-  <h3>4.1 Inventory position \(x\)</h3>
+  <h3 id="s4-1">4.1 Inventory position \(x\)</h3>
   <div class="eq">\[ x = \min\!\Big(1,\ \max\!\Big(0,\ \frac{q - q_{\min}}{q_{\max} - q_{\min}}\Big)\Big) \]</div>
   <p>The fraction says how far along the band the inventory is: 0 at the bottom, 1 at the top, 0.5 in the middle. The \(\min/\max\) ("clamp") keeps it between 0 and 1 even when the inventory leaves the band.</p>
   <div class="key"><p style="margin:0"><strong>Claim.</strong> \(x \in [0,1]\) for every \(q\); \(x\) never decreases when \(q\) grows; \(x = \tfrac12\) exactly in the middle of the band.</p></div>
@@ -505,7 +522,7 @@ flowchart TD
   <div class="ex">\(q = 25\): \(x = 25/50 = 0.5\). \(q = 48\): \(x = 0.96\). \(q = 2\): \(x = 0.04\). \(q = 65\) (outside the band): \(1.3\), clamped to \(x = 1\). If the band is misconfigured (\(q_{\max} \le q_{\min}\)) the code uses \(x = 0.5\).</div>
   <p class="src">inventory_position()</p>
 
-  <h3>4.2 Centre price \(c\)</h3>
+  <h3 id="s4-2">4.2 Centre price \(c\)</h3>
   <p>Every candidate price is measured from a <strong>centre</strong> \(c\), not from the mid. The centre moves away from the mid in the direction that pushes the inventory back to the middle:</p>
   <div class="eq">\[ c = m\,\big(1 - \sigma_q\,(2x - 1)\big), \qquad \sigma_q = \texttt{skew\_perc} = 0.002 \]</div>
   <div class="key"><p style="margin:0"><strong>Claim.</strong> (a) \(m(1-\sigma_q) \le c \le m(1+\sigma_q)\): never more than 0.2 % from the mid. (b) \(c\) falls as \(x\) rises. (c) \(c = m\) exactly when \(x = \tfrac12\).</p></div>
@@ -519,7 +536,7 @@ flowchart TD
   </table></div>
   <p class="src">quote_centre()</p>
 
-  <h3>4.3 Candidate prices</h3>
+  <h3 id="s4-3">4.3 Candidate prices</h3>
   <h4>The distance grid</h4>
   <div class="eq">\[ \delta_j = \delta_{\min}\,\rho^{\,j-1}, \quad j = 1, \dots, J_{\text{grid}}, \qquad J_{\text{grid}} = \Big\lfloor \frac{\ln(\delta_{\max}/\delta_{\min})}{\ln\rho} \Big\rfloor + 1 = \Big\lfloor \frac{\ln 40}{\ln 1.4} \Big\rfloor + 1 = 11 \]</div>
   <p>With \(\delta_{\min} = 0.0005\) (<code>grid_min_perc</code>), \(\rho = 1.4\) (<code>grid_ratio</code>) and \(\delta_{\max} = 0.02\) (<code>grid_max_perc</code>): 0.0500, 0.0700, 0.0980, 0.1372, 0.1921, 0.2689, 0.3765, 0.5271, 0.7379, 1.0331, 1.4463 %. The points are close together near the market, where the chance of a fill changes fastest.</p>
@@ -545,16 +562,16 @@ flowchart TD
   <div class="ex">Six buy candidates 2,658,010 · 2,655,010 · 2,650,010 · 2,640,010 · 2,630,010 · 2,620,010 at realised distances 0.0748 · 0.1876 · 0.3756 · 0.7515 · 1.1274 · 1.5034 %, and six sell candidates 2,661,990 · 2,664,990 · 2,669,990 · 2,679,990 · 2,689,990 · 2,699,990 at the same distances. The realised distance is usually larger than the grid distance (0.05 % became 0.0748 %) because the price snaps outward to the next real level; grid points between two levels collapse into one candidate.</div>
   <p class="src">distance_grid(), build_candidates()</p>
 
-  <h3>4.4 Fill chance of each candidate</h3>
+  <h3 id="s4-4">4.4 Fill chance of each candidate</h3>
   <p>Each candidate gets \(p\), the probability that an order resting at its realised distance is filled before it is cancelled. In production \(p\) comes from the measured fill table; part 5 explains exactly how that table is built and read. In this example the formula is used:</p>
   <div class="eq">\[ p(\hat\delta) = 1 - \exp\!\big(-1 \cdot e^{-400\,\hat\delta}\big): \quad 0.5235,\ 0.3764,\ 0.1996,\ 0.0483,\ 0.0109,\ 0.0024 \ \text{ at the six distances.} \]</div>
   <p class="src">fill_probability() → FillModel.probability()</p>
 
-  <h3>4.5 Which branch</h3>
+  <h3 id="s4-5">4.5 Which branch</h3>
   <div class="eq">\[ \text{branch}(x) = \begin{cases} \text{sell only (4.8)} & x \ge x_{hi} = 0.9 \ (\texttt{one\_sided\_hi}) \\ \text{buy only (4.8)} & x \le x_{lo} = 0.1 \ (\texttt{one\_sided\_lo}) \\ \text{pair (4.6, 4.7), single order as fallback} & \text{otherwise} \end{cases} \]</div>
   <div class="ex">\(x = 0.5\): look for a pair.</div>
 
-  <h3>4.6 The fee condition on every pair</h3>
+  <h3 id="s4-6">4.6 The fee condition on every pair</h3>
   <p>Every buy candidate is combined with every sell candidate (here \(6 \times 6 = 36\) pairs). A pair is kept only if its round trip (Proposition 1) beats the required return \(r_{\min}\) (<code>exp_ret_min</code>).</p>
   <div class="key">
     <p><strong>Proposition 2 (the profit guarantee, unchanged since version 1).</strong> Let \(G = \dfrac{1+r_{\min}}{(1-f)^2} - 1\). A pair passes iff \(A \gt B(1+G)\); and if both its orders fill, the round trip earns more than \(r_{\min}\) after both fees, whatever the market did between the two fills.</p>
@@ -566,7 +583,7 @@ flowchart TD
   <p><strong>8 pairs fail and 28 pass.</strong> A pair fails when its two prices are too close. Mixed pairs (one leg near, one far) also pass; version 1 only ever tested pairs at the same level on both sides.</p>
   <p class="src">net_return(), pair_value(), gross_bar()</p>
 
-  <h3>4.7 Expected value \(J\), and the choice</h3>
+  <h3 id="s4-7">4.7 Expected value \(J\), and the choice</h3>
   <p>All passing pairs guarantee a profit if both orders fill. They differ in how likely that is. The strategy scores each pair by its expected profit over one lifetime:</p>
   <div class="eq">\[ J(B,A) = p_B\,p_A\,R(B,A) \;-\; \eta\,\big[p_B(1-p_A) + p_A(1-p_B)\big] \]</div>
   <div class="eq">\[ (B^*, A^*) = \arg\max\big\{\, J(B,A) \;:\; R(B,A) \gt r_{\min},\ J(B,A) \gt J_{\min} \,\big\}, \qquad \text{ties} \to \text{smaller } \hat\delta_B + \hat\delta_A \]</div>
@@ -583,7 +600,7 @@ flowchart TD
   <p class="note">With \(\eta = 0\) (the current setting) the second term vanishes and a one-sided fill is treated as free. It is not; part 6 measures what it really costs.</p>
   <p class="src">pair_value(), evaluate()</p>
 
-  <h3>4.8 Single orders</h3>
+  <h3 id="s4-8">4.8 Single orders</h3>
   <p>When the inventory is near an edge, or when no pair passes, the strategy may place a single order. A single order has no partner price, so it is judged against a <strong>reference price</strong> \(P_{\text{ref}}\):</p>
   <div class="eq">\[ \text{sell: } R = (1-f)^2\,\frac{A}{P_{\text{ref}}} - 1, \qquad \text{buy: } R = (1-f)^2\,\frac{P_{\text{ref}}}{B} - 1, \qquad J = p\,R - \eta\,p, \qquad \text{passes iff } R \gt r_{\min} \text{ and } J \gt J_{\min} \]</div>
   <p>For a sell, \(P_{\text{ref}}\) is the average price the bot paid for its coins, \(\bar P\), when it knows it (<code>cost_basis_reference</code>), otherwise the centre \(c\). For a buy, \(P_{\text{ref}} = c\).</p>
@@ -603,7 +620,7 @@ flowchart TD
   <div class="wrap"><table><tr><th class="r">Buy price B</th><th class="r">distance from c</th><th class="r">p</th><th class="r">R = (1−f)²P<sub>ref</sub>/B − 1</th><th class="r">J = p·R</th><th>Result</th></tr><tr><td class="r">2,660,000</td><td class="r">0.1837%</td><td class="r">0.3810</td><td class="r">-0.3163%</td><td class="r">-1.205e-03</td><td><span class="bad">fails the bar</span></td></tr><tr><td class="r">2,658,010</td><td class="r">0.2583%</td><td class="r">0.2994</td><td class="r">-0.2417%</td><td class="r">-7.235e-04</td><td><span class="bad">fails the bar</span></td></tr><tr><td class="r">2,655,010</td><td class="r">0.3709%</td><td class="r">0.2029</td><td class="r">-0.1289%</td><td class="r">-2.617e-04</td><td><span class="bad">fails the bar</span></td></tr><tr><td class="r">2,650,010</td><td class="r">0.5585%</td><td class="r">0.1015</td><td class="r">+0.0595%</td><td class="r">6.042e-05</td><td><span class="bad">fails the bar</span></td></tr><tr class="pick"><td class="r">2,640,010</td><td class="r">0.9338%</td><td class="r">0.0236</td><td class="r">+0.4385%</td><td class="r">1.034e-04</td><td><span class="good">passes</span> ← chosen</td></tr><tr><td class="r">2,630,010</td><td class="r">1.3090%</td><td class="r">0.0053</td><td class="r">+0.8204%</td><td class="r">4.354e-05</td><td><span class="good">passes</span></td></tr><tr><td class="r">2,620,010</td><td class="r">1.6843%</td><td class="r">0.0012</td><td class="r">+1.2052%</td><td class="r">1.429e-05</td><td><span class="good">passes</span></td></tr></table></div>
   <p class="src">single_value(), _update_cost_basis(), _best_single()</p>
 
-  <h3>4.9 Not replacing an order that barely moved</h3>
+  <h3 id="s4-9">4.9 Not replacing an order that barely moved</h3>
   <div class="eq">\[ \text{keep the old price } P_{\text{old}} \text{ if }\ |P_{\text{new}} - P_{\text{old}}| \le h\,\epsilon \ \text{ and }\ t - t_{\text{old}} \lt T_{\text{refresh}}, \qquad h = 5\ (\texttt{hysteresis\_ticks}),\ T_{\text{refresh}} = 300\text{ s}\ (\texttt{refresh\_seconds}) \]</div>
   <p>After keeping a price, the strategy checks the pair again with it; if it no longer passes the fee condition, both sides are re-quoted at the new prices. The engine adds a second guard: if one of the bot's orders already rests within \(h\epsilon\) of the price, nothing new is sent for that side (part 3.3). Together they stop the cancel-and-repost churn and the pile-up of near-identical orders behind the August 2026 batch-fill incident.</p>
   <div class="ex">Running the code: round 1 buys at 2,650,010. Two minutes later the level moves to 2,650,020, so the new candidate is 2,650,030 (2 ticks away): the buy stays at 2,650,010. After 400 seconds (older than 300) it is re-quoted at 2,650,030.</div>
@@ -612,7 +629,7 @@ flowchart TD
   <p class="note">Concretely: if a buy from an earlier round rests at 2,650,060 (5 ticks above 2,650,010), the engine keeps it, and the resting pair 2,650,060 / 2,669,990 has \(R = 0.2489\%\), just under 0.25 %.</p>
   <p class="src">_apply_hysteresis(), _hysteresis_preserves_bar(), engine _resting_order_blocks()</p>
 
-  <h3>4.10 What the strategy hands back</h3>
+  <h3 id="s4-10">4.10 What the strategy hands back</h3>
   <p>A dictionary the engine reads: <code>bid</code> and <code>ask</code> (either may be <code>None</code>), their book levels, the mid, centre and inventory position, the gross and net return, both distances and fill chances, the expected value, the mode (<code>pair</code>, <code>bid_only</code>, <code>ask_only</code>), the reason (<code>pair_selected</code>, <code>ask_only_inventory_edge</code>, <code>bid_only_inventory_edge</code>, <code>ask_only_fallback</code>, <code>bid_only_fallback</code>), the reference price of a single order, and whether hysteresis kept a price. When nothing passes it returns no quote, with the reason <code>no_side_clears_bar</code> or <code>expected_value_below_floor</code>. All of these are written into the round row (part 3.7) and shown on the dashboard.</p>
   <h2 id="p5">5. The fill probability: formula and estimation</h2>
   <div class="map">
@@ -634,7 +651,7 @@ flowchart LR
 </pre>
   </div>
 
-  <h3>5.1 The formula</h3>
+  <h3 id="s5-1">5.1 The formula</h3>
   <p>A buy order rests a distance \(\delta\) below the mid for a lifetime \(\tau\) (10 minutes). Let \(N(\delta)\) be the number of sell trades during that lifetime that reach down to the order's price; the order fills if at least one does.</p>
   <div class="key">
     <div class="eq">\[ p(\delta) = P\big(N(\delta) \ge 1\big) = 1 - \exp\!\big(-\lambda_\tau\, e^{-\kappa\delta}\big) \]</div>
@@ -644,7 +661,7 @@ flowchart LR
   <div class="proof"><p>Let \(N_0 \sim \text{Poisson}(\lambda_\tau)\) count the trades reaching the touch, and keep each independently with probability \(q = e^{-\kappa\delta}\). The kept count has generating function \(\mathbb E[s^{N(\delta)}] = \mathbb E[(1-q+qs)^{N_0}] = e^{\lambda_\tau(qs - q)}\), the generating function of \(\text{Poisson}(\lambda_\tau q)\). So \(P(N(\delta) = 0) = e^{-\lambda_\tau e^{-\kappa\delta}}\) and \(p(\delta) = 1 - P(N(\delta) = 0)\).</p></div>
   <p>A sell \(\delta\) above the mid has the same formula, with its own \(\kappa\) and \(\lambda_\tau\).</p>
 
-  <h3>5.2 Buckets, and the index \(k\)</h3>
+  <h3 id="s5-2">5.2 Buckets, and the index \(k\)</h3>
   <p>\(\delta\) can be any number, and history cannot be counted at every possible distance. So the code fixes ten distances, measures the probability only at those, and draws straight lines between neighbours. Each of the ten distances is a <strong>bucket</strong> (<code>DEFAULT_BUCKETS</code> in <code>tools/build_fill_table.py</code>):</p>
   <div class="eq">\[ \delta_1 = 0.0010,\ \delta_2 = 0.0015,\ \delta_3 = 0.0020,\ \delta_4 = 0.0030,\ \delta_5 = 0.0040,\ \delta_6 = 0.0060,\ \delta_7 = 0.0080,\ \delta_8 = 0.0120,\ \delta_9 = 0.0160,\ \delta_{10} = 0.0240 \]</div>
   <div class="key">
@@ -662,7 +679,7 @@ flowchart LR
   </table></div>
   <p class="note">Row \(k = 1\): a buy placed 0.10 % below the mid was filled within 10 minutes about 25 % of the time. At 0.40 % it was under 1 %. \(N_k\) is not a whole number because recent days are weighted more.</p>
 
-  <h3>5.3 The measured table: how \(\hat p_k\) is estimated (used by the strategy)</h3>
+  <h3 id="s5-3">5.3 The measured table: how \(\hat p_k\) is estimated (used by the strategy)</h3>
   <h4>The event</h4>
   <p>A buy at price \(P\) fills when a seller comes down to \(P\), that is, when the best ask reaches \(P\). Take a past moment \(t_i\) with mid \(m_i\). A buy at distance \(\delta_k\) would have rested at \(m_i(1-\delta_k)\), and would have been filled within the lifetime if</p>
   <div class="eq">\[ x_{i,k} = \mathbb 1\Big[\min_{t_i \lt u \le t_i + \tau} a_0(u) \;\le\; m_i(1-\delta_k)\Big] \in \{0, 1\} \]</div>
@@ -690,7 +707,7 @@ flowchart LR
   <div class="key"><div class="eq">\[ p(\delta) = \hat p_k + \frac{\delta - \delta_k}{\delta_{k+1} - \delta_k}\,\big(\hat p_{k+1} - \hat p_k\big), \qquad \delta_k \le \delta \le \delta_{k+1}; \qquad p = \hat p_1 \text{ below } \delta_1, \quad p = \hat p_K \text{ beyond } \delta_K \]</div></div>
   <div class="ex">A real demo round, 16 Oct 21:00:59: buy at 2,647,990 with the centre at 2,651,637.4. Distance \(= (2{,}651{,}637.4 - 2{,}647{,}990)/2{,}651{,}637.4 = 0.1376\%\), between \(k = 1\) (0.2504) and \(k = 2\) (0.1696): \(p = 0.2504 + \frac{0.1376 - 0.10}{0.05}(0.1696 - 0.2504) = 0.2504 - 0.751 \times 0.0808 = 0.1897\), exactly the <code>Bid Fill Prob</code> logged in that row.</div>
 
-  <h3>5.4 The fitted formula: how \(\kappa\) and \(\lambda_\tau\) are estimated (fallback only)</h3>
+  <h3 id="s5-4">5.4 The fitted formula: how \(\kappa\) and \(\lambda_\tau\) are estimated (fallback only)</h3>
   <p><strong>Why fit it.</strong> The fallback should match the market instead of using unestimated defaults; two numbers summarise the whole curve at any distance; and Algorithm 2 (Avellaneda–Stoikov) needs exactly this \(\kappa\) in its spread term \(\frac{2}{\gamma}\ln(1 + \gamma/\kappa)\).</p>
   <p><strong>The task.</strong> Find \(\lambda_\tau, \kappa \gt 0\) with \(1 - \exp(-\lambda_\tau e^{-\kappa\delta_k}) \approx \hat p_k\) for \(k = 1, \dots, K\): ten equations, two unknowns, so we need a rule for "as close as possible".</p>
   <h4>(a) Turning the curve into a straight line</h4>
@@ -730,7 +747,7 @@ flowchart LR
   </table></div>
   <div class="key"><p style="margin:0"><strong>Reading it.</strong> For a USDT buy, the number of trades reaching the order falls by a factor 2.72 every 0.083% of distance, three times faster than the default assumes. At the touch the chance of a fill within 10 minutes is about 0.63. The fitted curve follows the table closely; the default curve overstates the chance about 2 times at 0.10 % and about 30 times at 0.40 %.</p></div>
 
-  <h3>5.5 What the estimate assumes, and where it is off</h3>
+  <h3 id="s5-5">5.5 What the estimate assumes, and where it is off</h3>
   <ol>
     <li><strong>Touching the price counts as a fill.</strong> On the real exchange other orders may rest at the same price and be filled first, so the replay is optimistic near the touch. Only the bot's live fills can correct this; the builder also has a <code>--queue-factor</code> (now 1.0).</li>
     <li><strong>Demo orders are not independent evidence.</strong> The demo ledger fills an order exactly when the price touches it (part 3.5), the same rule as the replay; blending demo orders in mostly repeats the replay.</li>
@@ -747,7 +764,7 @@ flowchart LR
   </ul>
   <p>The current demo session (demo-20261015T131629Z-2f38f0a407fa) is used as the example throughout, computed with the dashboard's own functions on the server.</p>
 
-  <h3>6.1 The tabs and their formulas</h3>
+  <h3 id="s6-1">6.1 The tabs and their formulas</h3>
   <p><strong>Tabs.</strong> Overview (the tiles below and the price chart with our quotes and fills); Quote decision (one round's candidates, the \(J\) heat map of every pair and the decision trace, from the diagnostics file of 3.7); Fill model (the table against the formula, and calibration: predicted against realised fill rate per distance band); Order book (levels and spreads); Validation (the gate of 6.3 and performance metrics); Rounds (every round as a table); PnL attribution (6.2).</p>
 
   <h4>Quote rate</h4>
@@ -775,7 +792,7 @@ flowchart LR
   <h4>Net PnL and inventory position</h4>
   <p>Net PnL \(= W_{\text{last}} - W_{\text{first}}\) over the rows shown; the inventory position tile is \(x\) of 4.1 for the last row.</p>
   <div class="ex">USDT: +316,601 rial (+0.03 %). BTC: −6,323,771 rial (−0.63 %).</div>
-  <h3>6.2 PnL attribution: did the result come from the quotes or from the price?</h3>
+  <h3 id="s6-2">6.2 PnL attribution: did the result come from the quotes or from the price?</h3>
   <p>A single profit number mixes two causes: the bot's own fills (part 1.4) and the market moving while it holds coins. The <strong>PnL attribution</strong> tab separates them exactly, round by round. Code: <code>pnl_attribution()</code> and <code>attribution_totals()</code> in <code>dashboard.py</code>; full derivation in <code>docs/algorithms/PNL_ATTRIBUTION.md</code>.</p>
   <p>Every round \(t\) records cash \(c_t\), inventory \(q_t\) and the mid \(m_t\), so wealth is \(W_t = c_t + q_t m_t\). Its change from one round to the next splits into</p>
   <div class="key"><div class="eq">\[ W_t - W_{t-1} \;=\; \underbrace{q_{t-1}\,(m_t - m_{t-1})}_{P_t\ \text{price PnL}} \;+\; \underbrace{(c_t - c_{t-1}) + (q_t - q_{t-1})\,m_t}_{T_t\ \text{trading PnL}} \]</div>
@@ -806,7 +823,7 @@ flowchart LR
     </table></div>
     <p style="margin:0">In both pairs the quoting itself lost money after fees (negative trading PnL). The USDT total is positive only because the price moved in favour of the coins it held. The "Net PnL" tile (6.1) shows slightly different totals because it values coins at the last trade price instead of the mid.</p>
   </div>
-  <h3>6.3 The validation gate: when may the demo strategy trade real money?</h3>
+  <h3 id="s6-3">6.3 The validation gate: when may the demo strategy trade real money?</h3>
   <p>The specification (<code>docs/algorithms/ALGORITHM_1_V2.md</code> §7) sets nine conditions the demo must meet, over at least five days, before the same code is trusted with real money. The Validation tab computes each one (<code>gate_rows()</code>). Current values:</p>
   <div class="wrap"><table>
     <tr><th>Condition</th><th>How it is computed</th><th class="r">Pass if</th><th class="r">USDT</th><th class="r">BTC</th></tr>
@@ -822,14 +839,14 @@ flowchart LR
   </table></div>
   <p><strong>Reading it.</strong> Neither pair passes. Both fail on realised spread (completed round trips lose, 6.1) and on the forecast (the predicted fill chances are 34 % and 63 % too high, consistent with limitation 1 of part 9 and the "touch counts as fill" optimism of 5.5). BTC also fails on profit and drawdown. The five-day requirement is not checked by the tab, and the USDT figures cover only the last 5.5 hours (2,000 rounds).</p>
 
-  <h3>6.4 Performance metrics (lower part of the Validation tab)</h3>
+  <h3 id="s6-4">6.4 Performance metrics (lower part of the Validation tab)</h3>
   <p>Computed on the wealth series, one value per round, with round-to-round returns \(r_t = W_t/W_{t-1} - 1\) and an annualisation factor \(K = 252 \times 24 \times 60 = 362{,}880\):</p>
   <div class="eq">\[ \text{total return} = \frac{W_T - W_0}{W_0}, \qquad \text{Sharpe} = \frac{\overline{r - r_f}}{\operatorname{sd}(r - r_f)}\sqrt K, \qquad \text{max drawdown} = \max_t \frac{\text{peak}_t - W_t}{\text{peak}_t}, \qquad \text{Calmar} = \frac{\text{annual return}}{\text{max drawdown}} \]</div>
   <p>with \(r_f\) the risk-free rate entered on the tab, converted per round. Sortino uses only the returns below the target in its denominator. Win rate, profit factor and the trade statistics score each filled order by its <em>planned</em> return at placement.</p>
   <p class="note">Caveats: \(K\) assumes one round per minute on 252 days, while USDT runs every 10 s and BTC every 60 s every day, so Sharpe and Sortino come out about 3 times (USDT) and 1.2 times (BTC) too small; the planned returns are positive by construction, so win rate is near 100 % and profit factor infinite, which says nothing about real results; in the "All sessions" view these metrics run across session boundaries. The PnL attribution tab (6.2) is the reliable profit measure.</p>
   <h2 id="p7">7. Running the system: sessions, configuration, admin, deployment</h2>
 
-  <h3>7.1 Sessions</h3>
+  <h3 id="s7-1">7.1 Sessions</h3>
   <p><strong>Demo.</strong> A session is one run of the demo with one set of starting values. Both demo workers share one session id, kept in <code>stack_session.json</code>, of the form <code>demo-&lt;UTC start time&gt;-&lt;12 random hex digits&gt;</code>. Each session has its own paper ledger file per pair; its rounds are tagged with the id in the result store, so old sessions stay available on the dashboard and the Sessions page.</p>
   <ul>
     <li><strong>New session</strong> (admin → demo agent): check which workers run; stop them; write a new session id; start again the workers that were running. A worker that finds no ledger for the new id builds a fresh one from <code>cash_initial</code>, <code>demo_inv_initial</code> and <code>commission_perc</code>, so pending "new session" settings take effect here.</li>
@@ -837,11 +854,11 @@ flowchart LR
   </ul>
   <p><strong>Live.</strong> Every start of a live worker is a new session; its id is the start time as a Unix timestamp. The Sessions page lists all live sessions with the running one marked active; a closed one can be deleted (backup first) only while no live worker runs.</p>
 
-  <h3>7.2 Configuration</h3>
+  <h3 id="s7-2">7.2 Configuration</h3>
   <p><strong>Demo.</strong> 34 settings can be edited per pair. 31 apply at once ("hot"); 3 apply only at the next session: <code>cash_initial</code>, <code>demo_inv_initial</code> and <code>commission_perc</code>. The admin validates a change and enqueues it; the demo agent validates again and writes <code>demo_config_&lt;pair&gt;.json</code> (keeping the previous file for Revert). At the start of every round the worker compares a fingerprint of the desired settings with what it applied; if they differ it applies the hot fields and publishes <code>runtime_config_&lt;pair&gt;.json</code> (applied values, pending new-session values, status), which the admin and dashboard show. Rules checked: each value within its bounds, <code>inv_min</code> &lt; <code>inv_max</code>, <code>order_size</code> &gt; 0, <code>grid_min_perc</code> ≤ <code>grid_max_perc</code>, <code>one_sided_lo</code> &lt; <code>one_sided_hi</code>.</p>
   <p><strong>Live.</strong> 32 settings (the demo ones minus the two starting values), saved by the forward agent to <code>forward_config_&lt;pair&gt;.json</code>. The value used is built in this order: the profile, the saved file, then three enforced rules: <code>commission_perc</code> at least 0.25 %, both exposure guards on, each guard ratio at most 25 %. A live worker reads its settings once at start; after a change it must be stopped and started.</p>
 
-  <h3>7.3 The control plane</h3>
+  <h3 id="s7-3">7.3 The control plane</h3>
   <p>The admin panel never touches workers or files directly. It writes a <strong>command file</strong> <code>commands/&lt;id&gt;.json</code> (action, pair, who, when, payload), waits up to 40 seconds for <code>results/&lt;id&gt;.json</code> (ok, detail), and appends both to <code>audit.log</code>. A lock allows one operation at a time per stack: a second request gets "operation in progress" (HTTP 409), a timeout HTTP 504.</p>
   <div class="wrap"><table>
     <tr><th>Demo agent action (polls every 2 s)</th><th>What it does</th></tr>
@@ -862,13 +879,13 @@ flowchart LR
     <tr><td><code>delete_forward_session</code></td><td>7.1</td></tr>
   </table></div>
 
-  <h3>7.4 The admin panel</h3>
+  <h3 id="s7-4">7.4 The admin panel</h3>
   <p>Reached at <code>https://37.32.31.162/admin/</code>. On the server it opens on the live forward page. Pages: Overview (session, workers, recent audit); Config BTC / USDT (demo settings, desired versus applied); Workers (start, stop, restart, new session, cancel orders); Live Forward Test (start with typed confirmation, stop); Live Config BTC / USDT (live settings and fresh wallet balances); Sessions (demo and live, delete); Backups (create, restore, download); Reset; Recovery; Export; Orders; Balances; Logs; Audit. Access needs a login (username and password hash), then a signed session cookie that expires after 30 idle minutes, and every action carries a per-session anti-forgery token.</p>
 
-  <h3>7.5 The nightly fill-table job</h3>
+  <h3 id="s7-5">7.5 The nightly fill-table job</h3>
   <p>At 03:00 every night a cron job on the server (<code>/etc/cron.d/market-maker-fill-table</code>) runs <code>tools/build_fill_table.py</code> for each pair over the live history file, the old forward demo file and the Docker demo store's CSV, writes <code>fill_table_&lt;pair&gt;irt.json</code> in the live results folder and copies it into the demo results folder. Running workers pick the new file up by itself (part 5.3).</p>
 
-  <h3>7.6 Deploying a code change</h3>
+  <h3 id="s7-6">7.6 Deploying a code change</h3>
   <p>Code lives on GitHub (<code>Alireza77n/Limit-Order-Book</code>, branch <code>MM_algo1v2</code>). A deploy (<code>/root/deploy_dashboard.sh &lt;commit&gt;</code> on the server):</p>
   <ol>
     <li>checks the uploaded archive (gzip test and sha256);</li>
@@ -882,7 +899,7 @@ flowchart LR
   <h2 id="p8">8. The live forward test today</h2>
   <p>Two live workers (USDT and BTC) have been running with real money since 15 October 2026, 12:58 UTC (16:28 Tehran time). This part applies everything above to them, with the settings saved on the server.</p>
 
-  <h3>8.1 Settings in force</h3>
+  <h3 id="s8-1">8.1 Settings in force</h3>
   <div class="wrap"><table>
     <tr><th>Setting</th><th class="r">Live USDT</th><th class="r">Live BTC</th><th class="r">Demo (both, for comparison)</th></tr>
     <tr><td>fee \(f\) (<code>commission_perc</code>)</td><td class="r">0.25 %</td><td class="r">0.25 %</td><td class="r">0.08 %</td></tr>
@@ -896,7 +913,7 @@ flowchart LR
   </table></div>
   <p>At start each live worker read its wallets (8.4): the USDT worker found 0.9975 USDT and 57,637,520 rial; the BTC worker found 0 BTC and the same 57,637,520 rial.</p>
 
-  <h3>8.2 What happened: no orders in 30 hours</h3>
+  <h3 id="s8-2">8.2 What happened: no orders in 30 hours</h3>
   <p>By 16 October 22:20 Tehran time the BTC worker had run 1,783 rounds and the USDT worker 1,923, and <strong>neither had sent a single order</strong>: every round ended with no quote. Nothing is wrong with the workers; the decision rule of part 4 found nothing worth placing.</p>
   <div class="ex">
     <p>The strategy run with the saved live BTC settings on the real BTC book of 16 Oct, about 22:20 Tehran time (best bid 214,520,093,710, best ask 214,995,699,530 rial):</p>
@@ -919,10 +936,10 @@ flowchart LR
     <li><strong>The fee level</strong>: at the demo's 0.08 % the gross bar is 0.17 % and the demo places a quote in every round (a pair in 97 % to 99 % of them); at 0.25 % the bar is 0.51 % and the measured fill chances at that width are small.</li>
   </ul>
 
-  <h3>8.3 USDT data outage since 21:00 Tehran time, 16 October</h3>
+  <h3 id="s8-3">8.3 USDT data outage since 21:00 Tehran time, 16 October</h3>
   <p>Since about 21:00 Tehran time on 16 October, Nobitex answers <strong>HTTP 403</strong> (refused) to every USDT/IRT order-book request from the server, about 90 per 15 minutes from the demo worker alone, while BTC/IRT requests succeed. A direct request from the server confirms it. Both USDT workers keep running but record no rounds while it lasts. The live USDT worker had sent no orders before it either, so no money is affected.</p>
 
-  <h3>8.4 Safety mechanisms around real money</h3>
+  <h3 id="s8-4">8.4 Safety mechanisms around real money</h3>
     <ul>
     <li><strong>Two switches.</strong> <code>FORWARD_TRADING_ENABLED=1</code> must be set for the admin (shows the Start button) and again for the forward agent (accepts the start). With either at 0, no live worker can start.</li>
     <li><strong>Typed confirmation.</strong> Starting a pair requires typing exactly <code>START BTCIRT LIVE</code> or <code>START USDTIRT LIVE</code>.</li>
@@ -961,7 +978,7 @@ flowchart LR
 
   </table></div>
   <h2 id="p10">10. Glossary of symbols and settings</h2>
-  <h3>10.1 Settings (name in the admin panel and in <code>config.py</code>)</h3>
+  <h3 id="s10-1">10.1 Settings (name in the admin panel and in <code>config.py</code>)</h3>
   <div class="wrap"><table>
     <tr><th>Symbol</th><th>Setting</th><th>Meaning</th><th class="r">Code default</th><th class="r">Demo now (USDT / BTC)</th><th class="r">Live now (USDT / BTC)</th></tr>
     <tr><td>\(f\)</td><td><code>commission_perc</code></td><td>fee per filled order</td><td class="r">0.10 %</td><td class="r">0.08 %</td><td class="r">0.25 %</td></tr>
@@ -985,7 +1002,7 @@ flowchart LR
     <tr><td></td><td><code>cash_initial</code>, <code>demo_inv_initial</code></td><td>demo starting cash and coins</td><td class="r">30,000,000 rial, 0</td><td class="r">1,000,000,000, 0</td><td class="r">read from the wallet</td></tr>
   </table></div>
 
-  <h3>10.2 Symbols</h3>
+  <h3 id="s10-2">10.2 Symbols</h3>
   <div class="wrap"><table>
     <tr><th>Symbol</th><th>Meaning</th><th>Where</th></tr>
     <tr><td>\(b_i, a_i\)</td><td>bid and ask price at book level \(i\) (\(i = 0\) is the best)</td><td>1.1</td></tr>
@@ -1006,198 +1023,107 @@ flowchart LR
     <tr><td>\(P_t, T_t\)</td><td>price and trading part of the wealth change in round \(t\)</td><td>6.2</td></tr>
   </table></div>
   <h2 id="p11">11. The whole bot as pseudocode</h2>
-  <p>The same logic as parts 3 to 6, written as algorithms in the order the code runs them. Keywords are in bold, procedure names in small capitals, comments after ▷ say where each line is explained, and every line corresponds to code in the file named under each title.</p>
-  <div class="algo algo-overview"><div class="algo-head"><span class="algo-n">The bot in six lines</span></div><ol class="algo-lines nonum"><li style="--ind:0"><span class="kw">for</span> each pair (BTC, USDT) and each mode (demo, live), one worker, <span class="kw">forever</span>, every round:</li><li style="--ind:1">read the order book from Nobitex</li><li style="--ind:1">settle what filled; cancel own orders older than \(\tau\) = 10 minutes</li><li style="--ind:1">\((B, A) \gets\) the most valuable prices that beat the fees <span class="cm">▷ gate 1, Algorithm 3</span></li><li style="--ind:1"><span class="kw">for</span> each side: send <span class="kw">if</span> size, cash, band and safety allow <span class="cm">▷ gate 2, Algorithm 5</span></li><li style="--ind:1">record the round; wait for the next one</li></ol><pre class="algo-plain" hidden> 1  for each pair (BTC, USDT) and each mode (demo, live), one worker, forever, every round:
- 2      read the order book from Nobitex
- 3      settle what filled; cancel own orders older than τ = 10 minutes
- 4      (B, A) ← the most valuable prices that beat the fees   ▷ gate 1, Algorithm 3
- 5      for each side: send if size, cash, band and safety allow   ▷ gate 2, Algorithm 5
- 6      record the round; wait for the next one</pre></div>
-  <div class="algo" id="algo-1"><div class="algo-head"><span class="algo-n">Algorithm 1</span><span class="algo-name">RUN-WORKER</span><span class="algo-args">(pair, mode)</span><span class="algo-ref">part 3.0, 3.8 · <code>run.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">procedure</span> <span class="fn">RUN-WORKER</span>(pair, mode)</li><li style="--ind:1">cfg \(\gets\) PROFILE[pair] <span class="cm">▷ config.py</span></li><li style="--ind:1"><span class="kw">if</span> mode = demo <span class="kw">then</span></li><li style="--ind:2">cfg \(\gets\) cfg + demo overrides <span class="cm">▷ <code class="lit">demo_config_&lt;pair&gt;.json</code>, re-read every round</span></li><li style="--ind:2">session \(\gets\) <span class="fn">SHARED-DEMO-SESSION</span>() <span class="cm">▷ <code class="lit">demo-&lt;UTC time&gt;-&lt;12 hex&gt;</code></span></li><li style="--ind:2">take the lock <code class="lit">worker_&lt;pair&gt;.lock</code></li><li style="--ind:2">ledger \(\gets\) <span class="fn">LOAD-LEDGER</span>(session) <span class="kw">or</span> <span class="fn">NEW-LEDGER</span>(cash_initial, demo_inv_initial, \(f\))</li><li style="--ind:2">\((q, c) \gets\) (ledger coins, ledger cash)</li><li style="--ind:1"><span class="kw">else</span> <span class="cm">▷ live</span></li><li style="--ind:2">cfg \(\gets\) cfg + live overrides <span class="cm">▷ once: \(f \ge 0.25\%\), guards on, ratio \(\le 25\%\)</span></li><li style="--ind:2">session \(\gets\) now, in Unix seconds</li><li style="--ind:2">take the lock <code class="lit">worker_live_&lt;pair&gt;.lock</code></li><li style="--ind:2">\((q, c) \gets\) (<span class="fn">WALLET</span>(coin), <span class="fn">WALLET</span>(rial))</li><li style="--ind:2"><span class="kw">if</span> a balance is unreadable, not a number or negative <span class="kw">then</span></li><li style="--ind:3"><span class="kw">stop</span> <code class="lit">refusing to start real trading</code></li><li style="--ind:1"><span class="kw">loop</span> <span class="kw">forever</span></li><li style="--ind:2"><span class="fn">ROUND</span>() <span class="cm">▷ Algorithm 2</span></li><li style="--ind:1"><span class="kw">on</span> SIGTERM:</li><li style="--ind:2">cancel every open order this worker owns on this pair</li><li style="--ind:2">settle the last fills; exit</li></ol><pre class="algo-plain" hidden> 1  procedure RUN-WORKER(pair, mode)
- 2      cfg ← PROFILE[pair]   ▷ config.py
- 3      if mode = demo then
- 4          cfg ← cfg + demo overrides   ▷ &quot;demo_config_&lt;pair&gt;.json&quot;, re-read every round
- 5          session ← SHARED-DEMO-SESSION()   ▷ &quot;demo-&lt;UTC time&gt;-&lt;12 hex&gt;&quot;
- 6          take the lock &quot;worker_&lt;pair&gt;.lock&quot;
- 7          ledger ← LOAD-LEDGER(session) or NEW-LEDGER(cash_initial, demo_inv_initial, f)
- 8          (q, c) ← (ledger coins, ledger cash)
- 9      else   ▷ live
-10          cfg ← cfg + live overrides   ▷ once: f ≥ 0.25%, guards on, ratio ≤ 25%
-11          session ← now, in Unix seconds
-12          take the lock &quot;worker_live_&lt;pair&gt;.lock&quot;
-13          (q, c) ← (WALLET(coin), WALLET(rial))
-14          if a balance is unreadable, not a number or negative then
-15              stop &quot;refusing to start real trading&quot;
-16      loop forever
-17          ROUND()   ▷ Algorithm 2
-18      on SIGTERM:
-19          cancel every open order this worker owns on this pair
-20          settle the last fills; exit</pre></div>
-  <div class="algo" id="algo-2"><div class="algo-head"><span class="algo-n">Algorithm 2</span><span class="algo-name">ROUND</span><span class="algo-args">()</span><span class="algo-ref">part 3 · <code>engine.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">procedure</span> <span class="fn">ROUND</span>()</li><li style="--ind:1"><span class="kw">if</span> mode = demo <span class="kw">then</span> <span class="fn">APPLY-OVERRIDES-IF-CHANGED</span>() <span class="cm">▷ 7.2</span></li><li style="--ind:1">book \(\gets\) GET <code class="lit">/v3/orderbook/&lt;PAIR&gt;</code> (timeout 5 s)</li><li style="--ind:1"><span class="kw">if</span> book = NONE <span class="kw">then</span> <span class="cm">▷ e.g. HTTP 403</span></li><li style="--ind:2"><span class="fn">WAIT-NEXT-ROUND</span>(); <span class="kw">return</span></li><li style="--ind:1"><span class="fn">SETTLE-FILLS</span>(book) <span class="cm">▷ Algorithm 6</span></li><li style="--ind:1"><span class="fn">CANCEL-OWN-ORDERS-OLDER-THAN</span>(\(\tau\)) <span class="cm">▷ Algorithm 6</span></li><li style="--ind:1"><span class="fn">APPEND-DIAGNOSTICS</span>(book, \(q\)) <span class="cm">▷ every candidate and pair, for the dashboard</span></li><li style="--ind:1">\((B, A) \gets\) <span class="fn">DECIDE-PRICES</span>(book, \(q\)) <span class="cm">▷ Algorithm 3: gate 1</span></li><li style="--ind:1"><span class="fn">SIZE-AND-SEND</span>(sell, \(A\)) <span class="cm">▷ Algorithm 5: gate 2, sell side first</span></li><li style="--ind:1"><span class="fn">SIZE-AND-SEND</span>(buy, \(B\))</li><li style="--ind:1"><span class="fn">RECORD-ROUND</span>() <span class="cm">▷ store row, CSV, Telegram (3.7)</span></li><li style="--ind:1"><span class="fn">WAIT-NEXT-ROUND</span>() <span class="cm">▷ demo: fixed rhythm; live: sleep time_step</span></li></ol><pre class="algo-plain" hidden> 1  procedure ROUND()
- 2      if mode = demo then APPLY-OVERRIDES-IF-CHANGED()   ▷ 7.2
- 3      book ← GET &quot;/v3/orderbook/&lt;PAIR&gt;&quot; (timeout 5 s)
- 4      if book = NONE then   ▷ e.g. HTTP 403
- 5          WAIT-NEXT-ROUND(); return
- 6      SETTLE-FILLS(book)   ▷ Algorithm 6
- 7      CANCEL-OWN-ORDERS-OLDER-THAN(τ)   ▷ Algorithm 6
- 8      APPEND-DIAGNOSTICS(book, q)   ▷ every candidate and pair, for the dashboard
- 9      (B, A) ← DECIDE-PRICES(book, q)   ▷ Algorithm 3: gate 1
-10      SIZE-AND-SEND(sell, A)   ▷ Algorithm 5: gate 2, sell side first
-11      SIZE-AND-SEND(buy, B)
-12      RECORD-ROUND()   ▷ store row, CSV, Telegram (3.7)
-13      WAIT-NEXT-ROUND()   ▷ demo: fixed rhythm; live: sleep time_step</pre></div>
-  <div class="algo" id="algo-3"><div class="algo-head"><span class="algo-n">Algorithm 3</span><span class="algo-name">DECIDE-PRICES</span><span class="algo-args">(book, q)</span><span class="algo-ref">part 4.0 steps 1–6, 4.1–4.10 · <code>strategy/algo1.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">function</span> <span class="fn">DECIDE-PRICES</span>(book, \(q\))</li><li style="--ind:1"><span class="fn">UPDATE-COST-BASIS</span>(\(q\)) <span class="cm">▷ Algorithm 4</span></li><li style="--ind:1"><span class="kw">if</span> a side has fewer than 2 levels <span class="kw">or</span> \(b_0 \gt a_0\) <span class="kw">then</span></li><li style="--ind:2"><span class="kw">return</span> NONE <code class="lit">invalid_or_single_level_order_book</code> <span class="cm">▷ step 1</span></li><li style="--ind:1">\(m \gets (b_0 + a_0)/2\)</li><li style="--ind:1">\(x \gets \operatorname{clamp}\big((q - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1\big)\) <span class="cm">▷ 4.1</span></li><li style="--ind:1">\(c \gets m\,\big(1 - \sigma_q\,(2x - 1)\big)\) <span class="cm">▷ 4.2</span></li><li style="--ind:1">(Bids, Asks) \(\gets\) <span class="fn">CANDIDATES</span>(book, \(c\)) <span class="cm">▷ Algorithm 3a</span></li><li style="--ind:1"><span class="kw">for</span> each candidate \(K\) <span class="kw">do</span> \(K.p \gets\) <span class="fn">FILL-PROB</span>(\(K.\hat\delta\), \(K\).side) <span class="cm">▷ Algorithm 7</span></li><li style="--ind:1"><span class="kw">if</span> Bids \(= \emptyset\) <span class="kw">and</span> Asks \(= \emptyset\) <span class="kw">then</span> <span class="kw">return</span> NONE <code class="lit">no_candidates</code> <span class="cm">▷ step 2</span></li><li style="--ind:1"><span class="kw">if</span> \(x \ge x_{hi}\) <span class="kw">then</span> <span class="cm">▷ step 3: too many coins, sell only</span></li><li style="--ind:2"><span class="kw">return</span> <span class="fn">HYSTERESIS</span>(<span class="fn">BEST-SINGLE</span>(Asks, \(\bar P\) if known else \(c\))) <span class="kw">or</span> NONE <code class="lit">no_side_clears_bar</code></li><li style="--ind:1"><span class="kw">if</span> \(x \le x_{lo}\) <span class="kw">then</span> <span class="cm">▷ too few coins, buy only</span></li><li style="--ind:2"><span class="kw">return</span> <span class="fn">HYSTERESIS</span>(<span class="fn">BEST-SINGLE</span>(Bids, \(c\))) <span class="kw">or</span> NONE <code class="lit">no_side_clears_bar</code></li><li style="--ind:1">best \(\gets\) NONE <span class="cm">▷ step 4: every pair</span></li><li style="--ind:1"><span class="kw">for</span> each \(B \in\) Bids, \(A \in\) Asks <span class="kw">do</span></li><li style="--ind:2">\(R \gets (1-f)^2\,A/B - 1\) <span class="cm">▷ condition A: fees</span></li><li style="--ind:2">\(J \gets p_B\,p_A\,R - \eta\,\big(p_B(1-p_A) + p_A(1-p_B)\big)\) <span class="cm">▷ condition B: expected value</span></li><li style="--ind:2"><span class="kw">if</span> \(R \gt r_{\min}\) <span class="kw">and</span> \(J \gt J_{\min}\) <span class="kw">and</span> \(J\) beats best <span class="kw">then</span> best \(\gets (B, A)\)</li><li style="--ind:1"><span class="kw">if</span> best \(\ne\) NONE <span class="kw">then</span> <span class="kw">return</span> <span class="fn">HYSTERESIS</span>(best) <span class="cm">▷ step 6</span></li><li style="--ind:1">single \(\gets\) higher \(J\) of <span class="fn">BEST-SINGLE</span>(Asks, \(\bar P\) or \(c\)) and <span class="fn">BEST-SINGLE</span>(Bids, \(c\)) <span class="cm">▷ step 5</span></li><li style="--ind:1"><span class="kw">if</span> single \(\ne\) NONE <span class="kw">then</span> <span class="kw">return</span> <span class="fn">HYSTERESIS</span>(single)</li><li style="--ind:1"><span class="kw">if</span> some pair had \(R \gt r_{\min}\) <span class="kw">then</span> <span class="kw">return</span> NONE <code class="lit">expected_value_below_floor</code></li><li style="--ind:1"><span class="kw">return</span> NONE <code class="lit">no_side_clears_bar</code></li><li style="--ind:1" class="only-cm"><span class="cm">▷ <code class="lit">beats</code>: higher \(J\); on a tie, the one closer to the centre</span></li></ol><pre class="algo-plain" hidden> 1  function DECIDE-PRICES(book, q)
- 2      UPDATE-COST-BASIS(q)   ▷ Algorithm 4
- 3      if a side has fewer than 2 levels or b_0 &gt; a_0 then
- 4          return NONE &quot;invalid_or_single_level_order_book&quot;   ▷ step 1
- 5      m ← (b_0 + a_0)/2
- 6      x ← clamp((q - q_min)/(q_max - q_min), 0, 1)   ▷ 4.1
- 7      c ← m (1 - σ_q (2x - 1))   ▷ 4.2
- 8      (Bids, Asks) ← CANDIDATES(book, c)   ▷ Algorithm 3a
- 9      for each candidate K do K.p ← FILL-PROB(K.δ̂, K.side)   ▷ Algorithm 7
-10      if Bids = ∅ and Asks = ∅ then return NONE &quot;no_candidates&quot;   ▷ step 2
-11      if x ≥ x_hi then   ▷ step 3: too many coins, sell only
-12          return HYSTERESIS(BEST-SINGLE(Asks, P̄ if known else c)) or NONE &quot;no_side_clears_bar&quot;
-13      if x ≤ x_lo then   ▷ too few coins, buy only
-14          return HYSTERESIS(BEST-SINGLE(Bids, c)) or NONE &quot;no_side_clears_bar&quot;
-15      best ← NONE   ▷ step 4: every pair
-16      for each B ∈ Bids, A ∈ Asks do
-17          R ← (1-f)^2 A/B - 1   ▷ condition A: fees
-18          J ← p_B p_A R - η (p_B(1-p_A) + p_A(1-p_B))   ▷ condition B: expected value
-19          if R &gt; r_min and J &gt; J_min and J beats best then best ← (B, A)
-20      if best ≠ NONE then return HYSTERESIS(best)   ▷ step 6
-21      single ← higher J of BEST-SINGLE(Asks, P̄ or c) and BEST-SINGLE(Bids, c)   ▷ step 5
-22      if single ≠ NONE then return HYSTERESIS(single)
-23      if some pair had R &gt; r_min then return NONE &quot;expected_value_below_floor&quot;
-24      return NONE &quot;no_side_clears_bar&quot;
-25      ▷ &quot;beats&quot;: higher J; on a tie, the one closer to the centre</pre></div>
-  <div class="algo" id="algo-3a"><div class="algo-head"><span class="algo-n">Algorithm 3a</span><span class="algo-name">CANDIDATES</span><span class="algo-args">(book, c)</span><span class="algo-ref">part 4.3 · <code>strategy/algo1.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">function</span> <span class="fn">CANDIDATES</span>(book, \(c\)) <span class="cm">▷ uses the first depth_max + 1 levels</span></li><li style="--ind:1">Bids, Asks \(\gets \emptyset\)</li><li style="--ind:1"><span class="kw">for</span> \(j \gets 1, 2, \dots\) <span class="kw">while</span> \(\delta_{\min}\,\rho^{\,j-1} \le \delta_{\max}\) <span class="kw">do</span></li><li style="--ind:2">\(\delta \gets \delta_{\min}\,\rho^{\,j-1}\)</li><li style="--ind:2">\(i \gets\) first level with \(b_i \le c(1-\delta)\)</li><li style="--ind:2">\(B \gets b_i + \epsilon\) <span class="kw">if</span> \(i\) exists <span class="kw">else</span> round down to a tick \(c(1-\delta)\) <span class="cm">▷ synthetic when the book is short</span></li><li style="--ind:2">\(B \gets \min(B,\ a_0 - \epsilon)\) <span class="cm">▷ never cross the market</span></li><li style="--ind:2"><span class="kw">if</span> \(B \notin\) Bids <span class="kw">then</span> add \(B\) with \(\hat\delta = (c - B)/c\)</li><li style="--ind:2">\(i \gets\) first level with \(a_i \ge c(1+\delta)\)</li><li style="--ind:2">\(A \gets a_i - \epsilon\) <span class="kw">if</span> \(i\) exists <span class="kw">else</span> round up to a tick \(c(1+\delta)\)</li><li style="--ind:2">\(A \gets \max(A,\ b_0 + \epsilon)\)</li><li style="--ind:2"><span class="kw">if</span> \(A \notin\) Asks <span class="kw">then</span> add \(A\) with \(\hat\delta = (A - c)/c\)</li><li style="--ind:1"><span class="kw">return</span> (Bids, Asks)</li></ol><pre class="algo-plain" hidden> 1  function CANDIDATES(book, c)   ▷ uses the first depth_max + 1 levels
- 2      Bids, Asks ← ∅
- 3      for j ← 1, 2, … while δ_min ρ^(j-1) ≤ δ_max do
- 4          δ ← δ_min ρ^(j-1)
- 5          i ← first level with b_i ≤ c(1-δ)
- 6          B ← b_i + ε if i exists else round down to a tick c(1-δ)   ▷ synthetic when the book is short
- 7          B ← min(B, a_0 - ε)   ▷ never cross the market
- 8          if B ∉ Bids then add B with δ̂ = (c - B)/c
- 9          i ← first level with a_i ≥ c(1+δ)
-10          A ← a_i - ε if i exists else round up to a tick c(1+δ)
-11          A ← max(A, b_0 + ε)
-12          if A ∉ Asks then add A with δ̂ = (A - c)/c
-13      return (Bids, Asks)</pre></div>
-  <div class="algo" id="algo-3b"><div class="algo-head"><span class="algo-n">Algorithm 3b</span><span class="algo-name">BEST-SINGLE</span><span class="algo-args">(C, ref)</span><span class="algo-ref">part 4.8 · <code>strategy/algo1.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">function</span> <span class="fn">BEST-SINGLE</span>(C, \(P_{\text{ref}}\))</li><li style="--ind:1">best \(\gets\) NONE</li><li style="--ind:1"><span class="kw">for</span> each candidate \(K \in C\) <span class="kw">do</span></li><li style="--ind:2"><span class="kw">if</span> \(K\) is a sell <span class="kw">then</span> \(R \gets (1-f)^2\,K/P_{\text{ref}} - 1\) <span class="kw">else</span> \(R \gets (1-f)^2\,P_{\text{ref}}/K - 1\)</li><li style="--ind:2">\(J \gets K.p \cdot R - \eta \cdot K.p\)</li><li style="--ind:2"><span class="kw">if</span> \(R \gt r_{\min}\) <span class="kw">and</span> \(J \gt J_{\min}\) <span class="kw">and</span> \(J\) beats best <span class="kw">then</span> best \(\gets K\)</li><li style="--ind:1"><span class="kw">return</span> best</li></ol><pre class="algo-plain" hidden> 1  function BEST-SINGLE(C, P_ref)
- 2      best ← NONE
- 3      for each candidate K ∈ C do
- 4          if K is a sell then R ← (1-f)^2 K/P_ref - 1 else R ← (1-f)^2 P_ref/K - 1
- 5          J ← K.p · R - η · K.p
- 6          if R &gt; r_min and J &gt; J_min and J beats best then best ← K
- 7      return best</pre></div>
-  <div class="algo" id="algo-3c"><div class="algo-head"><span class="algo-n">Algorithm 3c</span><span class="algo-name">HYSTERESIS</span><span class="algo-args">(quote)</span><span class="algo-ref">part 4.9 · <code>strategy/algo1.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">function</span> <span class="fn">HYSTERESIS</span>(quote)</li><li style="--ind:1"><span class="kw">for</span> each side with a new price \(P\) <span class="kw">do</span></li><li style="--ind:2"><span class="kw">if</span> memory[side] \(= (P_{\text{old}}, t_{\text{old}})\) <span class="kw">and</span> \(|P - P_{\text{old}}| \le h\,\epsilon\) <span class="kw">and</span> now \(- t_{\text{old}} \lt T_{\text{refresh}}\) <span class="kw">then</span></li><li style="--ind:3">\(P \gets P_{\text{old}}\) <span class="cm">▷ keep the resting price</span></li><li style="--ind:2"><span class="kw">else</span></li><li style="--ind:3">memory[side] \(\gets (P, \text{now})\)</li><li style="--ind:1"><span class="kw">if</span> a price was kept <span class="kw">and</span> the kept quote fails \(R \gt r_{\min}\) <span class="kw">then</span></li><li style="--ind:2">use the new prices; memory[side] \(\gets\) (new price, now) for each side</li><li style="--ind:1"><span class="kw">return</span> quote</li><li style="--ind:1" class="only-cm"><span class="cm">▷ a side with no price forgets its memory; a NONE decision forgets both</span></li></ol><pre class="algo-plain" hidden> 1  function HYSTERESIS(quote)
- 2      for each side with a new price P do
- 3          if memory[side] = (P_old, t_old) and |P - P_old| ≤ h ε and now - t_old &lt; T_refresh then
- 4              P ← P_old   ▷ keep the resting price
- 5          else
- 6              memory[side] ← (P, now)
- 7      if a price was kept and the kept quote fails R &gt; r_min then
- 8          use the new prices; memory[side] ← (new price, now) for each side
- 9      return quote
-10      ▷ a side with no price forgets its memory; a NONE decision forgets both</pre></div>
-  <div class="algo" id="algo-4"><div class="algo-head"><span class="algo-n">Algorithm 4</span><span class="algo-name">UPDATE-COST-BASIS</span><span class="algo-args">(q)</span><span class="algo-ref">part 4.8 · <code>strategy/algo1.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">procedure</span> <span class="fn">UPDATE-COST-BASIS</span>(\(q\))</li><li style="--ind:1"><span class="kw">if</span> \(q_{\text{prev}}\) is unknown <span class="kw">then</span> \(q_{\text{prev}} \gets q\); <span class="kw">return</span></li><li style="--ind:1">\(\Delta \gets q - q_{\text{prev}}\);  \(q_{\text{prev}} \gets q\)</li><li style="--ind:1"><span class="kw">if</span> \(\Delta \gt 0\) <span class="kw">and</span> memory[buy] holds a price \(B_{\text{rest}}\) <span class="kw">then</span> <span class="cm">▷ our resting buy filled</span></li><li style="--ind:2">\(\bar P \gets (\bar P\,n + B_{\text{rest}}\,\Delta)/(n + \Delta)\);  \(n \gets n + \Delta\)</li><li style="--ind:1"><span class="kw">else</span> <span class="kw">if</span> \(\Delta \lt 0\) <span class="kw">then</span> <span class="cm">▷ coins sold</span></li><li style="--ind:2">\(n \gets \max(0,\ n + \Delta)\)</li><li style="--ind:1" class="only-cm"><span class="cm">▷ \(\bar P\) counts as known only while \(n \gt 0\)</span></li></ol><pre class="algo-plain" hidden> 1  procedure UPDATE-COST-BASIS(q)
- 2      if q_prev is unknown then q_prev ← q; return
- 3      Δ ← q - q_prev;  q_prev ← q
- 4      if Δ &gt; 0 and memory[buy] holds a price B_rest then   ▷ our resting buy filled
- 5          P̄ ← (P̄ n + B_rest Δ)/(n + Δ);  n ← n + Δ
- 6      else if Δ &lt; 0 then   ▷ coins sold
- 7          n ← max(0, n + Δ)
- 8      ▷ P̄ counts as known only while n &gt; 0</pre></div>
-  <div class="algo" id="algo-5"><div class="algo-head"><span class="algo-n">Algorithm 5</span><span class="algo-name">SIZE-AND-SEND</span><span class="algo-args">(side, P)</span><span class="algo-ref">part 4.0 steps 7–8, 3.4 · <code>engine.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">procedure</span> <span class="fn">SIZE-AND-SEND</span>(side, \(P\)) <span class="cm">▷ skip(r): record reason r, stop this side</span></li><li style="--ind:1">\(s_{\min} \gets 0.1\,S\)</li><li style="--ind:1"><span class="kw">if</span> side = sell <span class="kw">then</span></li><li style="--ind:2">\(x_s \gets\) position of (\(q\) − coins in own open sells) <span class="cm">▷ resting orders count as filled</span></li><li style="--ind:2">target \(\gets S \cdot \operatorname{clamp}\big(1 + k_s(2x_s - 1),\ \phi,\ 1 + k_s\big)\) <span class="cm">▷ \(= 2S\,x_s\) with \(k_s = 1\), \(\phi = 0\)</span></li><li style="--ind:2"><span class="kw">if</span> \(P\) = NONE <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">one_sided_quote</code>)</li><li style="--ind:2"><span class="kw">if</span> an own sell rests within \(h\,\epsilon\) of \(P\) <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">resting_order_kept</code>)</li><li style="--ind:2">size \(\gets \max\big(0,\ \min(\text{target},\ \text{free coins} - q_{\min})\big)\)</li><li style="--ind:2"><span class="kw">if</span> size \(\ge s_{\min}\) <span class="kw">and</span> guard on <span class="kw">and</span> (coins locked in sells + size)/coins \(\gt\) ratio <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">locked_inventory_limit</code>)</li><li style="--ind:2"><span class="kw">if</span> size \(\ge s_{\min}\) <span class="kw">then</span> <span class="kw">return</span> <span class="fn">SEND</span>(sell, size, \(P\))</li><li style="--ind:2"><span class="kw">if</span> target \(\lt s_{\min}\) <span class="kw">and</span> free coins \(- q_{\min} \ge s_{\min}\) <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">inventory_sizing</code>)</li><li style="--ind:2"><span class="kw">if</span> coins locked in sells \(\gt 0\) <span class="kw">and</span> coins \(\gt q_{\min}\) <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">inventory_locked_in_open_orders</code>)</li><li style="--ind:2"><span class="kw">return</span> skip(<code class="lit">insufficient_inventory</code>)</li><li style="--ind:1"><span class="kw">else</span> <span class="cm">▷ buy</span></li><li style="--ind:2">\(x_b \gets\) position of (\(q\) + coins in own open buys)</li><li style="--ind:2">target \(\gets S \cdot \operatorname{clamp}\big(1 - k_s(2x_b - 1),\ \phi,\ 1 + k_s\big)\) <span class="cm">▷ \(= 2S\,(1 - x_b)\)</span></li><li style="--ind:2"><span class="kw">if</span> \(P\) = NONE <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">one_sided_quote</code>)</li><li style="--ind:2"><span class="kw">if</span> an own buy rests within \(h\,\epsilon\) of \(P\) <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">resting_order_kept</code>)</li><li style="--ind:2"><span class="kw">if</span> target \(\lt s_{\min}\) <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">inventory_sizing</code>)</li><li style="--ind:2">size \(\gets \max\big(0,\ \min(\text{target},\ \text{free cash}/P)\big)\)</li><li style="--ind:2"><span class="kw">if</span> size \(\lt s_{\min}\) <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">insufficient_cash</code>)</li><li style="--ind:2"><span class="kw">if</span> coins in own open buys + \(q\) + size \(\gt q_{\max}\) <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">inventory_cap</code>)</li><li style="--ind:2"><span class="kw">if</span> guard on <span class="kw">and</span> (cash locked in buys + size \(\cdot P\))/cash \(\gt\) ratio <span class="kw">then</span> <span class="kw">return</span> skip(<code class="lit">locked_cash_limit</code>)</li><li style="--ind:2"><span class="kw">return</span> <span class="fn">SEND</span>(buy, size, \(P\))</li><li style="--ind:1" class="only-cm"><span class="cm">▷ live: the same checks, the buy guard before the band cap, and only <code class="lit">not_sent</code> is recorded</span></li></ol><pre class="algo-plain" hidden> 1  procedure SIZE-AND-SEND(side, P)   ▷ skip(r): record reason r, stop this side
- 2      s_min ← 0.1 S
- 3      if side = sell then
- 4          x_s ← position of (q − coins in own open sells)   ▷ resting orders count as filled
- 5          target ← S · clamp(1 + k_s(2x_s - 1), φ, 1 + k_s)   ▷ = 2S x_s with k_s = 1, φ = 0
- 6          if P = NONE then return skip(&quot;one_sided_quote&quot;)
- 7          if an own sell rests within h ε of P then return skip(&quot;resting_order_kept&quot;)
- 8          size ← max(0, min(target, free coins - q_min))
- 9          if size ≥ s_min and guard on and (coins locked in sells + size)/coins &gt; ratio then return skip(&quot;locked_inventory_limit&quot;)
-10          if size ≥ s_min then return SEND(sell, size, P)
-11          if target &lt; s_min and free coins - q_min ≥ s_min then return skip(&quot;inventory_sizing&quot;)
-12          if coins locked in sells &gt; 0 and coins &gt; q_min then return skip(&quot;inventory_locked_in_open_orders&quot;)
-13          return skip(&quot;insufficient_inventory&quot;)
-14      else   ▷ buy
-15          x_b ← position of (q + coins in own open buys)
-16          target ← S · clamp(1 - k_s(2x_b - 1), φ, 1 + k_s)   ▷ = 2S (1 - x_b)
-17          if P = NONE then return skip(&quot;one_sided_quote&quot;)
-18          if an own buy rests within h ε of P then return skip(&quot;resting_order_kept&quot;)
-19          if target &lt; s_min then return skip(&quot;inventory_sizing&quot;)
-20          size ← max(0, min(target, free cash/P))
-21          if size &lt; s_min then return skip(&quot;insufficient_cash&quot;)
-22          if coins in own open buys + q + size &gt; q_max then return skip(&quot;inventory_cap&quot;)
-23          if guard on and (cash locked in buys + size · P)/cash &gt; ratio then return skip(&quot;locked_cash_limit&quot;)
-24          return SEND(buy, size, P)
-25      ▷ live: the same checks, the buy guard before the band cap, and only &quot;not_sent&quot; is recorded</pre></div>
-  <div class="algo" id="algo-5a"><div class="algo-head"><span class="algo-n">Algorithm 5a</span><span class="algo-name">SEND</span><span class="algo-args">(side, size, P)</span><span class="algo-ref">part 3.5 · <code>exchange/demo.py, exchange/nobitex.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">function</span> <span class="fn">SEND</span>(side, size, \(P\))</li><li style="--ind:1"><span class="kw">if</span> mode = demo <span class="kw">then</span></li><li style="--ind:2">reject <span class="kw">if</span> (buy <span class="kw">and</span> size \(\cdot P \gt\) free cash) <span class="kw">or</span> (sell <span class="kw">and</span> size \(\gt\) free coins)</li><li style="--ind:2">add a paper order <code class="lit">&lt;pair&gt;-&lt;side&gt;-&lt;round&gt;-&lt;ms&gt;</code> <span class="cm">▷ nothing moves until it fills</span></li><li style="--ind:1"><span class="kw">else</span></li><li style="--ind:2">POST <code class="lit">/market/orders/add</code> {type, srcCurrency, dstCurrency, amount, price, clientOrderId}</li><li style="--ind:2">placed only <span class="kw">if</span> the reply is <code class="lit">ok</code> <span class="kw">and</span> echoes the same clientOrderId</li></ol><pre class="algo-plain" hidden> 1  function SEND(side, size, P)
- 2      if mode = demo then
- 3          reject if (buy and size · P &gt; free cash) or (sell and size &gt; free coins)
- 4          add a paper order &quot;&lt;pair&gt;-&lt;side&gt;-&lt;round&gt;-&lt;ms&gt;&quot;   ▷ nothing moves until it fills
- 5      else
- 6          POST &quot;/market/orders/add&quot; {type, srcCurrency, dstCurrency, amount, price, clientOrderId}
- 7          placed only if the reply is &quot;ok&quot; and echoes the same clientOrderId</pre></div>
-  <div class="algo" id="algo-6"><div class="algo-head"><span class="algo-n">Algorithm 6</span><span class="algo-name">SETTLE-FILLS</span><span class="algo-args">(book)</span><span class="algo-ref">part 3.2, 3.6 · <code>paper.py, engine.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">procedure</span> <span class="fn">SETTLE-FILLS</span>(book)</li><li style="--ind:1"><span class="kw">if</span> mode = demo <span class="kw">then</span> <span class="cm">▷ the paper ledger decides</span></li><li style="--ind:2">budget[buy] \(\gets S\);  budget[sell] \(\gets S\) <span class="cm">▷ per round</span></li><li style="--ind:2"><span class="kw">for</span> each open paper order \(o\) (buys first; best price first; oldest first) <span class="kw">do</span></li><li style="--ind:3"><span class="kw">if</span> (\(o\) is a buy <span class="kw">and</span> \(a_0 \le o.P\)) <span class="kw">or</span> (\(o\) is a sell <span class="kw">and</span> \(b_0 \ge o.P\)) <span class="kw">then</span></li><li style="--ind:4">\(F \gets \min(o.\text{remaining},\ \text{budget}[o.\text{side}])\);  budget[\(o\).side] \(\gets\) budget[\(o\).side] \(- F\)</li><li style="--ind:4"><span class="kw">if</span> \(F \gt 0\) <span class="kw">then</span> <span class="fn">APPLY-FILL</span>(\(o\), \(F\), \(o.P\)) <span class="cm">▷ fills at its own limit price</span></li><li style="--ind:1"><span class="kw">else</span> <span class="cm">▷ live: the exchange decides</span></li><li style="--ind:2"><span class="kw">for</span> each order with our clientOrderId on this pair <span class="kw">do</span></li><li style="--ind:3">\(F \gets\) matched now \(-\) matched already booked</li><li style="--ind:3"><span class="kw">if</span> \(F \gt 0\) <span class="kw">then</span> <span class="fn">APPLY-FILL</span>(\(o\), \(F\), \(o.P\))</li><li class="gap"></li><li style="--ind:0"><span class="kw">procedure</span> <span class="fn">APPLY-FILL</span>(\(o\), \(F\), \(P\))</li><li style="--ind:1"><span class="kw">if</span> \(o\) is a buy <span class="kw">then</span></li><li style="--ind:2">fee \(\gets f\,F\) (demo) or the fee Nobitex reports (live), in coins</li><li style="--ind:2">\(c \gets c - F\,P\);   \(q \gets q + F - \text{fee}\)</li><li style="--ind:1"><span class="kw">else</span></li><li style="--ind:2">fee \(\gets f\,F\,P\) (demo) or the fee Nobitex reports (live), in rial</li><li style="--ind:2">\(q \gets q - F\);   \(c \gets c + F\,P - \text{fee}\)</li><li class="gap"></li><li style="--ind:0"><span class="kw">procedure</span> <span class="fn">CANCEL-OWN-ORDERS-OLDER-THAN</span>(\(\tau\))</li><li style="--ind:1"><span class="kw">for</span> each own open order \(o\) <span class="kw">do</span></li><li style="--ind:2"><span class="kw">if</span> now \(- o\).created \(\gt \tau \cdot 60\) s <span class="kw">then</span></li><li style="--ind:3">demo: remove \(o\) (its locked cash or coins are free again)</li><li style="--ind:3">live: POST <code class="lit">/market/orders/update-status</code> {status: canceled, order: \(o\)}</li></ol><pre class="algo-plain" hidden> 1  procedure SETTLE-FILLS(book)
- 2      if mode = demo then   ▷ the paper ledger decides
- 3          budget[buy] ← S;  budget[sell] ← S   ▷ per round
- 4          for each open paper order o (buys first; best price first; oldest first) do
- 5              if (o is a buy and a_0 ≤ o.P) or (o is a sell and b_0 ≥ o.P) then
- 6                  F ← min(o.remaining, budget[o.side]);  budget[o.side] ← budget[o.side] - F
- 7                  if F &gt; 0 then APPLY-FILL(o, F, o.P)   ▷ fills at its own limit price
- 8      else   ▷ live: the exchange decides
- 9          for each order with our clientOrderId on this pair do
-10              F ← matched now - matched already booked
-11              if F &gt; 0 then APPLY-FILL(o, F, o.P)
+  <p>Three listings cover everything the bot does. <a href="#listing-1">Listing 1</a> is one round of a worker; at line 8 it calls <a href="#listing-2">Listing 2</a>, which chooses the prices (Algorithm 1 v2); at line 10 that one reads each candidate's fill chance from <a href="#listing-3">Listing 3</a>. Every line does one thing. The small number on the right names the section that explains the line, and the notes under each listing hold the details.</p>
+  <p class="note">Notation: \(\gets\) means "becomes"; \(S\) is the order size, \(f\) the fee, \([q_{\min}, q_{\max}]\) the coin band, and \(\operatorname{pos}(v) = \operatorname{clamp}\big((v - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1\big)\) the position of an amount \(v\) in that band. Every other symbol is in part 10.</p>
+  <figure class="alg" id="listing-1"><figcaption><span class="alg-n">Listing 1</span>One round of a worker</figcaption><div class="alg-io"><div><span class="io-k">Input</span>the pair (BTC or USDT) and the mode (demo or live); coins \(q\), rial cash \(c\), the worker's open orders</div><div><span class="io-k">Output</span>the orders sent in this round, and one recorded row</div></div><div class="alg-lines"><div class="l" style="--ind:0"><span class="ln">1</span><span class="code"><span class="kw">if</span> mode = demo <span class="kw">then</span> re-read the admin settings that changed</span><span class="ref"><a href="#s7-2">7.2</a></span></div><div class="l" style="--ind:0"><span class="ln">2</span><span class="code"><i class="var">book</i> \(\gets\) the pair's order book from Nobitex</span><span class="ref"><a href="#s3-1">3.1</a></span></div><div class="l" style="--ind:0"><span class="ln">3</span><span class="code"><span class="kw">if</span> <i class="var">book</i> is unavailable <span class="kw">then</span> wait for the next round</span></div><div class="l step"><span class="ln"></span><span class="code">Settle what happened since the last round</span></div><div class="l" style="--ind:0"><span class="ln">4</span><span class="code"><span class="kw">for</span> each own order \(o\) that filled \(F\) coins at its price \(P_o\) <span class="kw">do</span></span><span class="ref"><a href="#s3-2">3.2</a></span></div><div class="l" style="--ind:1"><span class="ln">5</span><span class="code"><span class="kw">if</span> \(o\) is a buy <span class="kw">then</span> \((q, c) \gets \big(q + (1 - f)F,\ c - F P_o\big)\)</span><span class="ref"><a href="#s3-6">3.6</a></span></div><div class="l" style="--ind:1"><span class="ln">6</span><span class="code"><span class="kw">else</span> \((q, c) \gets \big(q - F,\ c + (1 - f)F P_o\big)\)</span><span class="ref"><a href="#s3-6">3.6</a></span></div><div class="l" style="--ind:0"><span class="ln">7</span><span class="code">cancel own orders older than 10 minutes</span><span class="ref"><a href="#s3-2">3.2</a></span></div><div class="l step"><span class="ln"></span><span class="code">Gate 1 · choose the prices</span></div><div class="l" style="--ind:0"><span class="ln">8</span><span class="code">\((B, A) \gets\) <span class="fn">ChoosePrices</span>(<i class="var">book</i>, \(q\))</span><span class="ref"><a href="#listing-2">Listing 2</a></span></div><div class="l step"><span class="ln"></span><span class="code">Gate 2 · size and send each side</span></div><div class="l" style="--ind:0"><span class="ln">9</span><span class="code">\(x_s \gets \operatorname{pos}(q - o_s)\) and \(x_b \gets \operatorname{pos}(q + o_b)\)</span><span class="ref"><a href="#s3-4">3.4</a></span></div><div class="l" style="--ind:0"><span class="ln">10</span><span class="code"><span class="kw">if</span> \(A\) exists <span class="kw">and</span> no own sell rests within 5 ticks of \(A\) <span class="kw">then</span></span></div><div class="l" style="--ind:1"><span class="ln">11</span><span class="code"><i class="var">size</i> \(\gets \min\big(2S\,x_s,\ \text{free coins} - q_{\min}\big)\)</span></div><div class="l" style="--ind:1"><span class="ln">12</span><span class="code"><span class="kw">if</span> <i class="var">size</i> \(\ge 0.1\,S\) <span class="kw">and</span> the exposure guard allows <span class="kw">then</span></span></div><div class="l" style="--ind:2"><span class="ln">13</span><span class="code">send a sell of <i class="var">size</i> at \(A\)</span><span class="ref"><a href="#s3-5">3.5</a></span></div><div class="l" style="--ind:0"><span class="ln">14</span><span class="code"><span class="kw">if</span> \(B\) exists <span class="kw">and</span> no own buy rests within 5 ticks of \(B\) <span class="kw">then</span></span></div><div class="l" style="--ind:1"><span class="ln">15</span><span class="code"><i class="var">size</i> \(\gets \min\big(2S\,(1 - x_b),\ \text{free cash}/B\big)\)</span></div><div class="l" style="--ind:1"><span class="ln">16</span><span class="code"><span class="kw">if</span> <i class="var">size</i> \(\ge 0.1\,S\) <span class="kw">and</span> \(q + o_b + \textit{size} \le q_{\max}\) <span class="kw">and</span> the guard allows <span class="kw">then</span></span></div><div class="l" style="--ind:2"><span class="ln">17</span><span class="code">send a buy of <i class="var">size</i> at \(B\)</span><span class="ref"><a href="#s3-5">3.5</a></span></div><div class="l step"><span class="ln"></span><span class="code">Record</span></div><div class="l" style="--ind:0"><span class="ln">18</span><span class="code">write the round's row; wait for the next round</span><span class="ref"><a href="#s3-7">3.7</a></span></div></div><p class="alg-notes-t">Notes</p><ol class="alg-notes"><li>\(o_s\) and \(o_b\) are the coins still in the worker's open sells and buys, so a resting order counts as if it had filled.</li><li>Demo fills an order when the best price on the other side reaches its limit, at the limit price, at most \(S\) per side per round. Live books what Nobitex reports as matched, with the fee Nobitex reports.</li><li>The exposure guard: the coins locked in open sells plus the new sell stay within 25 % of the coins held (for a buy, the same with cash). Always on in live; in demo only if the admin turns it on.</li><li>Before the first round the worker loads its settings and balances (demo: the shared demo session; live: the Nobitex wallet, and it refuses to start if a balance cannot be read). When stopped, it cancels its open orders (<a href="#s3-0">3.0</a>, <a href="#s3-8">3.8</a>).</li><li>A side that is not sent records its reason (<a href="#decision">4.0</a>, steps 7 and 8).</li></ol><pre class="algo-plain" hidden>Input:  the pair (BTC or USDT) and the mode (demo or live); coins q, rial cash c, the worker&#x27;s open orders
+Output: the orders sent in this round, and one recorded row
 
-12  procedure APPLY-FILL(o, F, P)
-13      if o is a buy then
-14          fee ← f F (demo) or the fee Nobitex reports (live), in coins
-15          c ← c - F P;   q ← q + F - fee
-16      else
-17          fee ← f F P (demo) or the fee Nobitex reports (live), in rial
-18          q ← q - F;   c ← c + F P - fee
+ 1  if mode = demo then re-read the admin settings that changed      [7.2]
+ 2  book ← the pair&#x27;s order book from Nobitex                        [3.1]
+ 3  if book is unavailable then wait for the next round
 
-19  procedure CANCEL-OWN-ORDERS-OLDER-THAN(τ)
-20      for each own open order o do
-21          if now - o.created &gt; τ · 60 s then
-22              demo: remove o (its locked cash or coins are free again)
-23              live: POST &quot;/market/orders/update-status&quot; {status: canceled, order: o}</pre></div>
-  <div class="algo" id="algo-7"><div class="algo-head"><span class="algo-n">Algorithm 7</span><span class="algo-name">FILL-PROB</span><span class="algo-args">(δ, side)</span><span class="algo-ref">part 5.3 · <code>fill_model.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">function</span> <span class="fn">FILL-PROB</span>(\(\delta\), side) <span class="cm">▷ \(\delta\): distance from the centre (limitation 1)</span></li><li style="--ind:1">\(T \gets\) the fill table file (re-read whenever it changes)</li><li style="--ind:1"><span class="kw">if</span> \(T\) exists <span class="kw">and</span> fill_table_enabled <span class="kw">and</span> age(\(T\)) \(\le\) 48 h <span class="kw">then</span></li><li style="--ind:2">\(U \gets\) buckets of \(T\) with \(N_k(\text{side}) \ge 50\)</li><li style="--ind:2"><span class="kw">if</span> \(U \ne \emptyset\) <span class="kw">then</span></li><li style="--ind:3"><span class="kw">if</span> \(\delta \le \delta_{\text{first}}\) <span class="kw">then</span> <span class="kw">return</span> \(\hat p_{\text{first}}\)</li><li style="--ind:3"><span class="kw">if</span> \(\delta \ge \delta_{\text{last}}\) <span class="kw">then</span> <span class="kw">return</span> \(\hat p_{\text{last}}\)</li><li style="--ind:3">take the neighbours \(\delta_k \le \delta \le \delta_{k+1}\) in \(U\)</li><li style="--ind:3"><span class="kw">return</span> \(\hat p_k + \dfrac{\delta - \delta_k}{\delta_{k+1} - \delta_k}\,(\hat p_{k+1} - \hat p_k)\)</li><li style="--ind:1"><span class="kw">return</span> \(1 - \exp\!\big(-\lambda_\tau\,e^{-\kappa\delta}\big)\) <span class="cm">▷ fallback; \(\kappa = 400\), \(\lambda_\tau = 1\)</span></li></ol><pre class="algo-plain" hidden> 1  function FILL-PROB(δ, side)   ▷ δ: distance from the centre (limitation 1)
- 2      T ← the fill table file (re-read whenever it changes)
- 3      if T exists and fill_table_enabled and age(T) ≤ 48 h then
- 4          U ← buckets of T with N_k(side) ≥ 50
- 5          if U ≠ ∅ then
- 6              if δ ≤ δ_first then return p̂_first
- 7              if δ ≥ δ_last then return p̂_last
- 8              take the neighbours δ_k ≤ δ ≤ δ_(k+1) in U
- 9              return p̂_k + (δ - δ_k)/(δ_(k+1) - δ_k) (p̂_(k+1) - p̂_k)
-10      return 1 - exp(-λ_τ e^(-κδ))   ▷ fallback; κ = 400, λ_τ = 1</pre></div>
-  <div class="algo" id="algo-8"><div class="algo-head"><span class="algo-n">Algorithm 8</span><span class="algo-name">BUILD-FILL-TABLE</span><span class="algo-args">(pair)</span><span class="algo-ref">part 5.2–5.3 · <code>tools/build_fill_table.py, nightly 03:00</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">procedure</span> <span class="fn">BUILD-FILL-TABLE</span>(pair)</li><li style="--ind:1">rows \(\gets\) best bid / ask rows of the last 14 days from every CSV of the pair (sorted, one per timestamp)</li><li style="--ind:1"><span class="kw">for</span> each row \(i\) (time \(t_i\), mid \(m_i\)) <span class="kw">do</span></li><li style="--ind:2">\(W \gets\) rows \(j\) with \(t_i \lt t_j \le t_i + \tau\)</li><li style="--ind:2"><span class="kw">if</span> \(|W| \lt 2\) <span class="kw">or</span> \(t_{\text{last}}(W) - t_i \lt 0.8\,\tau\) <span class="kw">or</span> a gap in \(W\) \(\gt \max(3 \times \text{median step},\ 30\text{ s})\) <span class="kw">then</span> <span class="kw">continue</span></li><li style="--ind:2">lo \(\gets\) lowest best ask in \(W\);  hi \(\gets\) highest best bid in \(W\);  \(w \gets 0.5^{\,\text{age}_i/3\text{ days}}\)</li><li style="--ind:2"><span class="kw">for</span> \(k \gets 1 \dots K\) <span class="kw">do</span> <span class="cm">▷ buckets 0.10 % … 2.40 %</span></li><li style="--ind:3">\(N^{buy}_k \mathrel{+}= w\);   \(H^{buy}_k \mathrel{+}= w \cdot [\text{lo} \le m_i(1-\delta_k)]\)</li><li style="--ind:3">\(N^{sell}_k \mathrel{+}= w\);  \(H^{sell}_k \mathrel{+}= w \cdot [\text{hi} \ge m_i(1+\delta_k)]\)</li><li style="--ind:1"><span class="kw">for</span> each finished own order (side, distance \(d = |m - P|/m\), filled?) <span class="kw">do</span></li><li style="--ind:2">\(k \gets \arg\min_k |\ln d - \ln \delta_k|\);  \(n_k \mathrel{+}= 1\);  \(h_k \mathrel{+}=\) filled</li><li style="--ind:1"><span class="kw">for</span> each side <span class="kw">and</span> \(k\) <span class="kw">do</span></li><li style="--ind:2">\(\hat p_k \gets \dfrac{n_k}{n_k + 100}\cdot\dfrac{h_k}{n_k} + \dfrac{100}{n_k + 100}\cdot\dfrac{H_k}{N_k}\) <span class="cm">▷ Bayesian blend</span></li><li style="--ind:1">make \(\hat p\) non-increasing in \(k\) (pool adjacent violators, weights = samples)</li><li style="--ind:1">write <code class="lit">fill_table_&lt;pair&gt;irt.json</code> {updated_at, buckets: \(\delta_k\), \(\hat p_k\), \(N_k\)}</li></ol><pre class="algo-plain" hidden> 1  procedure BUILD-FILL-TABLE(pair)
- 2      rows ← best bid / ask rows of the last 14 days from every CSV of the pair (sorted, one per timestamp)
- 3      for each row i (time t_i, mid m_i) do
- 4          W ← rows j with t_i &lt; t_j ≤ t_i + τ
- 5          if |W| &lt; 2 or t_last(W) - t_i &lt; 0.8 τ or a gap in W &gt; max(3 × median step, 30 s) then continue
- 6          lo ← lowest best ask in W;  hi ← highest best bid in W;  w ← 0.5^(age_i/3 days)
- 7          for k ← 1 … K do   ▷ buckets 0.10 % … 2.40 %
- 8              N^buy_k += w;   H^buy_k += w · [lo ≤ m_i(1-δ_k)]
- 9              N^sell_k += w;  H^sell_k += w · [hi ≥ m_i(1+δ_k)]
-10      for each finished own order (side, distance d = |m - P|/m, filled?) do
-11          k ← argmin_k |ln d - ln δ_k|;  n_k += 1;  h_k += filled
-12      for each side and k do
-13          p̂_k ← n_k/(n_k + 100)·h_k/n_k + 100/(n_k + 100)·H_k/N_k   ▷ Bayesian blend
-14      make p̂ non-increasing in k (pool adjacent violators, weights = samples)
-15      write &quot;fill_table_&lt;pair&gt;irt.json&quot; {updated_at, buckets: δ_k, p̂_k, N_k}</pre></div>
-  <div class="algo" id="algo-9"><div class="algo-head"><span class="algo-n">Algorithm 9</span><span class="algo-name">PNL-ATTRIBUTION</span><span class="algo-args">(rows)</span><span class="algo-ref">part 6.2 · <code>dashboard.py</code></span></div><ol class="algo-lines"><li style="--ind:0"><span class="kw">function</span> <span class="fn">PNL-ATTRIBUTION</span>(rows)</li><li style="--ind:1"><span class="kw">for</span> each session, rows in time order <span class="kw">do</span></li><li style="--ind:2"><span class="kw">for</span> \(t \gets\) second row \(\dots\) last row <span class="kw">do</span></li><li style="--ind:3">\(P_t \gets q_{t-1}\,(m_t - m_{t-1})\) <span class="cm">▷ price PnL</span></li><li style="--ind:3">\(T_t \gets (c_t - c_{t-1}) + (q_t - q_{t-1})\,m_t\) <span class="cm">▷ trading PnL, after fees</span></li><li style="--ind:1">\(\Sigma P \gets \sum_t P_t\);  \(\Sigma T \gets \sum_t T_t\) <span class="cm">▷ \(W_T - W_0 = \Sigma P + \Sigma T\) exactly</span></li><li style="--ind:1">verdict \(\gets\) <code class="lit">Mainly trading</code> <span class="kw">if</span> \(|\Sigma T| \ge |\Sigma P|\) <span class="kw">else</span> <code class="lit">Mainly price</code></li></ol><pre class="algo-plain" hidden> 1  function PNL-ATTRIBUTION(rows)
- 2      for each session, rows in time order do
- 3          for t ← second row … last row do
- 4              P_t ← q_(t-1) (m_t - m_(t-1))   ▷ price PnL
- 5              T_t ← (c_t - c_(t-1)) + (q_t - q_(t-1)) m_t   ▷ trading PnL, after fees
- 6      Σ P ← Σ_t P_t;  Σ T ← Σ_t T_t   ▷ W_T - W_0 = Σ P + Σ T exactly
- 7      verdict ← &quot;Mainly trading&quot; if |Σ T| ≥ |Σ P| else &quot;Mainly price&quot;</pre></div>
+    Settle what happened since the last round
+ 4  for each own order o that filled F coins at its price P_o do     [3.2]
+ 5      if o is a buy then (q, c) ← (q + (1 - f)F, c - F P_o)        [3.6]
+ 6      else (q, c) ← (q - F, c + (1 - f)F P_o)                      [3.6]
+ 7  cancel own orders older than 10 minutes                          [3.2]
+
+    Gate 1 · choose the prices
+ 8  (B, A) ← ChoosePrices(book, q)                                   [Listing 2]
+
+    Gate 2 · size and send each side
+ 9  x_s ← pos(q - o_s) and x_b ← pos(q + o_b)                        [3.4]
+10  if A exists and no own sell rests within 5 ticks of A then
+11      size ← min(2S x_s, free coins - q_min)
+12      if size ≥ 0.1 S and the exposure guard allows then
+13          send a sell of size at A                                 [3.5]
+14  if B exists and no own buy rests within 5 ticks of B then
+15      size ← min(2S (1 - x_b), free cash/B)
+16      if size ≥ 0.1 S and q + o_b + size ≤ q_max and the guard allows then
+17          send a buy of size at B                                  [3.5]
+
+    Record
+18  write the round&#x27;s row; wait for the next round                   [3.7]</pre></figure>
+  <figure class="alg" id="listing-2"><figcaption><span class="alg-n">Listing 2</span>Choosing the prices (Algorithm 1 v2)</figcaption><div class="alg-io"><div><span class="io-k">Input</span>the order book, bids \(b_0 \gt b_1 \gt \dots\) and asks \(a_0 \lt a_1 \lt \dots\); coins \(q\)</div><div><span class="io-k">Output</span>a buy price \(B\), a sell price \(A\), both, or no order</div></div><div class="alg-lines"><div class="l" style="--ind:0"><span class="ln">1</span><span class="code">update \(\bar P\), the average cost of the coins held</span><span class="ref"><a href="#s4-8">4.8</a></span></div><div class="l step"><span class="ln"></span><span class="code">Step 1 · Is the book usable?</span></div><div class="l" style="--ind:0"><span class="ln">2</span><span class="code"><span class="kw">if</span> a side has fewer than two levels <span class="kw">or</span> \(b_0 \gt a_0\) <span class="kw">then</span> <span class="kw">return</span> no order</span><span class="ref"><a href="#decision">4.0</a></span></div><div class="l step"><span class="ln"></span><span class="code">Step 2 · The candidate prices</span></div><div class="l" style="--ind:0"><span class="ln">3</span><span class="code">\(m \gets (b_0 + a_0)/2\)</span><span class="ref"><a href="#s4-1">4.1</a></span></div><div class="l" style="--ind:0"><span class="ln">4</span><span class="code">\(x \gets \operatorname{pos}(q)\)</span><span class="ref"><a href="#s4-1">4.1</a></span></div><div class="l" style="--ind:0"><span class="ln">5</span><span class="code">\(c \gets m\,\big(1 - \sigma_q\,(2x - 1)\big)\)</span><span class="ref"><a href="#s4-2">4.2</a></span></div><div class="l" style="--ind:0"><span class="ln">6</span><span class="code"><span class="kw">for</span> \(\delta = \delta_{\min},\ \delta_{\min}\,\rho,\ \delta_{\min}\,\rho^2, \dots\) while \(\delta \le \delta_{\max}\) <span class="kw">do</span></span><span class="ref"><a href="#s4-3">4.3</a></span></div><div class="l" style="--ind:1"><span class="ln">7</span><span class="code">\(B \gets\) one tick above the first bid \(\le c\,(1 - \delta)\), but below \(a_0\)</span></div><div class="l" style="--ind:1"><span class="ln">8</span><span class="code">\(A \gets\) one tick below the first ask \(\ge c\,(1 + \delta)\), but above \(b_0\)</span></div><div class="l" style="--ind:1"><span class="ln">9</span><span class="code">add \(B\) and \(A\) to the candidates, each price once</span></div><div class="l" style="--ind:0"><span class="ln">10</span><span class="code">\(p_K \gets\) <span class="fn">FillChance</span> of every candidate \(K\)</span><span class="ref"><a href="#listing-3">Listing 3</a></span></div><div class="l step"><span class="ln"></span><span class="code">Step 3 · Which sides are allowed?</span></div><div class="l" style="--ind:0"><span class="ln">11</span><span class="code"><span class="kw">if</span> \(x \ge 0.9\) <span class="kw">then</span> <i class="var">sides</i> \(\gets\) {sell}</span><span class="ref"><a href="#s4-5">4.5</a></span></div><div class="l" style="--ind:0"><span class="ln">12</span><span class="code"><span class="kw">else</span> <span class="kw">if</span> \(x \le 0.1\) <span class="kw">then</span> <i class="var">sides</i> \(\gets\) {buy}</span></div><div class="l" style="--ind:0"><span class="ln">13</span><span class="code"><span class="kw">else</span> <i class="var">sides</i> \(\gets\) {buy, sell}</span></div><div class="l step"><span class="ln"></span><span class="code">Step 4 · The best buy/sell pair</span></div><div class="l" style="--ind:0"><span class="ln">14</span><span class="code"><i class="var">choice</i> \(\gets\) <span class="fn">none</span></span></div><div class="l" style="--ind:0"><span class="ln">15</span><span class="code"><span class="kw">if</span> <i class="var">sides</i> = {buy, sell} <span class="kw">then</span></span></div><div class="l" style="--ind:1"><span class="ln">16</span><span class="code"><span class="kw">for</span> each candidate buy \(B\) and candidate sell \(A\) <span class="kw">do</span></span></div><div class="l" style="--ind:2"><span class="ln">17</span><span class="code">\(R \gets (1 - f)^2\,A/B - 1\)</span><span class="ref"><a href="#s4-6">4.6</a></span></div><div class="l" style="--ind:2"><span class="ln">18</span><span class="code">\(\pi_1 \gets p_B(1 - p_A) + p_A(1 - p_B)\), the chance that only one side fills</span><span class="ref"><a href="#s4-7">4.7</a></span></div><div class="l" style="--ind:2"><span class="ln">19</span><span class="code">\(J \gets p_B\,p_A\,R - \eta\,\pi_1\)</span></div><div class="l" style="--ind:2"><span class="ln">20</span><span class="code">keep \((B, A)\) <span class="kw">if</span> \(R \gt r_{\min}\) <span class="kw">and</span> \(J \gt J_{\min}\)</span></div><div class="l" style="--ind:1"><span class="ln">21</span><span class="code"><i class="var">choice</i> \(\gets\) the kept pair with the largest \(J\), if any</span></div><div class="l step"><span class="ln"></span><span class="code">Step 5 · Otherwise, the best single order</span></div><div class="l" style="--ind:0"><span class="ln">22</span><span class="code"><span class="kw">if</span> <i class="var">choice</i> = <span class="fn">none</span> <span class="kw">then</span></span></div><div class="l" style="--ind:1"><span class="ln">23</span><span class="code"><span class="kw">for</span> each candidate \(K\) on an allowed side <span class="kw">do</span></span><span class="ref"><a href="#s4-8">4.8</a></span></div><div class="l" style="--ind:2"><span class="ln">24</span><span class="code">\(P_{\text{ref}} \gets c\) for a buy; \(\bar P\) (or \(c\) while unknown) for a sell</span></div><div class="l" style="--ind:2"><span class="ln">25</span><span class="code">\(R \gets (1 - f)^2\,K/P_{\text{ref}} - 1\) for a sell, \((1 - f)^2\,P_{\text{ref}}/K - 1\) for a buy</span></div><div class="l" style="--ind:2"><span class="ln">26</span><span class="code">keep \(K\) <span class="kw">if</span> \(R \gt r_{\min}\) <span class="kw">and</span> \(J = p_K\,(R - \eta) \gt J_{\min}\)</span></div><div class="l" style="--ind:1"><span class="ln">27</span><span class="code"><i class="var">choice</i> \(\gets\) the kept order with the largest \(J\), if any</span></div><div class="l" style="--ind:0"><span class="ln">28</span><span class="code"><span class="kw">if</span> <i class="var">choice</i> = <span class="fn">none</span> <span class="kw">then</span> <span class="kw">return</span> no order</span></div><div class="l step"><span class="ln"></span><span class="code">Step 6 · Keep a price that barely moved</span></div><div class="l" style="--ind:0"><span class="ln">29</span><span class="code"><span class="kw">for</span> each side of <i class="var">choice</i> <span class="kw">do</span></span><span class="ref"><a href="#s4-9">4.9</a></span></div><div class="l" style="--ind:1"><span class="ln">30</span><span class="code"><span class="kw">if</span> its previous price is within 5 ticks <span class="kw">and</span> under 300 s old <span class="kw">then</span> keep the previous price</span></div><div class="l" style="--ind:0"><span class="ln">31</span><span class="code"><span class="kw">if</span> a kept price makes \(R \le r_{\min}\) <span class="kw">then</span> use the new prices</span></div><div class="l" style="--ind:0"><span class="ln">32</span><span class="code"><span class="kw">return</span> <i class="var">choice</i></span></div></div><p class="alg-notes-t">Notes</p><ol class="alg-notes"><li>A candidate's fill chance is read at its distance from the centre, \(\hat\delta = |K - c|/c\).</li><li>If the book shows no level beyond a target, the target itself, rounded to a tick, is the candidate.</li><li>On a tie in \(J\), the candidate closer to the centre wins.</li><li>\(\bar P\): if \(q\) rose by \(\Delta\) since the last round while a buy at \(B\) was resting, \(\bar P \gets (\bar P\,n + B\,\Delta)/(n + \Delta)\) and \(n \gets n + \Delta\); if \(q\) fell, \(n \gets \max(0,\ n + \Delta)\). \(\bar P\) is known while \(n \gt 0\).</li><li>0.1, 0.9, 5 ticks and 300 s are the current settings of both pairs (part 10). A side without a price forgets its previous price; “no order” forgets both and records its reason (<a href="#decision">4.0</a>).</li></ol><pre class="algo-plain" hidden>Input:  the order book, bids b_0 &gt; b_1 &gt; … and asks a_0 &lt; a_1 &lt; …; coins q
+Output: a buy price B, a sell price A, both, or no order
+
+ 1  update P̄, the average cost of the coins held                    [4.8]
+
+    Step 1 · Is the book usable?
+ 2  if a side has fewer than two levels or b_0 &gt; a_0 then return no order   [4.0]
+
+    Step 2 · The candidate prices
+ 3  m ← (b_0 + a_0)/2                                                [4.1]
+ 4  x ← pos(q)                                                       [4.1]
+ 5  c ← m (1 - σ_q (2x - 1))                                         [4.2]
+ 6  for δ = δ_min, δ_min ρ, δ_min ρ^2, … while δ ≤ δ_max do          [4.3]
+ 7      B ← one tick above the first bid ≤ c (1 - δ), but below a_0
+ 8      A ← one tick below the first ask ≥ c (1 + δ), but above b_0
+ 9      add B and A to the candidates, each price once
+10  p_K ← FillChance of every candidate K                            [Listing 3]
+
+    Step 3 · Which sides are allowed?
+11  if x ≥ 0.9 then sides ← {sell}                                   [4.5]
+12  else if x ≤ 0.1 then sides ← {buy}
+13  else sides ← {buy, sell}
+
+    Step 4 · The best buy/sell pair
+14  choice ← none
+15  if sides = {buy, sell} then
+16      for each candidate buy B and candidate sell A do
+17          R ← (1 - f)^2 A/B - 1                                    [4.6]
+18          π_1 ← p_B(1 - p_A) + p_A(1 - p_B), the chance that only one side fills   [4.7]
+19          J ← p_B p_A R - η π_1
+20          keep (B, A) if R &gt; r_min and J &gt; J_min
+21      choice ← the kept pair with the largest J, if any
+
+    Step 5 · Otherwise, the best single order
+22  if choice = none then
+23      for each candidate K on an allowed side do                   [4.8]
+24          P_ref ← c for a buy; P̄ (or c while unknown) for a sell
+25          R ← (1 - f)^2 K/P_ref - 1 for a sell, (1 - f)^2 P_ref/K - 1 for a buy
+26          keep K if R &gt; r_min and J = p_K (R - η) &gt; J_min
+27      choice ← the kept order with the largest J, if any
+28  if choice = none then return no order
+
+    Step 6 · Keep a price that barely moved
+29  for each side of choice do                                       [4.9]
+30      if its previous price is within 5 ticks and under 300 s old then keep the previous price
+31  if a kept price makes R ≤ r_min then use the new prices
+32  return choice</pre></figure>
+  <figure class="alg" id="listing-3"><figcaption><span class="alg-n">Listing 3</span>The fill probability</figcaption><div class="alg-io"><div><span class="io-k">Input</span>the best bid and ask of every recorded round of the last 14 days; the bot's finished orders</div><div><span class="io-k">Output</span>the table \(\hat p_k\) for each side and bucket; the fill chance \(p(\delta)\) of a candidate</div></div><div class="alg-lines"><div class="l step"><span class="ln"></span><span class="code">Every night at 03:00 UTC · Build the table</span></div><div class="l" style="--ind:0"><span class="ln">1</span><span class="code"><span class="kw">for</span> each recorded round \(i\), with mid \(m_i\) <span class="kw">do</span></span><span class="ref"><a href="#s5-3">5.3</a></span></div><div class="l" style="--ind:1"><span class="ln">2</span><span class="code"><span class="kw">if</span> the next 10 minutes are not fully recorded <span class="kw">then</span> skip round \(i\)</span></div><div class="l" style="--ind:1"><span class="ln">3</span><span class="code"><i class="var">lo</i> \(\gets\) the lowest best ask in the next 10 minutes</span></div><div class="l" style="--ind:1"><span class="ln">4</span><span class="code"><i class="var">hi</i> \(\gets\) the highest best bid in the next 10 minutes</span></div><div class="l" style="--ind:1"><span class="ln">5</span><span class="code">\(w \gets 0.5^{\,a/3}\), where \(a\) is the round's age in days</span></div><div class="l" style="--ind:1"><span class="ln">6</span><span class="code"><span class="kw">for</span> each bucket \(k = 1, \dots, 10\) <span class="kw">do</span></span><span class="ref"><a href="#s5-2">5.2</a></span></div><div class="l" style="--ind:2"><span class="ln">7</span><span class="code">\(N_k \gets N_k + w\) on both sides</span></div><div class="l" style="--ind:2"><span class="ln">8</span><span class="code"><span class="kw">if</span> <i class="var">lo</i> \(\le m_i\,(1 - \delta_k)\) <span class="kw">then</span> \(H_k \gets H_k + w\) on the buy side</span></div><div class="l" style="--ind:2"><span class="ln">9</span><span class="code"><span class="kw">if</span> <i class="var">hi</i> \(\ge m_i\,(1 + \delta_k)\) <span class="kw">then</span> \(H_k \gets H_k + w\) on the sell side</span></div><div class="l" style="--ind:0"><span class="ln">10</span><span class="code"><span class="kw">for</span> each side and each bucket \(k\) <span class="kw">do</span></span></div><div class="l" style="--ind:1"><span class="ln">11</span><span class="code">\(\omega_k \gets n_k/(n_k + 100)\)</span><span class="ref"><a href="#s5-3">5.3</a></span></div><div class="l" style="--ind:1"><span class="ln">12</span><span class="code">\(\hat p_k \gets \omega_k\,h_k/n_k + (1 - \omega_k)\,H_k/N_k\)</span></div><div class="l" style="--ind:0"><span class="ln">13</span><span class="code">make \(\hat p\) non-increasing in \(k\); save the table</span><span class="ref"><a href="#s7-5">7.5</a></span></div><div class="l step"><span class="ln"></span><span class="code">Every round · The fill chance at distance \(\delta\)</span></div><div class="l" style="--ind:0"><span class="ln">14</span><span class="code"><span class="kw">if</span> the table is at most 48 hours old <span class="kw">then</span></span><span class="ref"><a href="#s5-3">5.3</a></span></div><div class="l" style="--ind:1"><span class="ln">15</span><span class="code"><span class="kw">return</span> the straight line between the two buckets around \(\delta\)</span></div><div class="l" style="--ind:0"><span class="ln">16</span><span class="code"><span class="kw">else</span></span></div><div class="l" style="--ind:1"><span class="ln">17</span><span class="code"><span class="kw">return</span> \(1 - \exp\big(-\lambda_\tau\,e^{-\kappa\delta}\big)\)</span><span class="ref"><a href="#s5-1">5.1</a></span></div></div><p class="alg-notes-t">Notes</p><ol class="alg-notes"><li>Buckets: \(\delta_k\) = 0.10, 0.15, 0.20, 0.30, 0.40, 0.60, 0.80, 1.20, 1.60, 2.40 %. \(N_k\) counts the rounds and \(H_k\) those in which the price reached the order; a day-old round weighs \(0.5^{1/3} \approx 0.79\).</li><li>Fully recorded: the next 10 minutes reach at least 80 % of the window and have no gap longer than \(\max(3 \times \text{median step},\ 30\text{ s})\).</li><li>\(n_k\) counts the bot's own finished orders whose distance is nearest to \(\delta_k\) on a log scale, and \(h_k\) how many of them filled; with no own orders, \(\hat p_k = H_k/N_k\).</li><li>Only buckets with at least 50 samples are used, and before the first or after the last of them the end value. The formula's \(\kappa = 400\) and \(\lambda_\tau = 1\) are hand-set, not fitted (<a href="#s5-4">5.4</a>).</li></ol><pre class="algo-plain" hidden>Input:  the best bid and ask of every recorded round of the last 14 days; the bot&#x27;s finished orders
+Output: the table p̂_k for each side and bucket; the fill chance p(δ) of a candidate
+
+    Every night at 03:00 UTC · Build the table
+ 1  for each recorded round i, with mid m_i do                       [5.3]
+ 2      if the next 10 minutes are not fully recorded then skip round i
+ 3      lo ← the lowest best ask in the next 10 minutes
+ 4      hi ← the highest best bid in the next 10 minutes
+ 5      w ← 0.5^(a/3), where a is the round&#x27;s age in days
+ 6      for each bucket k = 1, …, 10 do                              [5.2]
+ 7          N_k ← N_k + w on both sides
+ 8          if lo ≤ m_i (1 - δ_k) then H_k ← H_k + w on the buy side
+ 9          if hi ≥ m_i (1 + δ_k) then H_k ← H_k + w on the sell side
+10  for each side and each bucket k do
+11      ω_k ← n_k/(n_k + 100)                                        [5.3]
+12      p̂_k ← ω_k h_k/n_k + (1 - ω_k) H_k/N_k
+13  make p̂ non-increasing in k; save the table                      [7.5]
+
+    Every round · The fill chance at distance δ
+14  if the table is at most 48 hours old then                        [5.3]
+15      return the straight line between the two buckets around δ
+16  else
+17      return 1 - exp(-λ_τ e^(-κδ))                                 [5.1]</pre></figure>
 </main>
 <script type="module">
   import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";

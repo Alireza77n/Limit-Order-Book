@@ -18,7 +18,7 @@ How the Nobitex market-making bot works, end to end: what it trades and why, one
 
 **Where does the bot decide whether to place an order?** In [**4.0, "The order decision, step by step"**](#40-the-order-decision-step-by-step): every condition in the order the code checks it (gate 1: is a price worth quoting; gate 2: is the order sent), what happens after each check, and three real cases showing where each one stopped.
 
-**The whole bot as pseudocode:** [**part 11**](#11-the-whole-bot-as-pseudocode), nine algorithms from starting a worker to the nightly fill table, in the order the code runs them.
+**The whole bot as pseudocode:** [**part 11**](#11-the-whole-bot-as-pseudocode), three listings: one round of a worker, how the prices are chosen, and how the fill probability is measured.
 
 ## 1. The idea: what a market maker does
 
@@ -1304,265 +1304,149 @@ Everything below was found while writing this page, by reading the code and runn
 
 ## 11. The whole bot as pseudocode
 
-The same logic as parts 3 to 6, written as algorithms in the order the code runs them. Keywords are in bold, procedure names in small capitals, comments after ▷ say where each line is explained, and every line corresponds to code in the file named under each title.
+Three listings cover everything the bot does. [Listing 1](#listing-1) is one round of a worker; at line 8 it calls [Listing 2](#listing-2), which chooses the prices (Algorithm 1 v2); at line 10 that one reads each candidate's fill chance from [Listing 3](#listing-3). Every line does one thing. The small number on the right names the section that explains the line, and the notes under each listing hold the details.
 
-**The bot in six lines**
+Notation: $`\gets`$ means "becomes"; $`S`$ is the order size, $`f`$ the fee, $`[q_{\min}, q_{\max}]`$ the coin band, and $`\operatorname{pos}(v) = \operatorname{clamp}\big((v - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1\big)`$ the position of an amount $`v`$ in that band. Every other symbol is in part 10.
 
-```text
- 1  for each pair (BTC, USDT) and each mode (demo, live), one worker, forever, every round:
- 2      read the order book from Nobitex
- 3      settle what filled; cancel own orders older than τ = 10 minutes
- 4      (B, A) ← the most valuable prices that beat the fees   ▷ gate 1, Algorithm 3
- 5      for each side: send if size, cash, band and safety allow   ▷ gate 2, Algorithm 5
- 6      record the round; wait for the next one
-```
+<a id="listing-1"></a>
 
-**Algorithm 1 · RUN-WORKER(pair, mode)** (part 3.0, 3.8 · `run.py`)
+**Listing 1 · One round of a worker**
 
 ```text
- 1  procedure RUN-WORKER(pair, mode)
- 2      cfg ← PROFILE[pair]   ▷ config.py
- 3      if mode = demo then
- 4          cfg ← cfg + demo overrides   ▷ "demo_config_<pair>.json", re-read every round
- 5          session ← SHARED-DEMO-SESSION()   ▷ "demo-<UTC time>-<12 hex>"
- 6          take the lock "worker_<pair>.lock"
- 7          ledger ← LOAD-LEDGER(session) or NEW-LEDGER(cash_initial, demo_inv_initial, f)
- 8          (q, c) ← (ledger coins, ledger cash)
- 9      else   ▷ live
-10          cfg ← cfg + live overrides   ▷ once: f ≥ 0.25%, guards on, ratio ≤ 25%
-11          session ← now, in Unix seconds
-12          take the lock "worker_live_<pair>.lock"
-13          (q, c) ← (WALLET(coin), WALLET(rial))
-14          if a balance is unreadable, not a number or negative then
-15              stop "refusing to start real trading"
-16      loop forever
-17          ROUND()   ▷ Algorithm 2
-18      on SIGTERM:
-19          cancel every open order this worker owns on this pair
-20          settle the last fills; exit
+Input:  the pair (BTC or USDT) and the mode (demo or live); coins q, rial cash c, the worker's open orders
+Output: the orders sent in this round, and one recorded row
+
+ 1  if mode = demo then re-read the admin settings that changed      [7.2]
+ 2  book ← the pair's order book from Nobitex                        [3.1]
+ 3  if book is unavailable then wait for the next round
+
+    Settle what happened since the last round
+ 4  for each own order o that filled F coins at its price P_o do     [3.2]
+ 5      if o is a buy then (q, c) ← (q + (1 - f)F, c - F P_o)        [3.6]
+ 6      else (q, c) ← (q - F, c + (1 - f)F P_o)                      [3.6]
+ 7  cancel own orders older than 10 minutes                          [3.2]
+
+    Gate 1 · choose the prices
+ 8  (B, A) ← ChoosePrices(book, q)                                   [Listing 2]
+
+    Gate 2 · size and send each side
+ 9  x_s ← pos(q - o_s) and x_b ← pos(q + o_b)                        [3.4]
+10  if A exists and no own sell rests within 5 ticks of A then
+11      size ← min(2S x_s, free coins - q_min)
+12      if size ≥ 0.1 S and the exposure guard allows then
+13          send a sell of size at A                                 [3.5]
+14  if B exists and no own buy rests within 5 ticks of B then
+15      size ← min(2S (1 - x_b), free cash/B)
+16      if size ≥ 0.1 S and q + o_b + size ≤ q_max and the guard allows then
+17          send a buy of size at B                                  [3.5]
+
+    Record
+18  write the round's row; wait for the next round                   [3.7]
 ```
 
-**Algorithm 2 · ROUND()** (part 3 · `engine.py`)
+*Notes*
+
+1. $`o_s`$ and $`o_b`$ are the coins still in the worker's open sells and buys, so a resting order counts as if it had filled.
+2. Demo fills an order when the best price on the other side reaches its limit, at the limit price, at most $`S`$ per side per round. Live books what Nobitex reports as matched, with the fee Nobitex reports.
+3. The exposure guard: the coins locked in open sells plus the new sell stay within 25 % of the coins held (for a buy, the same with cash). Always on in live; in demo only if the admin turns it on.
+4. Before the first round the worker loads its settings and balances (demo: the shared demo session; live: the Nobitex wallet, and it refuses to start if a balance cannot be read). When stopped, it cancels its open orders ([3.0](#30-starting-a-run), [3.8](#38-waiting-and-stopping)).
+5. A side that is not sent records its reason ([4.0](#40-the-order-decision-step-by-step), steps 7 and 8).
+
+<a id="listing-2"></a>
+
+**Listing 2 · Choosing the prices (Algorithm 1 v2)**
 
 ```text
- 1  procedure ROUND()
- 2      if mode = demo then APPLY-OVERRIDES-IF-CHANGED()   ▷ 7.2
- 3      book ← GET "/v3/orderbook/<PAIR>" (timeout 5 s)
- 4      if book = NONE then   ▷ e.g. HTTP 403
- 5          WAIT-NEXT-ROUND(); return
- 6      SETTLE-FILLS(book)   ▷ Algorithm 6
- 7      CANCEL-OWN-ORDERS-OLDER-THAN(τ)   ▷ Algorithm 6
- 8      APPEND-DIAGNOSTICS(book, q)   ▷ every candidate and pair, for the dashboard
- 9      (B, A) ← DECIDE-PRICES(book, q)   ▷ Algorithm 3: gate 1
-10      SIZE-AND-SEND(sell, A)   ▷ Algorithm 5: gate 2, sell side first
-11      SIZE-AND-SEND(buy, B)
-12      RECORD-ROUND()   ▷ store row, CSV, Telegram (3.7)
-13      WAIT-NEXT-ROUND()   ▷ demo: fixed rhythm; live: sleep time_step
+Input:  the order book, bids b_0 > b_1 > … and asks a_0 < a_1 < …; coins q
+Output: a buy price B, a sell price A, both, or no order
+
+ 1  update P̄, the average cost of the coins held                    [4.8]
+
+    Step 1 · Is the book usable?
+ 2  if a side has fewer than two levels or b_0 > a_0 then return no order   [4.0]
+
+    Step 2 · The candidate prices
+ 3  m ← (b_0 + a_0)/2                                                [4.1]
+ 4  x ← pos(q)                                                       [4.1]
+ 5  c ← m (1 - σ_q (2x - 1))                                         [4.2]
+ 6  for δ = δ_min, δ_min ρ, δ_min ρ^2, … while δ ≤ δ_max do          [4.3]
+ 7      B ← one tick above the first bid ≤ c (1 - δ), but below a_0
+ 8      A ← one tick below the first ask ≥ c (1 + δ), but above b_0
+ 9      add B and A to the candidates, each price once
+10  p_K ← FillChance of every candidate K                            [Listing 3]
+
+    Step 3 · Which sides are allowed?
+11  if x ≥ 0.9 then sides ← {sell}                                   [4.5]
+12  else if x ≤ 0.1 then sides ← {buy}
+13  else sides ← {buy, sell}
+
+    Step 4 · The best buy/sell pair
+14  choice ← none
+15  if sides = {buy, sell} then
+16      for each candidate buy B and candidate sell A do
+17          R ← (1 - f)^2 A/B - 1                                    [4.6]
+18          π_1 ← p_B(1 - p_A) + p_A(1 - p_B), the chance that only one side fills   [4.7]
+19          J ← p_B p_A R - η π_1
+20          keep (B, A) if R > r_min and J > J_min
+21      choice ← the kept pair with the largest J, if any
+
+    Step 5 · Otherwise, the best single order
+22  if choice = none then
+23      for each candidate K on an allowed side do                   [4.8]
+24          P_ref ← c for a buy; P̄ (or c while unknown) for a sell
+25          R ← (1 - f)^2 K/P_ref - 1 for a sell, (1 - f)^2 P_ref/K - 1 for a buy
+26          keep K if R > r_min and J = p_K (R - η) > J_min
+27      choice ← the kept order with the largest J, if any
+28  if choice = none then return no order
+
+    Step 6 · Keep a price that barely moved
+29  for each side of choice do                                       [4.9]
+30      if its previous price is within 5 ticks and under 300 s old then keep the previous price
+31  if a kept price makes R ≤ r_min then use the new prices
+32  return choice
 ```
 
-**Algorithm 3 · DECIDE-PRICES(book, q)** (part 4.0 steps 1–6, 4.1–4.10 · `strategy/algo1.py`)
+*Notes*
+
+1. A candidate's fill chance is read at its distance from the centre, $`\hat\delta = |K - c|/c`$.
+2. If the book shows no level beyond a target, the target itself, rounded to a tick, is the candidate.
+3. On a tie in $`J`$, the candidate closer to the centre wins.
+4. $`\bar P`$: if $`q`$ rose by $`\Delta`$ since the last round while a buy at $`B`$ was resting, $`\bar P \gets (\bar P\,n + B\,\Delta)/(n + \Delta)`$ and $`n \gets n + \Delta`$; if $`q`$ fell, $`n \gets \max(0,\ n + \Delta)`$. $`\bar P`$ is known while $`n \gt 0`$.
+5. 0.1, 0.9, 5 ticks and 300 s are the current settings of both pairs (part 10). A side without a price forgets its previous price; “no order” forgets both and records its reason ([4.0](#40-the-order-decision-step-by-step)).
+
+<a id="listing-3"></a>
+
+**Listing 3 · The fill probability**
 
 ```text
- 1  function DECIDE-PRICES(book, q)
- 2      UPDATE-COST-BASIS(q)   ▷ Algorithm 4
- 3      if a side has fewer than 2 levels or b_0 > a_0 then
- 4          return NONE "invalid_or_single_level_order_book"   ▷ step 1
- 5      m ← (b_0 + a_0)/2
- 6      x ← clamp((q - q_min)/(q_max - q_min), 0, 1)   ▷ 4.1
- 7      c ← m (1 - σ_q (2x - 1))   ▷ 4.2
- 8      (Bids, Asks) ← CANDIDATES(book, c)   ▷ Algorithm 3a
- 9      for each candidate K do K.p ← FILL-PROB(K.δ̂, K.side)   ▷ Algorithm 7
-10      if Bids = ∅ and Asks = ∅ then return NONE "no_candidates"   ▷ step 2
-11      if x ≥ x_hi then   ▷ step 3: too many coins, sell only
-12          return HYSTERESIS(BEST-SINGLE(Asks, P̄ if known else c)) or NONE "no_side_clears_bar"
-13      if x ≤ x_lo then   ▷ too few coins, buy only
-14          return HYSTERESIS(BEST-SINGLE(Bids, c)) or NONE "no_side_clears_bar"
-15      best ← NONE   ▷ step 4: every pair
-16      for each B ∈ Bids, A ∈ Asks do
-17          R ← (1-f)^2 A/B - 1   ▷ condition A: fees
-18          J ← p_B p_A R - η (p_B(1-p_A) + p_A(1-p_B))   ▷ condition B: expected value
-19          if R > r_min and J > J_min and J beats best then best ← (B, A)
-20      if best ≠ NONE then return HYSTERESIS(best)   ▷ step 6
-21      single ← higher J of BEST-SINGLE(Asks, P̄ or c) and BEST-SINGLE(Bids, c)   ▷ step 5
-22      if single ≠ NONE then return HYSTERESIS(single)
-23      if some pair had R > r_min then return NONE "expected_value_below_floor"
-24      return NONE "no_side_clears_bar"
-25      ▷ "beats": higher J; on a tie, the one closer to the centre
+Input:  the best bid and ask of every recorded round of the last 14 days; the bot's finished orders
+Output: the table p̂_k for each side and bucket; the fill chance p(δ) of a candidate
+
+    Every night at 03:00 UTC · Build the table
+ 1  for each recorded round i, with mid m_i do                       [5.3]
+ 2      if the next 10 minutes are not fully recorded then skip round i
+ 3      lo ← the lowest best ask in the next 10 minutes
+ 4      hi ← the highest best bid in the next 10 minutes
+ 5      w ← 0.5^(a/3), where a is the round's age in days
+ 6      for each bucket k = 1, …, 10 do                              [5.2]
+ 7          N_k ← N_k + w on both sides
+ 8          if lo ≤ m_i (1 - δ_k) then H_k ← H_k + w on the buy side
+ 9          if hi ≥ m_i (1 + δ_k) then H_k ← H_k + w on the sell side
+10  for each side and each bucket k do
+11      ω_k ← n_k/(n_k + 100)                                        [5.3]
+12      p̂_k ← ω_k h_k/n_k + (1 - ω_k) H_k/N_k
+13  make p̂ non-increasing in k; save the table                      [7.5]
+
+    Every round · The fill chance at distance δ
+14  if the table is at most 48 hours old then                        [5.3]
+15      return the straight line between the two buckets around δ
+16  else
+17      return 1 - exp(-λ_τ e^(-κδ))                                 [5.1]
 ```
 
-**Algorithm 3a · CANDIDATES(book, c)** (part 4.3 · `strategy/algo1.py`)
+*Notes*
 
-```text
- 1  function CANDIDATES(book, c)   ▷ uses the first depth_max + 1 levels
- 2      Bids, Asks ← ∅
- 3      for j ← 1, 2, … while δ_min ρ^(j-1) ≤ δ_max do
- 4          δ ← δ_min ρ^(j-1)
- 5          i ← first level with b_i ≤ c(1-δ)
- 6          B ← b_i + ε if i exists else round down to a tick c(1-δ)   ▷ synthetic when the book is short
- 7          B ← min(B, a_0 - ε)   ▷ never cross the market
- 8          if B ∉ Bids then add B with δ̂ = (c - B)/c
- 9          i ← first level with a_i ≥ c(1+δ)
-10          A ← a_i - ε if i exists else round up to a tick c(1+δ)
-11          A ← max(A, b_0 + ε)
-12          if A ∉ Asks then add A with δ̂ = (A - c)/c
-13      return (Bids, Asks)
-```
-
-**Algorithm 3b · BEST-SINGLE(C, ref)** (part 4.8 · `strategy/algo1.py`)
-
-```text
- 1  function BEST-SINGLE(C, P_ref)
- 2      best ← NONE
- 3      for each candidate K ∈ C do
- 4          if K is a sell then R ← (1-f)^2 K/P_ref - 1 else R ← (1-f)^2 P_ref/K - 1
- 5          J ← K.p · R - η · K.p
- 6          if R > r_min and J > J_min and J beats best then best ← K
- 7      return best
-```
-
-**Algorithm 3c · HYSTERESIS(quote)** (part 4.9 · `strategy/algo1.py`)
-
-```text
- 1  function HYSTERESIS(quote)
- 2      for each side with a new price P do
- 3          if memory[side] = (P_old, t_old) and |P - P_old| ≤ h ε and now - t_old < T_refresh then
- 4              P ← P_old   ▷ keep the resting price
- 5          else
- 6              memory[side] ← (P, now)
- 7      if a price was kept and the kept quote fails R > r_min then
- 8          use the new prices; memory[side] ← (new price, now) for each side
- 9      return quote
-10      ▷ a side with no price forgets its memory; a NONE decision forgets both
-```
-
-**Algorithm 4 · UPDATE-COST-BASIS(q)** (part 4.8 · `strategy/algo1.py`)
-
-```text
- 1  procedure UPDATE-COST-BASIS(q)
- 2      if q_prev is unknown then q_prev ← q; return
- 3      Δ ← q - q_prev;  q_prev ← q
- 4      if Δ > 0 and memory[buy] holds a price B_rest then   ▷ our resting buy filled
- 5          P̄ ← (P̄ n + B_rest Δ)/(n + Δ);  n ← n + Δ
- 6      else if Δ < 0 then   ▷ coins sold
- 7          n ← max(0, n + Δ)
- 8      ▷ P̄ counts as known only while n > 0
-```
-
-**Algorithm 5 · SIZE-AND-SEND(side, P)** (part 4.0 steps 7–8, 3.4 · `engine.py`)
-
-```text
- 1  procedure SIZE-AND-SEND(side, P)   ▷ skip(r): record reason r, stop this side
- 2      s_min ← 0.1 S
- 3      if side = sell then
- 4          x_s ← position of (q − coins in own open sells)   ▷ resting orders count as filled
- 5          target ← S · clamp(1 + k_s(2x_s - 1), φ, 1 + k_s)   ▷ = 2S x_s with k_s = 1, φ = 0
- 6          if P = NONE then return skip("one_sided_quote")
- 7          if an own sell rests within h ε of P then return skip("resting_order_kept")
- 8          size ← max(0, min(target, free coins - q_min))
- 9          if size ≥ s_min and guard on and (coins locked in sells + size)/coins > ratio then return skip("locked_inventory_limit")
-10          if size ≥ s_min then return SEND(sell, size, P)
-11          if target < s_min and free coins - q_min ≥ s_min then return skip("inventory_sizing")
-12          if coins locked in sells > 0 and coins > q_min then return skip("inventory_locked_in_open_orders")
-13          return skip("insufficient_inventory")
-14      else   ▷ buy
-15          x_b ← position of (q + coins in own open buys)
-16          target ← S · clamp(1 - k_s(2x_b - 1), φ, 1 + k_s)   ▷ = 2S (1 - x_b)
-17          if P = NONE then return skip("one_sided_quote")
-18          if an own buy rests within h ε of P then return skip("resting_order_kept")
-19          if target < s_min then return skip("inventory_sizing")
-20          size ← max(0, min(target, free cash/P))
-21          if size < s_min then return skip("insufficient_cash")
-22          if coins in own open buys + q + size > q_max then return skip("inventory_cap")
-23          if guard on and (cash locked in buys + size · P)/cash > ratio then return skip("locked_cash_limit")
-24          return SEND(buy, size, P)
-25      ▷ live: the same checks, the buy guard before the band cap, and only "not_sent" is recorded
-```
-
-**Algorithm 5a · SEND(side, size, P)** (part 3.5 · `exchange/demo.py, exchange/nobitex.py`)
-
-```text
- 1  function SEND(side, size, P)
- 2      if mode = demo then
- 3          reject if (buy and size · P > free cash) or (sell and size > free coins)
- 4          add a paper order "<pair>-<side>-<round>-<ms>"   ▷ nothing moves until it fills
- 5      else
- 6          POST "/market/orders/add" {type, srcCurrency, dstCurrency, amount, price, clientOrderId}
- 7          placed only if the reply is "ok" and echoes the same clientOrderId
-```
-
-**Algorithm 6 · SETTLE-FILLS(book)** (part 3.2, 3.6 · `paper.py, engine.py`)
-
-```text
- 1  procedure SETTLE-FILLS(book)
- 2      if mode = demo then   ▷ the paper ledger decides
- 3          budget[buy] ← S;  budget[sell] ← S   ▷ per round
- 4          for each open paper order o (buys first; best price first; oldest first) do
- 5              if (o is a buy and a_0 ≤ o.P) or (o is a sell and b_0 ≥ o.P) then
- 6                  F ← min(o.remaining, budget[o.side]);  budget[o.side] ← budget[o.side] - F
- 7                  if F > 0 then APPLY-FILL(o, F, o.P)   ▷ fills at its own limit price
- 8      else   ▷ live: the exchange decides
- 9          for each order with our clientOrderId on this pair do
-10              F ← matched now - matched already booked
-11              if F > 0 then APPLY-FILL(o, F, o.P)
-
-12  procedure APPLY-FILL(o, F, P)
-13      if o is a buy then
-14          fee ← f F (demo) or the fee Nobitex reports (live), in coins
-15          c ← c - F P;   q ← q + F - fee
-16      else
-17          fee ← f F P (demo) or the fee Nobitex reports (live), in rial
-18          q ← q - F;   c ← c + F P - fee
-
-19  procedure CANCEL-OWN-ORDERS-OLDER-THAN(τ)
-20      for each own open order o do
-21          if now - o.created > τ · 60 s then
-22              demo: remove o (its locked cash or coins are free again)
-23              live: POST "/market/orders/update-status" {status: canceled, order: o}
-```
-
-**Algorithm 7 · FILL-PROB(δ, side)** (part 5.3 · `fill_model.py`)
-
-```text
- 1  function FILL-PROB(δ, side)   ▷ δ: distance from the centre (limitation 1)
- 2      T ← the fill table file (re-read whenever it changes)
- 3      if T exists and fill_table_enabled and age(T) ≤ 48 h then
- 4          U ← buckets of T with N_k(side) ≥ 50
- 5          if U ≠ ∅ then
- 6              if δ ≤ δ_first then return p̂_first
- 7              if δ ≥ δ_last then return p̂_last
- 8              take the neighbours δ_k ≤ δ ≤ δ_(k+1) in U
- 9              return p̂_k + (δ - δ_k)/(δ_(k+1) - δ_k) (p̂_(k+1) - p̂_k)
-10      return 1 - exp(-λ_τ e^(-κδ))   ▷ fallback; κ = 400, λ_τ = 1
-```
-
-**Algorithm 8 · BUILD-FILL-TABLE(pair)** (part 5.2–5.3 · `tools/build_fill_table.py, nightly 03:00`)
-
-```text
- 1  procedure BUILD-FILL-TABLE(pair)
- 2      rows ← best bid / ask rows of the last 14 days from every CSV of the pair (sorted, one per timestamp)
- 3      for each row i (time t_i, mid m_i) do
- 4          W ← rows j with t_i < t_j ≤ t_i + τ
- 5          if |W| < 2 or t_last(W) - t_i < 0.8 τ or a gap in W > max(3 × median step, 30 s) then continue
- 6          lo ← lowest best ask in W;  hi ← highest best bid in W;  w ← 0.5^(age_i/3 days)
- 7          for k ← 1 … K do   ▷ buckets 0.10 % … 2.40 %
- 8              N^buy_k += w;   H^buy_k += w · [lo ≤ m_i(1-δ_k)]
- 9              N^sell_k += w;  H^sell_k += w · [hi ≥ m_i(1+δ_k)]
-10      for each finished own order (side, distance d = |m - P|/m, filled?) do
-11          k ← argmin_k |ln d - ln δ_k|;  n_k += 1;  h_k += filled
-12      for each side and k do
-13          p̂_k ← n_k/(n_k + 100)·h_k/n_k + 100/(n_k + 100)·H_k/N_k   ▷ Bayesian blend
-14      make p̂ non-increasing in k (pool adjacent violators, weights = samples)
-15      write "fill_table_<pair>irt.json" {updated_at, buckets: δ_k, p̂_k, N_k}
-```
-
-**Algorithm 9 · PNL-ATTRIBUTION(rows)** (part 6.2 · `dashboard.py`)
-
-```text
- 1  function PNL-ATTRIBUTION(rows)
- 2      for each session, rows in time order do
- 3          for t ← second row … last row do
- 4              P_t ← q_(t-1) (m_t - m_(t-1))   ▷ price PnL
- 5              T_t ← (c_t - c_(t-1)) + (q_t - q_(t-1)) m_t   ▷ trading PnL, after fees
- 6      Σ P ← Σ_t P_t;  Σ T ← Σ_t T_t   ▷ W_T - W_0 = Σ P + Σ T exactly
- 7      verdict ← "Mainly trading" if |Σ T| ≥ |Σ P| else "Mainly price"
-```
+1. Buckets: $`\delta_k`$ = 0.10, 0.15, 0.20, 0.30, 0.40, 0.60, 0.80, 1.20, 1.60, 2.40 %. $`N_k`$ counts the rounds and $`H_k`$ those in which the price reached the order; a day-old round weighs $`0.5^{1/3} \approx 0.79`$.
+2. Fully recorded: the next 10 minutes reach at least 80 % of the window and have no gap longer than $`\max(3 \times \text{median step},\ 30\text{ s})`$.
+3. $`n_k`$ counts the bot's own finished orders whose distance is nearest to $`\delta_k`$ on a log scale, and $`h_k`$ how many of them filled; with no own orders, $`\hat p_k = H_k/N_k`$.
+4. Only buckets with at least 50 samples are used, and before the first or after the last of them the end value. The formula's $`\kappa = 400`$ and $`\lambda_\tau = 1`$ are hand-set, not fitted ([5.4](#54-the-fitted-formula-how-kappa-and-lambda_tau-are-estimated-fallback-only)).
