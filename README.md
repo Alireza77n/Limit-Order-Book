@@ -485,8 +485,8 @@ Requiring $R_{\text{net}} > r_{\min}$:
 
 $$\frac{1+h}{1-h} > 1 + G \iff h > h_{\min} = \frac{G}{2+G},\qquad G = \frac{1+r_{\min}}{(1-f)^2} - 1$$
 
-The strategy uses $h = \max(\texttt{algo3\_half\_spread},\ h_{\min} + \epsilon/c)$,
-one tick of margin above the bar. At the live settings ($f = 0.25\%$,
+The strategy uses $h = \max(h_{\text{cfg}},\ h_{\min} + \epsilon/c)$, with
+$h_{\text{cfg}}$ = `algo3_half_spread` (0 by default): one tick of margin above the bar. At the live settings ($f = 0.25\%$,
 $r_{\min} = 0.01\%$) $h_{\min} = 0.2553\%$; at the profile defaults
 ($f = r_{\min} = 0.10\%$) $h_{\min} = 0.1500\%$.
 
