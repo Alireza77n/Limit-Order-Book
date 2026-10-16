@@ -194,6 +194,7 @@ in this repository (see [Known limitations / next steps](#known-limitations--nex
 > Where the fill probabilities come from: [`docs/algorithms/FILL_MODEL.md`](docs/algorithms/FILL_MODEL.md).
 > What changed from version 1 and why: [`docs/algorithms/CHANGES_V1_TO_V2.md`](docs/algorithms/CHANGES_V1_TO_V2.md).
 > Where a session's profit or loss came from, the price or our own quotes: [`docs/algorithms/PNL_ATTRIBUTION.md`](docs/algorithms/PNL_ATTRIBUTION.md).
+> The whole project explained from the ground up (one round of a worker, the order decision step by step, every formula derived with proofs, worked examples from the real code and data, operations, known limitations and the complete pseudocode): [`docs/guide/MARKET_MAKER_EXPLAINED.md`](docs/guide/MARKET_MAKER_EXPLAINED.md), also as a standalone page [`docs/guide/MARKET_MAKER_EXPLAINED.html`](docs/guide/MARKET_MAKER_EXPLAINED.html).
 > Version 1 is kept on the branch `MM_algo1v1`.
 
 ## Main idea
