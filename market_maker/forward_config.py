@@ -31,6 +31,9 @@ FORWARD_FIELDS = frozenset({
     "ev_min", "adverse_selection_perc", "hysteresis_ticks", "refresh_seconds",
     "fill_table_enabled", "fill_table_max_age_hours", "fill_table_min_samples",
     "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
+    # Which algorithm a live worker runs when it is started, and Algorithm 3's own settings.
+    "algorithm", "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
+    "algo3_min_volume_orders", "algo3_imbalance_clip",
 })
 
 # The authenticated Nobitex account reports a 0.25% IRT fee for both maker

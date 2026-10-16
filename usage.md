@@ -99,7 +99,9 @@ python run.py --help
 
 ```text
 --profile {btc,usdt}       Currency-pair configuration to run. Required.
---algorithm {algo1,algo2}  Quoting strategy. Default: algo1.
+--algorithm {algo1,algo2,algo3}  Quoting strategy. Default: the profile's `algorithm`
+                           setting (algo1), as overridden by the saved Demo or
+                           live configuration. algo2 is a stub and will error.
 --exchange {nobitex}       Exchange providing real market data. Default: nobitex.
 --mode {real,demo}         real: real orders, needs MySQL (default).
                            demo: simulated orders, no MySQL -- see §1b.
@@ -223,8 +225,12 @@ Its level-1 fast-fill and optional queue model are deterministic operating
 assumptions; they do not model every source of latency, slippage, or queue
 priority on Nobitex.
 
-Only `--algorithm algo1` is meaningful today (the current goal); `algo2`
-still raises `NotImplementedError` in demo mode exactly as in real mode.
+`algo1` and `algo3` run in both modes; `algo2` still raises
+`NotImplementedError` in demo mode exactly as in real mode. In the Docker demo
+stack the algorithm is not a command-line flag: it is the `algorithm` field of
+the pair's Demo configuration (admin panel, *Config BTC/USDT*), and a running
+worker switches at its next round. Algorithm 3 is specified in
+`docs/algorithms/ALGORITHM_3.md`.
 
 ---
 
@@ -289,14 +295,25 @@ ask, teal = fills), each on its own single axis. Every line chart uses
 `hovermode="x unified"` for a crosshair-style tooltip.
 
 Pick a **track** (which result store) and a **session** (a specific run,
-or "All sessions (compare)" to overlay runs), then use the seven tabs. The
-session picker lists every session in the store, however old; choosing
+or "All sessions (compare)" to overlay runs), then use the eight tabs. The
+session picker lists every session in the store, however old, labelled with
+the algorithm(s) its rounds ran; choosing
 one loads that session's own newest rounds, while the comparison view
 loads the newest rounds across all sessions (both views are capped at
 `LOB_DASHBOARD_MAX_ROWS` rounds, default 2000, so a long-running stack
 cannot push the dashboard container over its memory limit; older rows
 stay in the store). The tabs:
 
+* **Algorithm** -- the list of algorithms (Algorithm 1, Algorithm 3, "All
+  algorithms"). Choosing one shows its description, the settings in force,
+  its headline numbers and its own charts (Algorithm 3: the imbalance and
+  where the centre sat relative to the mid; Algorithm 1: the expected value
+  and the fill probabilities of the quotes sent), and every other tab then
+  shows that algorithm's rounds only. "All algorithms" shows them side by
+  side: a comparison table, headline bars and each algorithm's running net
+  PnL. The choice is remembered per browser tab; deep link
+  `?tab=algorithm&algo=algo3`. Rows written before the `Strategy` column
+  existed count as Algorithm 1.
 * **Overview** -- six headline tiles: quote rate (split into pair / bid
   only / ask only / none), fills per hour, realised vs computed net spread
   per round trip, adverse selection 60 s after our fills, net PnL after
@@ -305,8 +322,10 @@ stay in the store). The tabs:
   where the quotes sat (% from the mid, per side); inventory inside the band
   with the order sizes sent; the decision mix (quoted pair / bid only / ask
   only and every no-quote reason, as a share of rounds); portfolio wealth.
-* **Quote decision** -- one round of Algorithm 1 v2, read from the
-  strategy's diagnostics file (`<pair>_algo1_diagnostics.jsonl` in the
+* **Quote decision** -- one round, drawn for the algorithm that made it
+  (an Algorithm 3 round shows its top-k book levels, the price ladder of
+  touch, mid, microprice, centre and quote, and its step-by-step trace).
+  For Algorithm 1 v2, read from the strategy's diagnostics file (`<pair>_algo1_diagnostics.jsonl` in the
   results directory, written every round while `algo1_diagnostics_enabled`
   is on): the candidate ladder (price, distance, book level or synthetic,
   volume ahead, fill probability, which ones were sent), the expected-value

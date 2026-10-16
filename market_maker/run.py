@@ -24,6 +24,7 @@ import os
 import signal
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from config import (
     DEMO_STATE_DIR,
@@ -36,8 +37,7 @@ from portfolio import Nobitex_portfolio
 from engine import CoordinatedShutdown, SimpleMarketMaker
 from exchange.nobitex import NobitexExchangeClient
 from exchange.demo import DemoExchangeClient
-from strategy.algo1 import Algo1Strategy
-from strategy.algo2 import Algo2Strategy
+from strategy.catalog import STRATEGIES, build_strategy
 from session import WorkerLease, load_stack_session
 from paper import PaperLedger
 from demo_config import (
@@ -47,10 +47,8 @@ from demo_config import (
 )
 from forward_config import desired_config as load_forward_desired
 
-STRATEGIES = {
-    "algo1": Algo1Strategy,
-    "algo2": Algo2Strategy,  # not implemented yet -- see README.md
-}
+# STRATEGIES (the --algorithm choices) comes from strategy/catalog.py: the
+# implemented algorithms plus the Algorithm 2 stub -- see README.md.
 
 EXCHANGES = {
     "nobitex": NobitexExchangeClient,
@@ -117,11 +115,17 @@ def make_cfg(
     return cfg
 
 
-def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobitex",
+def make_bot(cfg: MMConfig, algorithm: Optional[str] = None, exchange_name: str = "nobitex",
              mode: str = "real") -> SimpleMarketMaker:
     """Build the SimpleMarketMaker for an already-constructed cfg (see
-    make_cfg). Also pulled out of main() so it can be reused verbatim."""
+    make_cfg). Also pulled out of main() so it can be reused verbatim.
+
+    ``algorithm`` (the CLI's --algorithm) overrides cfg.algorithm, the value
+    the profile and the Demo/live configuration overlay asked for; None
+    keeps that value."""
     is_demo = mode == "demo"
+    if algorithm is not None:
+        cfg.algorithm = algorithm
     is_forward = bool(os.environ.get("LOB_FORWARD_CONFIG_DIR"))
 
     adapter_api_key = None if is_demo else cfg.api_key
@@ -179,7 +183,7 @@ def make_bot(cfg: MMConfig, algorithm: str = "algo1", exchange_name: str = "nobi
         )
     else:
         exchange = real_exchange
-    strategy = STRATEGIES[algorithm](cfg)
+    strategy = build_strategy(cfg)
 
     bot = SimpleMarketMaker(
         cfg,
@@ -207,8 +211,9 @@ def main():
     parser = argparse.ArgumentParser(description="Run the market-making bot.")
     parser.add_argument("--profile", choices=sorted(TRADING_PROFILES), required=True,
                          help="Currency-pair configuration to run.")
-    parser.add_argument("--algorithm", choices=sorted(STRATEGIES), default="algo1",
-                         help="Quoting strategy to use (default: algo1).")
+    parser.add_argument("--algorithm", choices=sorted(STRATEGIES), default=None,
+                         help="Quoting strategy to use. Default: the profile's `algorithm` setting "
+                              "(algo1), as overridden by the saved Demo or live configuration.")
     parser.add_argument("--exchange", choices=sorted(EXCHANGES), default="nobitex",
                          help="Exchange to trade on (default: nobitex).")
     parser.add_argument("--mode", choices=["real", "demo"], required=True,

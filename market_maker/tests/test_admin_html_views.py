@@ -39,6 +39,8 @@ EXPECTED_CONFIG_FIELDS = {
     "ev_min", "adverse_selection_perc", "hysteresis_ticks", "refresh_seconds",
     "fill_table_enabled", "fill_table_max_age_hours", "fill_table_min_samples",
     "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
+    "algorithm", "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
+    "algo3_min_volume_orders", "algo3_imbalance_clip",
 }
 REMOVED_CONFIG_FIELDS = {
     "max_rounds", "demo_level1_fast_fill_enabled",
@@ -1094,3 +1096,78 @@ def test_delete_live_session_goes_through_the_forward_agent(sessions_client, mon
     )
     assert response.status_code == 400
     assert len(calls) == 1
+
+
+# ---------- choosing the algorithm in the admin panel ----------
+
+def test_config_page_offers_the_algorithms_as_a_drop_down(client):
+    _login(client)
+    body = _html(client.get("/admin/config/usdt", headers=HTML))
+    select = re.search(r'<select id="algorithm" name="algorithm"[^>]*>(.*?)</select>', body, re.S)
+    assert select, "the Algorithm field must be a drop-down"
+    options = re.findall(r'<option value="([^"]+)"\s*(selected)?\s*>', select.group(1))
+    assert [value for value, _ in options] == ["algo1", "algo3"]
+    assert dict(options) == {"algo1": "selected", "algo3": ""}   # the profile default is selected
+    assert "Algorithm 3: Order-book imbalance, microprice and a fixed spread" in select.group(1)
+    for field in ("algo3_depth_k", "algo3_beta", "algo3_half_spread"):
+        assert f'name="{field}"' in body
+
+
+def test_config_apply_switches_the_demo_algorithm(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/config/usdt", data={
+        "algorithm": "algo3", "algo3_beta": "0.001", "csrf_token": token,
+    }, headers=HTML)
+    assert response.status_code == 200
+    [command] = _commands_written(app)
+    assert command["action"] == "apply_config"
+    assert command["payload"]["overrides"]["algorithm"] == "algo3"
+    assert command["payload"]["overrides"]["algo3_beta"] == 0.001
+
+
+def test_config_apply_rejects_an_algorithm_that_is_not_selectable(client, app, fake_agent):
+    token = _login(client)
+    response = client.post("/admin/config/usdt", data={"algorithm": "algo2", "csrf_token": token}, headers=HTML)
+    assert response.status_code == 400
+    assert "algorithm must be one of: algo1, algo3" in _html(response)
+    assert _commands_written(app) == []
+
+
+def test_config_json_schema_lists_the_algorithm_choices(client):
+    _login(client)
+    schema = client.get("/admin/config/btc").get_json()["schema"]
+    assert schema["algorithm"]["type"] == "str"
+    assert schema["algorithm"]["choices"] == ["algo1", "algo3"]
+
+
+def test_live_config_page_offers_the_algorithm_and_saves_it(forward_app, fake_agent):
+    client = forward_app.test_client()
+    token = _login(client)
+    body = _html(client.get("/admin/forward/config/btc", headers=HTML))
+    assert re.search(r'<select id="algorithm" name="algorithm"', body)
+
+    response = client.post("/admin/forward/config/btc", data={"algorithm": "algo3", "csrf_token": token})
+
+    assert response.status_code == 302
+    commands_dir = Path(forward_app.config["FORWARD_CONTROL_DIR"]) / "commands"
+    [command] = [c for c in (json.loads(p.read_text()) for p in commands_dir.glob("*.json"))
+                 if c["action"] == "apply_forward_config"]      # the page also asks for wallet balances
+    assert command["payload"]["overrides"]["algorithm"] == "algo3"
+
+
+def test_overview_shows_the_algorithm_in_force_for_demo_and_live(forward_app, fake_agent):
+    from demo_config import overlay_path, write_overrides
+    from forward_config import save_config
+
+    write_overrides(overlay_path(forward_app.config["STATE_DIR"], "btc"), {"algorithm": "algo3"},
+                    pair="btc", profiles=TRADING_PROFILES)
+    save_config({"algorithm": "algo3"}, "usdt", TRADING_PROFILES, forward_app.config["FORWARD_CONFIG_DIR"])
+    client = forward_app.test_client()
+    _login(client)
+
+    status = client.get("/admin/").get_json()
+    assert status["algorithms"] == {"demo": {"btc": "algo3", "usdt": "algo1"},
+                                    "live": {"btc": "algo1", "usdt": "algo3"}}
+    body = _html(client.get("/admin/", headers=HTML))
+    assert "Algorithm in force" in body
+    assert 'data-demo-algorithm="btc:algo3"' in body and 'data-live-algorithm="usdt:algo3"' in body

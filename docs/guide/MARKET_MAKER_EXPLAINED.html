@@ -259,7 +259,7 @@ flowchart LR
     <tr><td>admin panel <code>lob-admin</code></td><td><code>admin_app.py</code> (part 7.4)</td><td>Docker, 384 MB; may write only the two command queues and the live config</td><td><code>/admin/</code> → port 8653</td></tr>
     <tr><td>demo control agent</td><td><code>deploy/control_agent.py</code></td><td>systemd unit <code>lob-control-agent</code>, as root (it runs <code>docker compose</code>)</td><td>—</td></tr>
     <tr><td>forward agent</td><td><code>deploy/forward_control_agent.py</code></td><td>systemd unit <code>market-maker-forward-agent</code>, user <code>marketmaker-forward</code>, holds the Nobitex keys; <code>KillMode=process</code> so a restart leaves live workers running</td><td>—</td></tr>
-    <tr><td>live workers</td><td><code>run.py --profile btc|usdt --algorithm algo1 --exchange nobitex --mode real --continuous</code></td><td>started by the forward agent as its child processes</td><td>—</td></tr>
+    <tr><td>live workers</td><td><code>run.py --profile btc|usdt --algorithm algo1|algo3 --exchange nobitex --mode real --continuous</code></td><td>started by the forward agent as its child processes, with the algorithm saved on the pair's Live Config page</td><td>—</td></tr>
     <tr><td>investor dashboard</td><td>live tracks only</td><td>systemd unit <code>market-maker-forward-investor-dashboard</code></td><td><code>/forward/</code> → port 18654, with a password</td></tr>
   </table></div>
   <p class="note">The forward stack also has its own admin (port 18653) and dashboard (port 18652) units, used only internally; nginx sends <code>/admin/</code> to the Docker admin, which drives both stacks. The repository's sample unit for the demo agent (user <code>ubuntu</code>, <code>/home/ubuntu/limit-order-book</code>) differs from the server, where it runs as root in <code>/opt/limit-order-book</code>.</p>
@@ -313,7 +313,7 @@ flowchart TD
 </pre>
 
   <h3 id="s3-0">3.0 Starting a run</h3>
-  <p>The command is <code>python run.py --profile usdt|btc --mode demo|real --continuous</code> (the live agent adds <code>--algorithm algo1 --exchange nobitex</code>). It builds the configuration from the pair's profile in <code>config.py</code>, then applies the saved overrides:</p>
+  <p>The command is <code>python run.py --profile usdt|btc --mode demo|real --continuous</code> (the live agent adds <code>--algorithm &lt;algo1|algo3&gt; --exchange nobitex</code>, the algorithm saved on the pair's Live Config page; demo workers take it from the <code>algorithm</code> setting, which they can switch at a round boundary). This guide explains Algorithm 1; Algorithm 3 is specified in <code>docs/algorithms/ALGORITHM_3.md</code>. It builds the configuration from the pair's profile in <code>config.py</code>, then applies the saved overrides:</p>
   <ul>
     <li><strong>Demo</strong>: the admin overrides in <code>demo_config_&lt;pair&gt;.json</code>, re-read at every round boundary so most changes apply at once (part 7.2). The session id comes from the shared stack session file and looks like <code>demo-20261015T131629Z-2f38f0a407fa</code> (start time and a random suffix). The worker takes a lock file so only one worker per pair can run.</li>
     <li><strong>Live</strong>: the saved live settings in <code>forward_config_&lt;pair&gt;.json</code>, applied once at start (a change needs a restart). The fee is forced to at least 0.25 % and both exposure guards are forced on with at most 25 %. The session id is the start time as a Unix timestamp, for example <code>1792069104.17595</code>.</li>

@@ -442,7 +442,7 @@ def test_decision_tab_shows_candidates_heatmap_trace_and_history(v2_track):
 
 def test_decision_round_selection_survives_a_refresh_tick(v2_track):
     assert dashboard.remember_decision_round("s1:6") == "s1:6"
-    rendered = dashboard.render_tab_content("decision", "usdt_demo", "all", 3, 0.0, 0.0, "s1:6")
+    rendered = dashboard.render_tab_content("decision", "usdt_demo", "all", 3, 0.0, 0.0, None, "s1:6")
     dropdown = next(c for c in _components(rendered) if getattr(c, "id", None) == "decision-round")
     assert dropdown.value == "s1:6"
     assert [o["value"] for o in dropdown.options] == ["s1:7", "s1:6", "s1:5"]

@@ -87,6 +87,13 @@ active session and while the live workers run.
 
 ## Demo configuration synchronization
 
+> **Current field list:** `demo_config.FIELD_DEFINITIONS` is the source of truth (41 fields per pair in
+> the `MM_algo2` code; the table below is the original nine-field release). The first field on both config
+> pages is **`algorithm`** (`algo1` or `algo3`, a drop-down): hot on the Demo page (the worker builds the new
+> strategy at its next round, keeping its session and ledger) and read at start on the Live Config page (the
+> forward agent starts `run.py --algorithm <value>`). The Overview page shows the algorithm in force for each
+> pair. Algorithm 3's own settings (`algo3_*`) are described in `docs/algorithms/ALGORITHM_3.md`.
+
 The Admin exposes exactly nine numeric fields for each pair. The six hot
 fields are applied by the running worker at a round boundary; the three
 new-session fields remain pending until **New session** is submitted. No

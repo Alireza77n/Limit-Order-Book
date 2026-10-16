@@ -39,6 +39,9 @@ EXPECTED = {
     "ev_min": "hot", "adverse_selection_perc": "hot", "hysteresis_ticks": "hot", "refresh_seconds": "hot",
     "fill_table_enabled": "hot", "fill_table_max_age_hours": "hot", "fill_table_min_samples": "hot",
     "fill_kappa": "hot", "fill_lambda_tau": "hot", "fill_queue_volume_ref": "hot",
+    "algorithm": "hot",
+    "algo3_depth_k": "hot", "algo3_decay_rho": "hot", "algo3_beta": "hot", "algo3_half_spread": "hot",
+    "algo3_min_volume_orders": "hot", "algo3_imbalance_clip": "hot",
 }
 
 HIDDEN_SAFE_DEFAULT_FIELDS = {
@@ -112,6 +115,44 @@ def test_validate_rejects_hidden_safe_default_fields(field):
 def test_validate_rejects_wrong_type():
     with pytest.raises(OverlayValidationError):
         validate_overrides({"order_size": "lots"}, pair="btc", profiles=PROFILES)
+
+
+def test_algorithm_field_accepts_only_the_catalog_keys():
+    from strategy.catalog import SELECTABLE_ALGORITHMS
+
+    assert demo_config.ALGORITHM_CHOICES == SELECTABLE_ALGORITHMS
+    assert FIELD_DEFINITIONS["algorithm"].mode.value == "hot"
+    for key in SELECTABLE_ALGORITHMS:
+        assert validate_overrides({"algorithm": key}, pair="usdt", profiles=PROFILES) == {"algorithm": key}
+    with pytest.raises(OverlayValidationError, match="algorithm must be one of"):
+        validate_overrides({"algorithm": "algo2"}, pair="usdt", profiles=PROFILES)
+    with pytest.raises(OverlayValidationError, match="must be a string"):
+        validate_overrides({"algorithm": 3}, pair="usdt", profiles=PROFILES)
+
+
+@pytest.mark.parametrize("payload", [
+    {"algo3_depth_k": 0},
+    {"algo3_depth_k": 2.5},
+    {"algo3_decay_rho": 0.0},
+    {"algo3_decay_rho": 1.5},
+    {"algo3_beta": -0.001},
+    {"algo3_half_spread": 0.6},
+    {"algo3_min_volume_orders": -1},
+    {"algo3_imbalance_clip": 1.2},
+])
+def test_validate_rejects_out_of_range_algorithm_3_fields(payload):
+    with pytest.raises(OverlayValidationError):
+        validate_overrides(payload, pair="btc", profiles=PROFILES)
+
+
+def test_algorithm_3_fields_round_trip_through_the_overlay(tmp_path):
+    path = overlay_path(tmp_path, "usdt")
+    write_overrides(path, {"algorithm": "algo3", "algo3_beta": 0.001, "algo3_depth_k": 5},
+                    pair="usdt", profiles=PROFILES)
+    desired = load_desired_config("usdt", tmp_path, PROFILES)
+    assert desired["algorithm"] == "algo3"
+    assert desired["algo3_beta"] == 0.001 and desired["algo3_depth_k"] == 5
+    assert desired["algo3_decay_rho"] == PROFILES["usdt"]["algo3_decay_rho"]
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])

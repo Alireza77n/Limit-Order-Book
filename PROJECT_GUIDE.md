@@ -29,12 +29,18 @@ A market-making bot for the Nobitex exchange. It trades two pairs, BTC/IRT and
 USDT/IRT. Every round it places one limit buy below the market and one limit
 sell above it, and earns the difference when both fill.
 
-There are two algorithms in the code:
+There are three algorithms in the code:
 
 | | Status |
 |---|---|
-| Algorithm 1 (`strategy/algo1.py`) | Implemented. This is what runs. |
+| Algorithm 1 (`strategy/algo1.py`) | Implemented. The default (`algorithm = algo1`). |
 | Algorithm 2, Avellaneda-Stoikov (`strategy/algo2.py`) | Placeholder only. Not implemented. |
+| Algorithm 3, order-book imbalance and microprice (`strategy/algo3.py`) | Implemented. Selected per pair with `algorithm = algo3` ([`docs/algorithms/ALGORITHM_3.md`](docs/algorithms/ALGORITHM_3.md)). |
+
+Which one a worker runs is the `algorithm` setting, chosen per pair on the admin
+panel's config pages: a demo worker switches at its next round, a live worker
+when it is started. The dashboard's **Algorithm** tab shows one algorithm (and
+filters every other tab to its rounds) or all of them side by side.
 
 There are two run modes:
 
@@ -56,7 +62,7 @@ flowchart TD
     N --> D[Charts dashboard<br/>dashboard.py, read-only]
     A -->|writes a command file| Q[Control queue<br/>files on disk]
     Q --> G[Forward agent<br/>forward_control_agent.py<br/>holds the Nobitex API keys]
-    G -->|starts or stops| W[Worker, one per pair<br/>run.py + engine.py + algo1.py]
+    G -->|starts or stops| W[Worker, one per pair<br/>run.py + engine.py + algo1.py or algo3.py]
     W -->|order book, orders, wallet| X[Nobitex]
     W -->|one row per round| R[Results CSV]
     W --> T[Telegram]
@@ -76,8 +82,9 @@ Step by step:
    the command. It accepts only four fixed actions (`start_forward_worker`,
    `stop_forward_worker`, `apply_forward_config`, `read_wallet_balances`) and
    only the pairs `btc` and `usdt`.
-6. To start a worker it runs this fixed command:
-   `python run.py --profile <pair> --algorithm algo1 --exchange nobitex --mode real --continuous`
+6. To start a worker it runs this fixed command, with the algorithm saved on the
+   pair's Live Config page (`algo1` or `algo3`, checked against the catalog):
+   `python run.py --profile <pair> --algorithm <algo1|algo3> --exchange nobitex --mode real --continuous`
 7. The worker reads the real wallet balances from Nobitex, uses them as its
    starting inventory and cash, and enters the trading loop
    ([section 5](#5-one-round-of-the-trading-loop)).
@@ -117,12 +124,15 @@ real trading or to MySQL: `safety.py` refuses to start.
 | `run.py` | Entry point. Builds the config for a profile, picks the exchange client and the strategy, takes the worker lock, starts the loop. |
 | `engine.py` | `SimpleMarketMaker`, the main loop. Fetches the market, tracks fills, inventory and cash, decides order sizes, sends and cancels orders, writes the CSV, sends Telegram messages. Has two loops: `run()` for real mode and `_run_demo()` for demo mode. |
 | `strategy/algo1.py` | Algorithm 1 (version 2). Decides the bid and ask prices, or one of them: distance-anchored candidates, fill probabilities, expected-value selection, one-sided quotes, hysteresis. No network or file access beyond the fill table. |
+| `strategy/algo3.py` | Algorithm 3. Microprice centre leaned by the order-book imbalance and skewed by inventory, one symmetric half-spread (the smallest that clears the fee bar, plus a tick), outward rounding, hysteresis. No fill probabilities. |
+| `strategy/common.py` | Order-book arithmetic shared by the algorithms: tick, mid, returns, the fee bar, inventory position. |
+| `strategy/catalog.py` | The list of algorithms (key, label, class, settings, description). `run.py`, the engine, the admin drop-down and the dashboard's Algorithm tab read it. |
 | `fill_model.py` | `FillModel`: loads `fill_table_<pair>.json` (reloaded when it changes), falls back to the parametric fill formula. |
 | `tools/build_fill_table.py` | Builds the fill table from the CSVs (price path + own orders); run daily. |
 | `strategy/algo2.py` | Placeholder for Avellaneda-Stoikov. Not implemented. |
 | `strategy/base.py` | The interface every strategy implements (`decide_order`). |
 | `config.py` | The `MMConfig` dataclass and `TRADING_PROFILES`, the default parameters for `btc` and `usdt`. |
-| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts the 33 editable fields only, forces the commission to at least 0.25% (any non-negative target return is allowed), forces both exposure guards on with a ratio of at most 25%. |
+| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts the 39 editable fields only (including `algorithm` and the Algorithm 3 settings), forces the commission to at least 0.25% (any non-negative target return is allowed), forces both exposure guards on with a ratio of at most 25%. |
 | `demo_config.py` | Defines which fields the admin panel may edit, validates them, and reloads changed values into a running demo worker at round boundaries. |
 | `safety.py` | Refuses to start demo mode with a real exchange client or with MySQL persistence. |
 | `session.py` | Session ids and `WorkerLease`, a file lock that prevents two workers on the same pair. |
@@ -158,7 +168,7 @@ real trading or to MySQL: `safety.py` refuses to start.
 | `control_queue.py` | File-based command queue between the admin panel (writes commands) and the agents (execute them). Includes the audit log. |
 | `docs/guide/MARKET_MAKER_EXPLAINED.md` (and `.html`) | The whole project explained from the ground up: what a market maker does, the processes and files, one round of a worker step by step, the order decision as eight numbered checks (part 4.0), Algorithm 1 v2 with proofs, how the fill probability is estimated and how kappa is fitted, every dashboard metric and the validation gate, operations and deployment, the live forward test, known limitations, a glossary of settings, and the complete pseudocode (part 11). Examples were produced by running the code. |
 | `docs/reports/INVESTOR_UPDATE_2026-10-11.md` | Investor update: the version 2 rule with formulas and pseudocode, the fill model, each dashboard figure with the formula behind it, the gate readings, the demo state and Algorithm 3 as the next step (screenshots in `docs/reports/figures/`). |
-| `dashboard.py` | Dash results dashboard, seven tabs: Overview (quote rate, fills per hour, realised vs computed spread, adverse selection, PnL, inventory), Quote decision (candidate ladder, expected-value heat map and decision trace of one round, from the diagnostics file), Fill model (measured table vs formula, calibration, table health), Order book (levels, spreads), Validation (demo-to-real gate, then the metrics), Rounds (every round as a table), PnL attribution (each round's wealth change split exactly into price PnL and trading PnL, running sums and a verdict; `docs/algorithms/PNL_ATTRIBUTION.md`). Reads the result stores, the fill table and the diagnostics file only. |
+| `dashboard.py` | Dash results dashboard, eight tabs: Algorithm (pick Algorithm 1 or 3: its description, settings, headline numbers and own charts, and every other tab then shows its rounds only; or all algorithms side by side), Overview (quote rate, fills per hour, realised vs computed spread, adverse selection, PnL, inventory), Quote decision (candidate ladder, expected-value heat map and decision trace of one round, from the diagnostics file), Fill model (measured table vs formula, calibration, table health), Order book (levels, spreads), Validation (demo-to-real gate, then the metrics), Rounds (every round as a table), PnL attribution (each round's wealth change split exactly into price PnL and trading PnL, running sums and a verdict; `docs/algorithms/PNL_ATTRIBUTION.md`). Reads the result stores, the fill table and the diagnostics file only. |
 | `validation/` | Performance metrics for the dashboard: return, Sharpe, Sortino, drawdown, win rate, inventory statistics. |
 
 ### Deployment (`deploy/` and the repository root)
@@ -178,7 +188,7 @@ real trading or to MySQL: `safety.py` refuses to start.
 
 | Path | What it is |
 |---|---|
-| `market_maker/tests/` | 46 automated test files. |
+| `market_maker/tests/` | 52 automated test files. |
 | `market_maker/research/` | Three notebooks estimating parameters for Algorithm 2. |
 | `market_maker/test_nobitex_api.ipynb` | Preflight notebook run by hand before a real-mode start: offline signing test, the API-auth pytest files, public order book, authenticated read-only wallet/order/portfolio calls, `send_order`/`cancel_order` with HTTP mocked, demo lifecycle. Needs `NOBITEX_API_KEY`/`NOBITEX_SECRET_KEY` in `market_maker/.env`. The only cell that can place a real order (12b) is off by default and asks for confirmation. |
 | `README.md`, `usage.md`, `FORWARD_TEST.md`, `docs/` | Documentation and design notes. |
@@ -214,6 +224,8 @@ The parameters that matter for trading:
 | `ev_min`, `adverse_selection_perc` | Expected-value floor and the one-leg cost in the pair score (step 4). |
 | `hysteresis_ticks`, `refresh_seconds` | Keep a resting price / do not re-post within this window (step 6). |
 | `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | The fill model (step 3; `docs/algorithms/FILL_MODEL.md`). |
+| `algorithm` | Which algorithm runs: `algo1` (default) or `algo3`. Demo: applied at the next round; live: when the worker is started. |
+| `algo3_depth_k`, `algo3_decay_rho`, `algo3_beta`, `algo3_half_spread`, `algo3_min_volume_orders`, `algo3_imbalance_clip` | Algorithm 3: levels and weights of the imbalance, the lean per unit of imbalance (0 until estimated), the half-spread (0 = automatic), the thin-book guard and the clip (`docs/algorithms/ALGORITHM_3.md` §1, §7). |
 
 Live-mode values at the time of the review:
 

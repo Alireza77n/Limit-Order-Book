@@ -1,0 +1,99 @@
+"""The quoting algorithms this project can run, in one place.
+
+``run.py`` builds the worker's strategy from here, the engine swaps the
+strategy when the Demo configuration's ``algorithm`` field changes, the
+admin panel offers the selectable keys, and the dashboard labels rounds and
+sessions with them. Adding an algorithm means one ``AlgorithmInfo`` entry
+plus its ``strategy/<key>.py``.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+from strategy.algo1 import Algo1Strategy
+from strategy.algo2 import Algo2Strategy
+from strategy.algo3 import Algo3Strategy
+
+
+@dataclass(frozen=True)
+class AlgorithmInfo:
+    key: str                 # config value, CLI --algorithm, "Strategy" column of every round row
+    number: int              # the number in the project's documents ("Algorithm 3")
+    label: str               # short display name
+    title: str               # one-line description
+    cls: type                # the Strategy class
+    implemented: bool
+    doc: str                 # where it is specified
+    summary: Tuple[str, ...] # what it does, for the dashboard's Algorithm tab
+    fields: Tuple[str, ...]  # the config fields that belong to it alone
+    uses_fill_model: bool
+
+
+ALGORITHMS: Mapping[str, AlgorithmInfo] = {
+    "algo1": AlgorithmInfo(
+        key="algo1", number=1, label="Algorithm 1",
+        title="Distance grid, fill probabilities and expected value (version 2)",
+        cls=Algo1Strategy, implemented=True, doc="docs/algorithms/ALGORITHM_1_V2.md",
+        summary=(
+            "Moves a quote centre away from the mid as the inventory fills: c = mid · (1 − skew · (2x − 1)).",
+            "Builds candidate bids and asks on a geometric grid of distances from the centre, each one tick inside a real book level.",
+            "Reads every candidate's fill probability from the measured fill table (formula fallback).",
+            "Scores every bid/ask pair by expected value J = p_bid · p_ask · R_net − η · P(one leg) and sends the best pair that clears the fee bar R_net > exp_ret_min and the floor ev_min.",
+            "Quotes one side only at the band edges or when only one leg is profitable against its reference price; keeps a resting price within hysteresis_ticks.",
+        ),
+        fields=("grid_min_perc", "grid_ratio", "grid_max_perc", "skew_perc", "one_sided_lo", "one_sided_hi",
+                "cost_basis_reference", "ev_min", "adverse_selection_perc", "hysteresis_ticks", "refresh_seconds",
+                "fill_table_enabled", "fill_table_max_age_hours", "fill_table_min_samples",
+                "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref"),
+        uses_fill_model=True,
+    ),
+    "algo3": AlgorithmInfo(
+        key="algo3", number=3, label="Algorithm 3",
+        title="Order-book imbalance, microprice and a fixed spread",
+        cls=Algo3Strategy, implemented=True, doc="docs/algorithms/ALGORITHM_3.md",
+        summary=(
+            "Measures the imbalance of the resting volumes in the top k levels, I = (V_bid − V_ask) / (V_bid + V_ask), deeper levels weighted ρ^i.",
+            "Starts the centre at the microprice, the mid pulled toward the thinner side: (a₀·v_bid₀ + b₀·v_ask₀) / (v_bid₀ + v_ask₀).",
+            "Leans the centre with the imbalance (× (1 + β·I)) and skews it against the inventory (× (1 − skew · (2x − 1))).",
+            "Quotes one symmetric half-spread h = max(h_config, h_min + one tick) around the centre, with h_min = G / (2 + G) the smallest half-spread that clears the fee bar.",
+            "Rounds the bid down and the ask up to the tick without crossing the touch, re-checks R_net > exp_ret_min on the final prices, and keeps the resting pair within hysteresis_ticks. Fill probabilities are not used.",
+        ),
+        fields=("algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
+                "algo3_min_volume_orders", "algo3_imbalance_clip", "skew_perc",
+                "hysteresis_ticks", "refresh_seconds"),
+        uses_fill_model=False,
+    ),
+}
+
+# What the CLI accepts: the implemented algorithms plus the Algorithm 2 stub
+# (kept so `--algorithm algo2` fails loudly, as documented in README.md).
+STRATEGIES: Dict[str, type] = {key: info.cls for key, info in ALGORITHMS.items()}
+STRATEGIES["algo2"] = Algo2Strategy
+
+# What the admin panel and the Demo/live configuration may select.
+SELECTABLE_ALGORITHMS: Tuple[str, ...] = tuple(key for key, info in ALGORITHMS.items() if info.implemented)
+DEFAULT_ALGORITHM = "algo1"
+
+
+def algorithm_info(key: Optional[str]) -> AlgorithmInfo:
+    """The catalog entry for a key; unknown or missing keys (rows written
+    before the key existed) mean Algorithm 1."""
+    return ALGORITHMS.get(str(key) if key else DEFAULT_ALGORITHM, ALGORITHMS[DEFAULT_ALGORITHM])
+
+
+def algorithm_label(key: Optional[str]) -> str:
+    return algorithm_info(key).label
+
+
+def build_strategy(cfg: Any, key: Optional[str] = None):
+    """The strategy ``cfg`` asks for (its ``algorithm`` field) or the one
+    named explicitly; a key the catalog does not know raises KeyError."""
+    chosen = key or getattr(cfg, "algorithm", None) or DEFAULT_ALGORITHM
+    return STRATEGIES[chosen](cfg)
+
+
+def strategy_key(strategy: Any) -> Optional[str]:
+    """The catalog key of a strategy instance (None for a stand-in that is
+    not from the catalog, e.g. a test double)."""
+    return getattr(strategy, "key", None)

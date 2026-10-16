@@ -243,19 +243,23 @@ class DemoResultStore:
 
     def session_summary(self) -> list:
         """Every session in the store, oldest first: id, row count, first and
-        last timestamp. Cheap (one aggregate query), however large the store."""
+        last timestamp, and the algorithms its rounds ran (rows written
+        before the Strategy column existed count as algo1). Cheap (one
+        aggregate query), however large the store."""
         query = (
             "SELECT session_id, COUNT(*), "
             "MIN(json_extract(payload_json, '$.Timestamp')), "
-            "MAX(json_extract(payload_json, '$.Timestamp')) "
+            "MAX(json_extract(payload_json, '$.Timestamp')), "
+            "GROUP_CONCAT(DISTINCT COALESCE(json_extract(payload_json, '$.Strategy'), 'algo1')) "
             "FROM rounds GROUP BY session_id ORDER BY MIN(id)"
         )
         with self._connect() as connection:
             rows = connection.execute(query).fetchall()
         return [
             {"session_id": str(session_id), "rounds": int(count),
-             "first_timestamp": first, "last_timestamp": last}
-            for session_id, count, first, last in rows
+             "first_timestamp": first, "last_timestamp": last,
+             "algorithms": sorted(set(str(algorithms or "algo1").split(",")))}
+            for session_id, count, first, last, algorithms in rows
         ]
 
     def export_bounded_csv(self) -> bool:

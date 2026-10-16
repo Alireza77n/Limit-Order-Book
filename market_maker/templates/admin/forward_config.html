@@ -38,13 +38,19 @@
         {% set current_value = values.get(field_name) %}
         <div class="form-group">
           <label for="{{ field_name }}" class="form-label">{{ field_name.replace('_', ' ').title() }}
-          {% if definition.value_type.__name__ != 'bool' %}<span class="text-muted">({{ definition.value_type.__name__ }}{% if definition.minimum is not none %}; min {{ definition.minimum }}{% endif %}{% if definition.maximum is not none %}; max {{ definition.maximum }}{% endif %})</span>{% endif %}</label>
+          {% if definition.value_type.__name__ not in ('bool', 'str') %}<span class="text-muted">({{ definition.value_type.__name__ }}{% if definition.minimum is not none %}; min {{ definition.minimum }}{% endif %}{% if definition.maximum is not none %}; max {{ definition.maximum }}{% endif %})</span>{% endif %}</label>
           {% if definition.value_type.__name__ == 'bool' %}
             <div class="form-check">
               <input type="checkbox" id="{{ field_name }}" name="{{ field_name }}" value="true" class="form-check-input" {% if current_value %}checked{% endif %}>
               <label for="{{ field_name }}" class="form-check-label">Enabled{% if 'locked_' in field_name %} (required for live start){% endif %}</label>
               <input type="hidden" name="{{ field_name }}" value="false">
             </div>
+          {% elif definition.value_type.__name__ == 'str' %}
+            <select id="{{ field_name }}" name="{{ field_name }}" class="form-select">
+              {% for choice in definition.choices %}
+                <option value="{{ choice }}" {% if current_value == choice %}selected{% endif %}>{{ choice }}{% if choice_labels and choice_labels.get(field_name, {}).get(choice) %} — {{ choice_labels[field_name][choice] }}{% endif %}</option>
+              {% endfor %}
+            </select>
           {% elif definition.value_type.__name__ == 'int' %}
             <input type="number" id="{{ field_name }}" name="{{ field_name }}" class="form-input" value="{{ current_value }}" step="1" {% if definition.minimum is not none %}min="{{ definition.minimum }}"{% endif %} {% if definition.maximum is not none %}max="{{ definition.maximum }}"{% endif %}>
           {% else %}

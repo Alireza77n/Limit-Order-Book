@@ -35,6 +35,10 @@ class MMConfig:
     # quote more often without touching commission_perc or Algorithm 1 itself.
     exp_ret_min: Optional[float] = None
     algorithm_id: str = "default"           # if None, equals commission_perc
+    # Which quoting algorithm the worker runs (strategy/catalog.py): "algo1"
+    # or "algo3". Hot in Demo (the engine swaps the strategy at the next
+    # round boundary); a live worker reads it when it is started.
+    algorithm: str = "algo1"
     depth_max: int = 15
     inv_max: float = 0.000365215
     inv_min: float = 0.0
@@ -118,6 +122,21 @@ class MMConfig:
     fill_lambda_tau: float = 1.0
     # Queue correction p *= exp(-volume_ahead / fill_queue_volume_ref); 0 = off.
     fill_queue_volume_ref: float = 0.0
+    # Algorithm 3 (strategy/algo3.py, docs/algorithms/ALGORITHM_3.md): the
+    # imbalance of the top algo3_depth_k levels (weights algo3_decay_rho^i)
+    # leans a microprice centre by algo3_beta per unit of imbalance; the
+    # inventory skew is shared with Algorithm 1 (skew_perc); one symmetric
+    # half-spread algo3_half_spread (0 = the smallest that clears the fee
+    # bar, plus one tick). A top of book thinner than
+    # algo3_min_volume_orders * order_size carries no signal (imbalance 0,
+    # centre at the mid); the imbalance is clipped to +-algo3_imbalance_clip
+    # so one spoofed level cannot dominate.
+    algo3_depth_k: int = 3
+    algo3_decay_rho: float = 0.5
+    algo3_beta: float = 0.0
+    algo3_half_spread: float = 0.0
+    algo3_min_volume_orders: float = 20.0
+    algo3_imbalance_clip: float = 0.8
     fill_table_path: Optional[str] = None
     demo_state_path: Optional[str] = None
     demo_fee_state_path: Optional[str] = None
@@ -253,6 +272,15 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         fill_kappa=400.0,
         fill_lambda_tau=1.0,
         fill_queue_volume_ref=0.0,
+        # Which algorithm runs (admin-selectable): "algo1" or "algo3".
+        algorithm="algo1",
+        # Algorithm 3 (strategy/algo3.py); beta stays 0 until it is estimated.
+        algo3_depth_k=3,
+        algo3_decay_rho=0.5,
+        algo3_beta=0.0,
+        algo3_half_spread=0.0,
+        algo3_min_volume_orders=20.0,
+        algo3_imbalance_clip=0.8,
         # The demo matcher's "level-1 fast fill" assumed a level-1 quote sat
         # at the touch; v2 quotes by distance, so fills come from the price
         # path only (price_touch), consistent with the fill model.
@@ -323,6 +351,15 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         fill_kappa=400.0,
         fill_lambda_tau=1.0,
         fill_queue_volume_ref=0.0,
+        # Which algorithm runs (admin-selectable): "algo1" or "algo3".
+        algorithm="algo1",
+        # Algorithm 3 (strategy/algo3.py); beta stays 0 until it is estimated.
+        algo3_depth_k=3,
+        algo3_decay_rho=0.5,
+        algo3_beta=0.0,
+        algo3_half_spread=0.0,
+        algo3_min_volume_orders=20.0,
+        algo3_imbalance_clip=0.8,
         demo_level1_fast_fill_enabled=False,
         # Per-round decision diagnostics for the dashboard's Quote-decision tab
         # (bounded to the newest algo1_diagnostics_keep_rounds documents).

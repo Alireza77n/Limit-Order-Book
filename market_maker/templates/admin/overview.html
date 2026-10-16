@@ -50,6 +50,30 @@
 
 <div class="card mb-lg">
   <div class="card-header">
+    <h2>Algorithm in force</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted">Chosen on each pair's config page (field <code>Algorithm</code>). A Demo worker switches at its next round; a live worker reads the value when it is started, so a running live worker keeps the algorithm it started with.</p>
+    <div class="grid grid-2">
+      {% for pair in ['btc', 'usdt'] %}
+      <div>
+        <strong>{{ pair.upper() }}/IRT</strong>
+        <div>Demo:
+          <span class="status-badge" data-demo-algorithm="{{ pair }}:{{ algorithms.demo[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.demo[pair], algorithms.demo[pair] or "unavailable") }}</span>
+          <a href="{{ url_for('admin_config', pair=pair) }}" class="btn btn-ghost btn-sm">change</a>
+        </div>
+        <div>Live (next start):
+          <span class="status-badge" data-live-algorithm="{{ pair }}:{{ algorithms.live[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.live[pair], algorithms.live[pair] or "unavailable") }}</span>
+          <a href="{{ url_for('admin_forward_config', pair=pair) }}" class="btn btn-ghost btn-sm">change</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="card mb-lg">
+  <div class="card-header">
     <h2>Live Forward Test — isolated from Demo</h2>
   </div>
   <div class="card-body">

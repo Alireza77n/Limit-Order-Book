@@ -126,3 +126,63 @@ def test_delete_forward_session_rejects_bad_requests(monkeypatch, tmp_path, payl
 
     assert result["ok"] is False
     assert message in result["detail"]["error"]
+
+
+# ---------- the algorithm a live worker is started with ----------
+
+def _forward_start_paths(tmp_path):
+    paths = agent.AgentPaths(*(tmp_path / name for name in ("control", "config", "locks", "results", "logs")))
+    for directory in (paths.control, paths.config, paths.locks, paths.results, paths.logs):
+        directory.mkdir(parents=True, exist_ok=True)
+    return paths
+
+
+@pytest.mark.parametrize("saved, expected", [(None, "algo1"), ("algo1", "algo1"), ("algo3", "algo3")])
+def test_live_start_uses_the_algorithm_of_the_saved_live_configuration(monkeypatch, tmp_path, saved, expected):
+    from config import TRADING_PROFILES
+    from forward_config import save_config
+
+    paths = _forward_start_paths(tmp_path)
+    if saved is not None:
+        save_config({"algorithm": saved}, "btc", TRADING_PROFILES, paths.config)
+    started = []
+    monkeypatch.setattr(agent, "_start_worker", lambda paths, pair, algorithm="algo1": started.append((pair, algorithm)) or {"running": True})
+
+    detail = agent.process_command(paths, {"action": "start_forward_worker", "pair": "btc", "payload": {"confirmed": True}})
+
+    assert started == [("btc", expected)]
+    assert detail["algorithm"] == expected
+
+
+def test_live_worker_argv_carries_the_algorithm(monkeypatch, tmp_path):
+    paths = _forward_start_paths(tmp_path)
+    monkeypatch.setenv("FORWARD_TRADING_ENABLED", "1")
+    monkeypatch.setenv("NOBITEX_API_KEY", "test-only")
+    monkeypatch.setenv("NOBITEX_SECRET_KEY", "test-only")
+    calls = {"running": 0}
+
+    def fake_running(paths, pair):
+        calls["running"] += 1
+        return calls["running"] > 1          # not running before the start, running after
+
+    launched = []
+
+    class FakeProcess:
+        pid = 4321
+
+        def poll(self):
+            return None
+
+    def fake_popen(argv, **kwargs):
+        launched.append(argv)
+        return FakeProcess()
+
+    monkeypatch.setattr(agent, "worker_running", fake_running)
+    monkeypatch.setattr(agent.subprocess, "Popen", fake_popen)
+
+    result = agent._start_worker(paths, "usdt", "algo3")
+
+    assert result["running"] is True
+    [argv] = launched
+    assert argv[argv.index("--algorithm") + 1] == "algo3"
+    assert argv[argv.index("--mode") + 1] == "real" and argv[argv.index("--profile") + 1] == "usdt"

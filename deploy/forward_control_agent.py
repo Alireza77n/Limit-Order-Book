@@ -89,7 +89,9 @@ def _stop_worker(paths, pair):
     return {"running": worker_running(paths, pair), "stopped": False, "error": "worker did not exit before timeout; no forced kill was sent"}
 
 
-def _start_worker(paths, pair):
+def _start_worker(paths, pair, algorithm="algo1"):
+    """Start the pair's live worker with a fixed argv; ``algorithm`` is the
+    validated live configuration's choice (strategy/catalog.py)."""
     if os.environ.get("FORWARD_TRADING_ENABLED") != "1":
         raise RuntimeError("FORWARD_TRADING_ENABLED is not set to 1")
     if not os.environ.get("NOBITEX_API_KEY") or not os.environ.get("NOBITEX_SECRET_KEY"):
@@ -110,7 +112,7 @@ def _start_worker(paths, pair):
     log = log_path.open("ab", buffering=0)
     try:
         process = subprocess.Popen(
-            [sys.executable, "run.py", "--profile", pair, "--algorithm", "algo1", "--exchange", "nobitex", "--mode", "real", "--continuous"],
+            [sys.executable, "run.py", "--profile", pair, "--algorithm", algorithm, "--exchange", "nobitex", "--mode", "real", "--continuous"],
             cwd=PACKAGE, env=env, stdin=subprocess.DEVNULL,
             stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
             close_fds=True,
@@ -253,8 +255,15 @@ def process_command(paths, document):
             raise ValueError("explicit live-trading confirmation is required")
         from forward_config import desired_config, validate_forward_config
         from config import TRADING_PROFILES
+        from strategy.catalog import SELECTABLE_ALGORITHMS
         config = validate_forward_config(desired_config(pair, TRADING_PROFILES, paths.config), pair, TRADING_PROFILES, paths.config)
-        return _start_worker(paths, pair) | {"symbol": PAIRS[pair], "risk_limits_enabled": True, "order_size": config["order_size"]}
+        algorithm = str(config.get("algorithm") or "algo1")
+        if algorithm not in SELECTABLE_ALGORITHMS:
+            raise ValueError(f"algorithm is not selectable: {algorithm}")
+        return _start_worker(paths, pair, algorithm) | {
+            "symbol": PAIRS[pair], "algorithm": algorithm,
+            "risk_limits_enabled": True, "order_size": config["order_size"],
+        }
     if action == "stop_forward_worker":
         result = _stop_worker(paths, pair)
         if result.get("stopped") is not True:

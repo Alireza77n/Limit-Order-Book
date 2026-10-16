@@ -2,14 +2,20 @@
 
 Reads the CSV/SQLite result stores run.py writes (real and demo, BTC and
 USDT), the fill-probability tables and the per-round decision diagnostics,
-and serves a live-updating Dash app with six tabs:
+and serves a live-updating Dash app with these tabs:
 
+* Algorithm     -- pick Algorithm 1, Algorithm 3 or "all": one algorithm's
+                   own panels (what it does, its settings in force, its
+                   signals over time) and a filter every other tab follows,
+                   or every algorithm side by side (comparison table, PnL
+                   and headline numbers per algorithm).
 * Overview      -- quote rate, fills, realised vs computed spread, adverse
                    selection, PnL, inventory; mid-price with our quotes and
                    fills; where the quotes sit; why there was no quote.
-* Quote decision-- one round of Algorithm 1 v2: the candidates, the
-                   expected-value heat map of every pair, the decision trace,
-                   and the last rounds' decisions as a strip.
+* Quote decision-- one round of the algorithm that made it: Algorithm 1's
+                   candidates, expected-value heat map and decision trace,
+                   or Algorithm 3's book levels, imbalance, microprice,
+                   centre and quote; the last rounds' decisions as a strip.
 * Fill model    -- the measured fill-probability table vs the formula,
                    calibration (predicted vs realised), adverse selection,
                    table health.
@@ -36,8 +42,10 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, ctx, dash_table, dcc, html, no_update
 from dash.dependencies import Input, Output, State
+from plotly.subplots import make_subplots
 
 from config import DEMO_STATE_DIR, RESULTS_DIR, TRADING_PROFILES, demo_csv_path
+from strategy.catalog import ALGORITHMS, DEFAULT_ALGORITHM, SELECTABLE_ALGORITHMS, algorithm_info, algorithm_label
 from demo_config import (
     CONFIG_STATUS_LABELS,
     OverlayLoadError,
@@ -84,10 +92,11 @@ if os.environ.get("LOB_LIVE_ONLY_DASHBOARD", "0") == "1":
 QUOTE_EXTRA_COLUMNS = [
     "Quote Mode", "Selection Reason", "Centre", "Bid Distance", "Ask Distance",
     "Bid Fill Prob", "Ask Fill Prob", "Expected Value", "Reference Price",
+    "Imbalance", "Microprice",
 ]
 
 ACTIVITY_COLUMNS = [
-    "Timestamp", "Session_id", "Round", "Quote Status", "No Quote Reason",
+    "Timestamp", "Session_id", "Strategy", "Round", "Quote Status", "No Quote Reason",
     "No Quote Consecutive Count", "No Quote Episode Seconds",
     "No Quote Alert State", "No Quote Candidate Diagnostics",
     "Bid Level", "Ask Level", "Bid Price", "Ask Price",
@@ -105,12 +114,17 @@ ACTIVITY_COLUMNS = [
 # Buckets (relative distance) used for calibration tables; match the fill-table builder.
 CALIBRATION_BUCKETS = (0.001, 0.0015, 0.002, 0.003, 0.004, 0.006, 0.008, 0.012, 0.016, 0.024)
 
-TAB_VALUES = ("overview", "decision", "fillmodel", "orderbook", "validation", "trading", "attribution")
+TAB_VALUES = ("algorithm", "overview", "decision", "fillmodel", "orderbook", "validation", "trading", "attribution")
+
+# The Algorithm tab's choices: one algorithm (every other tab then shows that
+# algorithm's rounds only) or every algorithm side by side.
+ALGORITHM_VIEW_ALL = "all"
+ALGORITHM_VIEWS = (ALGORITHM_VIEW_ALL,) + tuple(SELECTABLE_ALGORITHMS)
 
 
 def _url_params(search) -> Dict[str, str]:
     """Query-string parameters of a deep link, first value each:
-    ?tab=decision&track=usdt_demo&session=<id>."""
+    ?tab=decision&track=usdt_demo&session=<id>&algo=algo3."""
     if not search:
         return {}
     return {key: values[0] for key, values in parse_qs(str(search).lstrip("?")).items() if values}
@@ -381,6 +395,11 @@ def track_settings(track_key: str) -> Dict[str, Any]:
         "commission_perc", "exp_ret_min", "inv_min", "inv_max", "cancel_after_minutes",
         "fill_kappa", "fill_lambda_tau", "one_sided_lo", "one_sided_hi", "ev_min",
         "order_size", "grid_min_perc", "grid_ratio", "grid_max_perc", "skew_perc",
+        "algorithm", "hysteresis_ticks", "refresh_seconds", "adverse_selection_perc",
+        "cost_basis_reference", "fill_table_enabled", "fill_table_max_age_hours",
+        "fill_table_min_samples", "fill_queue_volume_ref",
+        "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
+        "algo3_min_volume_orders", "algo3_imbalance_clip",
     )
     settings = {key: profile.get(key) for key in keys}
     overlay: Dict[str, Any] = {}
@@ -399,6 +418,10 @@ def track_settings(track_key: str) -> Dict[str, Any]:
     target = settings.get("exp_ret_min")
     settings["exp_ret_min"] = fee if target is None else float(target)
     settings["gross_bar"] = (1.0 + settings["exp_ret_min"]) / ((1.0 - fee) ** 2) - 1.0 if fee < 1 else float("inf")
+    # Algorithm 3's smallest half-spread that clears the bar, h_min = G / (2 + G).
+    gross = settings["gross_bar"]
+    settings["algo3_h_min"] = gross / (2.0 + gross) if math.isfinite(gross) else 1.0
+    settings["algorithm"] = str(settings.get("algorithm") or DEFAULT_ALGORITHM)
     return settings
 
 
@@ -720,7 +743,9 @@ def gate_rows(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]
     drawdown = drawdown_fraction(df)
     forecast = fills_by_day(df)
     forecast_error = None
-    if not forecast.empty and forecast["realised"].sum() > 0:
+    has_forecast = _col(df, "Bid Fill Prob").notna().any() or _col(df, "Ask Fill Prob").notna().any()
+    # Algorithm 3 predicts no fill probability, so its rounds carry no forecast to score.
+    if has_forecast and not forecast.empty and forecast["realised"].sum() > 0:
         forecast_error = float(forecast["predicted"].sum() / forecast["realised"].sum() - 1.0)
     spread_gap = (spread["realised"] - spread["computed"]) if spread["realised"] is not None and spread["computed"] is not None else None
     t = GATE_THRESHOLDS
@@ -820,6 +845,84 @@ def attribution_totals(att: pd.DataFrame) -> Dict[str, Any]:
         "start_wealth": float(att.groupby("Session_id", sort=False)["Wealth"].first().sum()),
         "verdict": verdict, "sessions": int(att["Session_id"].nunique()),
     }
+
+
+# ---------- Algorithms (strategy/catalog.py) ----------
+
+def strategy_column(df: pd.DataFrame) -> pd.Series:
+    """The algorithm key of every row: the Strategy column, with rows written
+    before it existed (and live CSV rows that never had it) counted as
+    Algorithm 1."""
+    if "Strategy" not in df.columns:
+        return pd.Series(DEFAULT_ALGORITHM, index=df.index, dtype=object)
+    keys = df["Strategy"].astype(object).where(df["Strategy"].notna(), None)
+    return keys.map(lambda k: str(k) if k not in (None, "", "nan") else DEFAULT_ALGORITHM)
+
+
+def filter_algorithm(df: pd.DataFrame, algorithm) -> pd.DataFrame:
+    """The rows of one algorithm; None / "all" keeps every row."""
+    if algorithm in (None, ALGORITHM_VIEW_ALL):
+        return df
+    return df[strategy_column(df) == str(algorithm)]
+
+
+def algorithms_in_rows(df: pd.DataFrame) -> List[str]:
+    """The algorithm keys present in the rows, in catalog order."""
+    present = set(strategy_column(df).unique()) if not df.empty else set()
+    return sorted(present, key=lambda key: (algorithm_info(key).number, key))
+
+
+def available_sessions_detail(path: str) -> Optional[List[Dict[str, Any]]]:
+    """Every session of a track, newest first, with the algorithms its
+    rounds ran: from the store's summary, else from the loaded frame.
+    None when the track has no data."""
+    store_path = Path(path).with_suffix(".sqlite3")
+    if store_path.exists():
+        try:
+            summary = DemoResultStore.open_existing(store_path).session_summary()
+        except Exception:
+            summary = None
+        if summary:
+            return [{"session_id": row["session_id"], "algorithms": list(row.get("algorithms") or [DEFAULT_ALGORITHM])}
+                    for row in summary][::-1]
+    df = load_track(path)
+    if df is None:
+        return None
+    keys = strategy_column(df)
+    return [{"session_id": session, "algorithms": sorted(set(keys[df["Session_id"] == session]))}
+            for session in session_ids(df)]
+
+
+def algorithm_comparison(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """One row per algorithm present in the rows: the Overview's headline
+    numbers computed on that algorithm's rounds only, so two algorithms that
+    ran on the same track (different sessions, or one session that switched)
+    can be read side by side."""
+    fee = float(settings.get("commission_perc") or 0.0)
+    keys = strategy_column(df)
+    rows = []
+    for key in algorithms_in_rows(df):
+        part = df[keys == key]
+        modes = quote_mode_counts(part)
+        total = modes["total"] or 1
+        spread = realised_vs_computed_spread(part, fee)
+        adverse = adverse_selection(part, (60,)).get(60, {"mean": None, "n": 0})
+        totals = attribution_totals(pnl_attribution(part))
+        rows.append({
+            "algorithm": key, "label": algorithm_label(key),
+            "rounds": int(len(part)),
+            "sessions": int(part["Session_id"].nunique()) if "Session_id" in part.columns else 1,
+            "hours": span_hours(part),
+            "quote_rate": (modes["pair"] + modes["bid_only"] + modes["ask_only"]) / total,
+            "fills": int(len(fill_events(part))), "fills_per_hour": fills_per_hour(part),
+            "round_trips": spread["trips"], "realised": spread["realised"], "computed": spread["computed"],
+            "adverse_60": adverse["mean"], "adverse_n": adverse["n"],
+            "net_pnl": totals["total"], "trading_pnl": totals["trading"], "price_pnl": totals["price"],
+            "fees": float(_col(part, "Round Fee").fillna(0).sum()) if "Round Fee" in part.columns else None,
+            "start_wealth": totals["start_wealth"],
+            "drawdown": drawdown_fraction(part), "verdict": totals["verdict"],
+        })
+    return rows
 
 
 def _demo_worker_running(pair: str) -> bool:
@@ -1168,6 +1271,255 @@ def _attribution_chart(att: pd.DataFrame, comparing: bool) -> go.Figure:
     return fig
 
 
+def _with_breaks(df: pd.DataFrame, min_gap_seconds: float = 300.0) -> pd.DataFrame:
+    """The rows in time order with an empty row wherever the session changes
+    or the clock jumps by more than ``min_gap_seconds`` (and five typical
+    steps), so a line chart breaks there instead of drawing a straight line
+    across hours with no rounds of this algorithm."""
+    if df.empty:
+        return df
+    frame = df.copy()
+    frame["Timestamp"] = pd.to_datetime(frame["Timestamp"], errors="coerce")
+    frame = frame.dropna(subset=["Timestamp"]).sort_values("Timestamp").reset_index(drop=True)
+    if len(frame) < 2:
+        return frame
+    steps = frame["Timestamp"].diff().dt.total_seconds()
+    limit = max(min_gap_seconds, 5.0 * float(steps.median() or 0.0))
+    sessions = frame["Session_id"].astype(str) if "Session_id" in frame.columns else pd.Series("", index=frame.index)
+    cut = (steps > limit) | (sessions != sessions.shift())
+    cut.iloc[0] = False
+    if not cut.any():
+        return frame
+    pieces, start = [], 0
+    for position in frame.index[cut]:
+        pieces.append(frame.iloc[start:position])
+        gap = frame.loc[position - 1, "Timestamp"] + (frame.loc[position, "Timestamp"] - frame.loc[position - 1, "Timestamp"]) / 2
+        pieces.append(pd.DataFrame({"Timestamp": [gap]}))
+        start = position
+    pieces.append(frame.iloc[start:])
+    return pd.concat(pieces, ignore_index=True)
+
+
+def _imbalance_chart(df: pd.DataFrame) -> go.Figure:
+    """Algorithm 3's signal over time: the clipped imbalance of every quoted round."""
+    df = _with_breaks(df)
+    imbalance = _col(df, "Imbalance")
+    if imbalance.notna().sum() == 0:
+        return _empty_fig("No Algorithm 3 rounds with a quote yet")
+    fig = go.Figure(go.Scatter(x=df["Timestamp"], y=imbalance, mode="lines+markers", name="imbalance I",
+                               line=dict(color=BID_COLOR, width=1.5), marker=dict(size=4), connectgaps=False))
+    fig.add_hline(y=0, line=dict(color=BASELINE, width=1))
+    fig = _style(fig, "Order-book imbalance I = (V_bid − V_ask) / (V_bid + V_ask) of the top k levels (+1 = only bids resting)")
+    fig.update_yaxes(range=[-1.05, 1.05])
+    return fig
+
+
+def _centre_shift_chart(df: pd.DataFrame) -> go.Figure:
+    """How far the microprice and the final centre sat from the mid, as % of price."""
+    df = _with_breaks(df)
+    mid = _col(df, "Mid Price")
+    if mid.isna().all():
+        mid = (_col(df, "Best Bid") + _col(df, "Best Ask")) / 2.0
+    micro = (_col(df, "Microprice") / mid - 1.0) * 100
+    centre = (_col(df, "Centre") / mid - 1.0) * 100
+    if micro.notna().sum() == 0 and centre.notna().sum() == 0:
+        return _empty_fig("No quoted rounds yet")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["Timestamp"], y=micro, mode="lines", name="microprice − mid",
+                             line=dict(color=MUTED, width=1.5), connectgaps=False))
+    fig.add_trace(go.Scatter(x=df["Timestamp"], y=centre, mode="lines", name="centre − mid (after lean and skew)",
+                             line=dict(color=ASK_COLOR, width=2), connectgaps=False))
+    fig.add_hline(y=0, line=dict(color=BASELINE, width=1))
+    fig = _style(fig, "Where the centre sat — microprice and final centre relative to the mid (% of price)")
+    fig.update_yaxes(ticksuffix=" %")
+    return fig
+
+
+def _expected_value_chart(df: pd.DataFrame) -> go.Figure:
+    """Algorithm 1's score of the quote it sent, per round."""
+    df = _with_breaks(df)
+    ev = _col(df, "Expected Value") * 100
+    net = _col(df, "Net Return") * 100
+    if ev.notna().sum() == 0:
+        return _empty_fig("No Algorithm 1 rounds with a quote yet")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["Timestamp"], y=net, mode="lines", name="net return R_net of the quote",
+                             line=dict(color=MUTED, width=1.5), connectgaps=False))
+    fig.add_trace(go.Scatter(x=df["Timestamp"], y=ev, mode="lines+markers", name="expected value J",
+                             line=dict(color=FILL_COLOR, width=2), marker=dict(size=4), connectgaps=False))
+    fig = _style(fig, "Expected value J = p_bid · p_ask · R_net of the quote sent (% of capital)")
+    fig.update_yaxes(ticksuffix=" %")
+    return fig
+
+
+def _fill_probability_chart(df: pd.DataFrame) -> go.Figure:
+    bid, ask = _col(df, "Bid Fill Prob"), _col(df, "Ask Fill Prob")
+    if bid.notna().sum() == 0 and ask.notna().sum() == 0:
+        return _empty_fig("No quoted rounds with a fill forecast yet")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["Timestamp"], y=bid, mode="markers", name="p(fill) of the bid", marker=dict(color=BID_COLOR, size=5)))
+    fig.add_trace(go.Scatter(x=df["Timestamp"], y=ask, mode="markers", name="p(fill) of the ask", marker=dict(color=ASK_COLOR, size=5)))
+    fig = _style(fig, "Fill probability the strategy gave the quotes it sent (one order lifetime)")
+    fig.update_yaxes(range=[0, 1])
+    return fig
+
+
+def _algorithm_metric_bars(rows: List[Dict[str, Any]]) -> go.Figure:
+    """The headline numbers of every algorithm, one small panel each."""
+    if not rows:
+        return _empty_fig("No rounds yet")
+    panels = (
+        ("quote rate (% of rounds)", lambda r: (r["quote_rate"] or 0) * 100),
+        ("fills per hour", lambda r: r["fills_per_hour"] or 0),
+        ("net PnL after fees (IRT)", lambda r: r["net_pnl"] or 0),
+        ("realised net spread per trip (%)", lambda r: (r["realised"] or 0) * 100),
+    )
+    fig = make_subplots(rows=1, cols=len(panels), subplot_titles=[p[0] for p in panels])
+    for column, (_, value_of) in enumerate(panels, start=1):
+        values = [value_of(r) for r in rows]
+        fig.add_trace(go.Bar(
+            x=[r["label"] for r in rows], y=values, marker_color=[SERIES[i % len(SERIES)] for i in range(len(rows))],
+            text=[f"{v:,.2f}" for v in values], textposition="outside", showlegend=False,
+        ), row=1, col=column)
+    fig = _style(fig, "Algorithms side by side — same track, each on its own rounds", height=360)
+    fig.update_layout(hovermode="closest", margin=dict(l=48, r=24, t=90, b=36))
+    for annotation in fig.layout.annotations:
+        annotation.font.size = 12
+    return fig
+
+
+def _pnl_by_algorithm_chart(df: pd.DataFrame) -> go.Figure:
+    """Running net PnL of every algorithm over its own rounds, in time order."""
+    keys = strategy_column(df)
+    fig = go.Figure()
+    for i, key in enumerate(algorithms_in_rows(df)):
+        att = pnl_attribution(df[keys == key])
+        if att.empty:
+            continue
+        att = att.sort_values("Timestamp")
+        fig.add_trace(go.Scatter(x=att["Timestamp"], y=att["Total PnL"].cumsum(), mode="lines",
+                                 name=algorithm_label(key), line=dict(color=SERIES[i % len(SERIES)], width=2)))
+    if not fig.data:
+        return _empty_fig("No PnL yet")
+    fig.add_hline(y=0, line=dict(color=BASELINE, width=1))
+    return _style(fig, "Net PnL after fees — running sum per algorithm (IRT)")
+
+
+def _algo3_levels_chart(document: Dict[str, Any]) -> go.Figure:
+    """Weighted resting volume of the top k levels, bids left, asks right."""
+    levels = document.get("levels") or []
+    if not levels:
+        return _empty_fig("No book levels recorded" + (f" ({document.get('selection_reason')})" if document.get("selection_reason") else ""))
+    names = [f"level {int(l['level'])} (w={float(l['weight']):.2f})" for l in levels]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(y=names, x=[-float(l["bid_volume"]) * float(l["weight"]) for l in levels], orientation="h",
+                         name="bids (weighted)", marker_color=BID_COLOR,
+                         customdata=[[float(l["bid"]), float(l["bid_volume"])] for l in levels],
+                         hovertemplate="bid %{customdata[0]:,.0f} · volume %{customdata[1]:g}<extra></extra>"))
+    fig.add_trace(go.Bar(y=names, x=[float(l["ask_volume"]) * float(l["weight"]) for l in levels], orientation="h",
+                         name="asks (weighted)", marker_color=ASK_COLOR,
+                         customdata=[[float(l["ask"]), float(l["ask_volume"])] for l in levels],
+                         hovertemplate="ask %{customdata[0]:,.0f} · volume %{customdata[1]:g}<extra></extra>"))
+    imbalance = document.get("imbalance")
+    title = "Top-k resting volume, weighted ρ^i"
+    if imbalance is not None:
+        title += f" — I = {float(imbalance):+.3f}" + (" (thin book: treated as 0)" if document.get("thin_book") else "")
+    fig = _style(fig, title, height=300)
+    fig.update_layout(barmode="relative", hovermode="y", margin=dict(l=130))
+    fig.update_xaxes(title_text="← bid volume · ask volume →")
+    fig.update_yaxes(autorange="reversed")
+    return fig
+
+
+def _algo3_ladder_chart(document: Dict[str, Any]) -> go.Figure:
+    """The prices of the decision on one axis: book touch, mid, microprice,
+    centre and the quote."""
+    marks = [
+        ("best bid", document.get("levels", [{}])[0].get("bid") if document.get("levels") else None, BID_COLOR, "dot"),
+        ("best ask", document.get("levels", [{}])[0].get("ask") if document.get("levels") else None, ASK_COLOR, "dot"),
+        ("mid", document.get("mid_price"), TEXT_PRIMARY, "dash"),
+        ("microprice", document.get("microprice"), MUTED, "dash"),
+        ("centre", document.get("centre"), STATUS_WARN, "solid"),
+        ("our bid", document.get("selected_bid_price"), BID_COLOR, "solid"),
+        ("our ask", document.get("selected_ask_price"), ASK_COLOR, "solid"),
+    ]
+    marks = [m for m in marks if m[1] is not None]
+    if not marks:
+        return _empty_fig("No prices this round")
+    fig = go.Figure()
+    # Highest price first, so the legend reads like the price axis; prices a
+    # few ticks apart would overlap as inline labels.
+    for name, price, color, dash in sorted(marks, key=lambda m: -float(m[1])):
+        fig.add_trace(go.Scatter(x=[0, 1], y=[float(price), float(price)], mode="lines",
+                                 name=f"{name} {float(price):,.0f}",
+                                 line=dict(color=color, width=2.4 if dash == "solid" else 1.4, dash=dash),
+                                 hovertemplate=f"{name} %{{y:,.0f}}<extra></extra>"))
+    fig = _style(fig, "The decision on the price axis — touch, mid, microprice, centre, quote", height=420)
+    fig.update_layout(hovermode="closest", legend=dict(orientation="v", x=1.02, y=1.0, xanchor="left",
+                                                       yanchor="top", font=dict(size=11, family=MONO)),
+                      margin=dict(l=64, r=170, t=56, b=24))
+    fig.update_xaxes(visible=False, range=[0, 1])
+    fig.update_yaxes(tickformat=",")
+    return fig
+
+
+def _algo3_levels_table(document: Dict[str, Any]) -> html.Div:
+    rows = [{
+        "level": int(l["level"]), "weight": f"{float(l['weight']):.3f}",
+        "bid": f"{float(l['bid']):,.0f}", "bid volume": f"{float(l['bid_volume']):g}",
+        "ask": f"{float(l['ask']):,.0f}", "ask volume": f"{float(l['ask_volume']):g}",
+    } for l in (document.get("levels") or [])]
+    return dash_table.DataTable(
+        columns=[{"name": c, "id": c} for c in ("level", "weight", "bid", "bid volume", "ask", "ask volume")],
+        data=rows, style_table={"overflowX": "auto"},
+        style_header={"backgroundColor": PAGE, "fontWeight": 600, "color": TEXT_PRIMARY, "fontFamily": FONT_FAMILY,
+                      "border": f"1px solid {GRIDLINE}", "fontSize": "0.8rem"},
+        style_cell={"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.82rem",
+                    "border": f"1px solid {GRIDLINE}", "padding": "0.35rem 0.5rem", "textAlign": "right"},
+    )
+
+
+def _algo3_decision_trace(document: Dict[str, Any], settings: Dict[str, Any]) -> html.Div:
+    """Algorithm 3's decision as the steps of docs/algorithms/ALGORITHM_3.md."""
+    def line(ok, text):
+        mark = "✓" if ok else ("•" if ok is None else "✗")
+        color = STATUS_GOOD if ok else (STATUS_WARN if ok is None else STATUS_CRITICAL)
+        return html.Div([html.Span(mark, style={"color": color, "fontWeight": 700, "marginRight": "0.5rem"}), html.Span(text)],
+                        style={"fontFamily": FONT_FAMILY, "fontSize": "0.88rem", "marginBottom": "0.35rem"})
+
+    def num(key, digits=0):
+        value = document.get(key)
+        return "—" if value is None else f"{float(value):,.{digits}f}"
+
+    def pct(key, digits=3):
+        value = document.get(key)
+        return "—" if value is None else f"{float(value) * 100:+.{digits}f}%"
+
+    mid, centre = document.get("mid_price"), document.get("centre")
+    reason = document.get("selection_reason") or "—"
+    ok = document.get("quote_mode") == "pair"
+    items = [
+        line(True, f"round {document.get('round')} · session {document.get('session_id')} · mid {num('mid_price')} · spread {num('spread')}"),
+        line(not document.get("thin_book"),
+             f"imbalance over k = {document.get('depth_k')} levels (ρ = {document.get('decay_rho')}): V_bid {num('volume_bid', 4)} vs V_ask {num('volume_ask', 4)} → I = {float(document.get('imbalance_raw') or 0):+.3f}"
+             + (f", clipped to {float(document.get('imbalance') or 0):+.3f}" if document.get("imbalance") != document.get("imbalance_raw") else "")
+             + (f" (thin book, below V_min = {num('min_volume', 4)}: signal ignored)" if document.get("thin_book") else "")),
+        line(True, f"microprice {num('microprice')} = mid {pct('microprice_shift')} (level-0 imbalance {float(document.get('imbalance_level0') or 0):+.3f})"),
+        line(True, f"lean × {float(document.get('lean_factor') or 1):.6f} (β = {document.get('beta')}) · skew × {float(document.get('skew_factor') or 1):.6f} (x = {float(document.get('inventory_position') or 0):.2f}) → centre {num('centre')} ({pct('centre_shift')} vs mid)" if centre and mid else "centre unavailable"),
+        line(True, f"half-spread h = max(h_config {float(document.get('h_config') or 0) * 100:.4f}%, h_min {float(document.get('h_min') or 0) * 100:.4f}% + tick {float(document.get('tick_fraction') or 0) * 100:.4f}%) = {float(document.get('h') or 0) * 100:.4f}%"),
+        line(None if not document.get("raw_bid") else True,
+             f"raw bid {num('raw_bid')} / ask {num('raw_ask')} → on the tick {num('selected_bid_price') if ok else num('raw_bid')} / {num('selected_ask_price') if ok else num('raw_ask')}"
+             + (" (bid clipped at the touch)" if document.get("clipped_bid") else "") + (" (ask clipped at the touch)" if document.get("clipped_ask") else "")),
+        line(ok, f"fee check: R_net {pct('net_return')} vs required {float(document.get('min_required_return') or 0) * 100:.3f}% → {'quote sent' if ok else 'no quote: ' + reason}"),
+    ]
+    hysteresis = document.get("hysteresis") or {}
+    if hysteresis.get("resting_bid") is not None:
+        items.append(line(True, f"resting pair {float(hysteresis['resting_bid']):,.0f} / {float(hysteresis['resting_ask']):,.0f}, "
+                                f"{float(hysteresis.get('resting_age_seconds') or 0):.0f} s old; kept while both prices stay within "
+                                f"{hysteresis.get('ticks')} ticks and it is younger than {hysteresis.get('refresh_seconds')} s"))
+    return html.Div(items)
+
+
 def _ev_heatmap(document: Dict[str, Any]) -> go.Figure:
     results = document.get("candidate_results") or []
     if not results:
@@ -1348,6 +1700,29 @@ def _metric_card(label: str, value: str, color: str = TEXT_PRIMARY, detail: str 
     })
 
 
+def _algorithm_picker(choice: str) -> html.Div:
+    """The Algorithm tab's list of algorithms. It lives in the fixed layout
+    (shown only while the Algorithm tab is open) so that every callback
+    reading it always finds it, and ?algo= deep links work from any tab."""
+    options = [{"label": f"{info.label} — {info.title}", "value": key}
+               for key, info in ALGORITHMS.items() if info.implemented]
+    options.append({"label": "All algorithms — side by side", "value": ALGORITHM_VIEW_ALL})
+    return _card(
+        _h3("Algorithm", "the choice applies to every tab"),
+        dcc.RadioItems(
+            id="algorithm-choice", options=options, value=choice,
+            persistence=True, persistence_type="session",
+            labelStyle={"display": "block", "fontFamily": FONT_FAMILY, "fontSize": "0.95rem",
+                        "color": TEXT_PRIMARY, "marginBottom": "0.35rem", "cursor": "pointer"},
+            inputStyle={"marginRight": "0.6rem"},
+        ),
+        html.Div("One algorithm: its own panels below, and the Overview, Quote decision, Fill model, Order book, "
+                 "Validation, Rounds and PnL attribution tabs show that algorithm's rounds only. All algorithms: "
+                 "every round, and the comparison below.",
+                 style={"color": MUTED, "fontFamily": FONT_FAMILY, "fontSize": "0.8rem", "marginTop": "0.5rem"}),
+    )
+
+
 # ---------- Dash app ----------
 
 app = Dash(
@@ -1373,6 +1748,7 @@ app.layout = html.Div([
             id="main-tabs",
             value="overview",
             children=[
+                dcc.Tab(label="Algorithm", value="algorithm", style=_tab_style(), selected_style=_tab_selected_style()),
                 dcc.Tab(label="Overview", value="overview", style=_tab_style(), selected_style=_tab_selected_style()),
                 dcc.Tab(label="Quote decision", value="decision", style=_tab_style(), selected_style=_tab_selected_style()),
                 dcc.Tab(label="Fill model", value="fillmodel", style=_tab_style(), selected_style=_tab_selected_style()),
@@ -1414,6 +1790,9 @@ app.layout = html.Div([
         ], style={"display": "grid", "gridTemplateColumns": "1.2fr 1.6fr auto auto", "gap": "1rem", "alignItems": "start"}),
         html.Div(id="status-text", style={"color": MUTED, "fontFamily": FONT_FAMILY, "fontSize": "0.8rem", "marginTop": "0.5rem"}),
     ),
+
+    # The Algorithm tab's list; always in the layout, visible on that tab only.
+    html.Div(_algorithm_picker(ALGORITHM_VIEW_ALL), id="algorithm-picker-panel", style={"display": "none"}),
 
     html.Div(id="tab-content"),
 
@@ -1457,10 +1836,25 @@ app.layout = html.Div([
 @app.callback(Output("main-tabs", "value"), Output("track", "value"), Input("url", "search"))
 def apply_url(search):
     """Deep links: ?tab=decision&track=usdt_demo (&session=<id>, applied by
-    refresh_session_options) open the page on that view."""
+    refresh_session_options; &algo=algo3, applied by apply_url_algorithm)
+    open the page on that view."""
     params = _url_params(search)
     tab, track = params.get("tab"), params.get("track")
     return (tab if tab in TAB_VALUES else no_update, track if track in TRACKS else no_update)
+
+
+@app.callback(Output("algorithm-choice", "value"), Input("url", "search"))
+def apply_url_algorithm(search):
+    """?algo=algo3 (or algo1, or all) selects the algorithm view; without it
+    the operator's last choice stays (the picker persists per browser tab)."""
+    wanted = _url_params(search).get("algo")
+    return wanted if wanted in ALGORITHM_VIEWS else no_update
+
+
+@app.callback(Output("algorithm-picker-panel", "style"), Input("main-tabs", "value"))
+def show_algorithm_picker(active_tab):
+    """The list of algorithms is part of the Algorithm tab."""
+    return {} if active_tab == "algorithm" else {"display": "none"}
 
 
 @app.callback(Output("session", "options"), Output("session", "value"),
@@ -1471,12 +1865,15 @@ def refresh_session_options(track_key, _, current_value, search=None):
     load (or to the session named in the deep link), not the newest single
     session, and keep the operator's choice across auto-refresh ticks
     (State never fires a callback); fall back to "all" only when the
-    selected session no longer exists."""
-    ids = available_sessions(TRACKS[track_key]["path"])
-    if ids is None:
+    selected session no longer exists. Every session is labelled with the
+    algorithm(s) its rounds ran."""
+    detail = available_sessions_detail(TRACKS[track_key]["path"])
+    if detail is None:
         return [], None
+    ids = [row["session_id"] for row in detail]
     options = [{"label": "All sessions (compare)", "value": "all"}] + [
-        {"label": str(s), "value": s} for s in ids
+        {"label": f"{row['session_id']} · " + " + ".join(algorithm_label(k) for k in row["algorithms"]),
+         "value": row["session_id"]} for row in detail
     ]
     if current_value is None:
         wanted = _url_params(search).get("session")
@@ -1526,8 +1923,9 @@ def refresh_effective_config_panel(track_key, _):
     Input("track", "value"),
     Input("session", "value"),
     Input("tick", "n_intervals"),
+    Input("algorithm-choice", "value"),
 )
-def refresh_status_text(track_key, session_id, _):
+def refresh_status_text(track_key, session_id, _, algorithm=None):
     track = TRACKS[track_key]
     df = load_track(track["path"], _session_filter(session_id))
     if df is None:
@@ -1535,10 +1933,16 @@ def refresh_status_text(track_key, session_id, _):
     df = filter_session(df, session_id)
     if df.empty:
         return "No rows for the selected session."
+    loaded = len(df)
+    df = filter_algorithm(df, algorithm)
+    if df.empty:
+        return f"No rounds of {algorithm_label(algorithm)} in this view yet ({loaded} rounds of other algorithms)."
     comparing = session_id in (None, "all")
     last = pd.to_datetime(df["Timestamp"], errors="coerce").max()
     status = f"{len(df)} rounds" + ("" if comparing else f" — session {session_id}")
-    if len(df) >= MAX_ROWS:
+    if algorithm not in (None, ALGORITHM_VIEW_ALL):
+        status += f" — {algorithm_label(algorithm)} only"
+    if loaded >= MAX_ROWS:
         status += f" (the newest {MAX_ROWS:,} rounds; older rows stay in the store)"
     if pd.notna(last):
         status += f" — last round {last:%Y-%m-%d %H:%M:%S}"
@@ -1553,13 +1957,16 @@ def refresh_status_text(track_key, session_id, _):
     Input("tick", "n_intervals"),
     Input("risk-free-rate-pct", "value"),
     Input("target-return-pct", "value"),
+    Input("algorithm-choice", "value"),
     State("decision-round-store", "data"),
 )
 def render_tab_content(active_tab, track_key, session_id, _, risk_free_rate_pct, target_return_pct,
-                       decision_round=None):
+                       algorithm=None, decision_round=None):
     """Render content for the active tab. On a refresh tick the Rounds tab
     is left alone: rebuilding the table resets the operator's scroll
-    position, so refresh_rounds_table swaps its rows in place instead."""
+    position, so refresh_rounds_table swaps its rows in place instead. The
+    Algorithm tab sees every round; every other tab sees the chosen
+    algorithm's rounds only."""
     if active_tab == "trading" and _triggered_by_tick():
         return no_update
     track = TRACKS[track_key]
@@ -1572,14 +1979,20 @@ def render_tab_content(active_tab, track_key, session_id, _, risk_free_rate_pct,
     if df.empty:
         return _no_data_message("selected session", "")
 
-    df = with_derived_spreads(df).sort_values("Timestamp")
+    df_all = with_derived_spreads(df).sort_values("Timestamp")
     comparing = session_id in (None, "all")
     settings = track_settings(track_key)
+
+    if active_tab == "algorithm":
+        return _render_algorithm_tab(df_all, algorithm, track_key, settings, comparing)
+    df = filter_algorithm(df_all, algorithm)
+    if df.empty:
+        return _no_rounds_for_algorithm(algorithm, track_key)
 
     if active_tab == "overview":
         return _render_overview_tab(df, comparing, settings)
     elif active_tab == "decision":
-        return _render_decision_tab(df, track_key, settings, selected=decision_round)
+        return _render_decision_tab(df, track_key, settings, selected=decision_round, algorithm=algorithm)
     elif active_tab == "fillmodel":
         return _render_fill_model_tab(df, track_key, settings)
     elif active_tab == "orderbook":
@@ -1617,14 +2030,15 @@ def _triggered_by_tick() -> bool:
     Input("tick", "n_intervals"),
     State("track", "value"),
     State("session", "value"),
+    State("algorithm-choice", "value"),
     prevent_initial_call=True,
 )
-def refresh_rounds_table(_, track_key, session_id):
+def refresh_rounds_table(_, track_key, session_id, algorithm=None):
     """Refresh the Rounds table's rows without rebuilding the table."""
     df = load_track(TRACKS[track_key]["path"], _session_filter(session_id))
     if df is None:
         return no_update
-    df = filter_session(df, session_id)
+    df = filter_algorithm(filter_session(df, session_id), algorithm)
     if df.empty:
         return no_update
     return activity_records(with_derived_spreads(df).sort_values("Timestamp"))
@@ -1634,13 +2048,27 @@ def refresh_rounds_table(_, track_key, session_id):
     Output("decision-panels", "children"),
     Input("decision-round", "value"),
     State("track", "value"),
+    State("algorithm-choice", "value"),
 )
-def refresh_decision_panels(selected, track_key):
-    documents = load_diagnostics(diagnostics_path(track_key), limit=DECISION_ROUNDS)
+def refresh_decision_panels(selected, track_key, algorithm=None):
+    documents = _decision_documents(track_key, algorithm)
     document = _pick_document(documents, selected)
     if document is None:
         return _no_data_message("decision diagnostics", diagnostics_path(track_key))
     return _decision_panels(document, track_settings(track_key))
+
+
+def _decision_documents(track_key: str, algorithm=None) -> List[Dict[str, Any]]:
+    """The newest diagnostics documents of a track, of one algorithm only
+    when one is chosen (documents without the key are Algorithm 1's)."""
+    documents = load_diagnostics(diagnostics_path(track_key), limit=DECISION_ROUNDS)
+    if algorithm in (None, ALGORITHM_VIEW_ALL):
+        return documents
+    return [d for d in documents if (d.get("algorithm") or DEFAULT_ALGORITHM) == algorithm]
+
+
+def _document_algorithm(document: Dict[str, Any]) -> str:
+    return str(document.get("algorithm") or DEFAULT_ALGORITHM)
 
 
 def _round_key(document: Dict[str, Any]) -> str:
@@ -1659,6 +2087,19 @@ def _no_data_message(label: str, path: str) -> html.Div:
     msg = f"No data yet for {label}" + (f" ({path})" if path else ".")
     return html.Div([
         _card(html.P(msg, style={"color": MUTED, "fontFamily": FONT_FAMILY, "textAlign": "center", "padding": "2rem"})),
+    ])
+
+
+def _no_rounds_for_algorithm(algorithm, track_key: str) -> html.Div:
+    """The chosen algorithm has not run on this track (in this view) yet."""
+    pair = _pair_of(track_key).upper()
+    return html.Div([
+        _card(html.P([
+            html.Strong(f"No rounds of {algorithm_label(algorithm)} in this view yet. "),
+            f"To run it, open the admin panel → Config {pair} → Algorithm and choose {algorithm}: a Demo worker "
+            "switches at its next round, a live worker when it is started. Pick \"All algorithms\" on the "
+            "Algorithm tab to see every round again.",
+        ], style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "textAlign": "center", "padding": "2rem"})),
     ])
 
 
@@ -1717,32 +2158,55 @@ def _render_overview_tab(df: pd.DataFrame, comparing: bool, settings: Dict[str, 
 
 
 def _decision_panels(document: Dict[str, Any], settings: Dict[str, Any]) -> html.Div:
+    """One round's decision, laid out for the algorithm that made it."""
+    if _document_algorithm(document) == "algo3":
+        return html.Div([
+            html.Div([
+                _card(_h3("Top-k book levels", "inputs of the imbalance"), _algo3_levels_table(document),
+                      dcc.Graph(figure=_algo3_levels_chart(document), config={"displaylogo": False})),
+                _card(dcc.Graph(figure=_algo3_ladder_chart(document), config={"displaylogo": False})),
+                _card(_h3("Decision trace", "Algorithm 3, this round"), _algo3_decision_trace(document, settings)),
+            ], style={"display": "grid", "gridTemplateColumns": "1.1fr 1fr 1.1fr", "gap": "1rem"}),
+        ])
     return html.Div([
         html.Div([
             _card(_h3("Candidates", "highlighted = sent"), _candidate_table(document)),
             _card(dcc.Graph(figure=_ev_heatmap(document), config={"displaylogo": False})),
-            _card(_h3("Decision trace", "this round"), _decision_trace(document, settings)),
+            _card(_h3("Decision trace", "Algorithm 1, this round"), _decision_trace(document, settings)),
         ], style={"display": "grid", "gridTemplateColumns": "1fr 1.3fr 1fr", "gap": "1rem"}),
     ])
 
 
-def _render_decision_tab(df: pd.DataFrame, track_key: str, settings: Dict[str, Any], selected=None) -> html.Div:
-    documents = load_diagnostics(diagnostics_path(track_key), limit=DECISION_ROUNDS)
+def _decision_header_text(algorithm: str, settings: Dict[str, Any]) -> str:
+    fee = float(settings.get("commission_perc") or 0) * 100
+    required = float(settings.get("exp_ret_min") or 0) * 100
+    gross = float(settings.get("gross_bar") or 0) * 100
+    if algorithm == "algo3":
+        return (f"fee {fee:.2f}% · required net {required:.2f}% · gross bar {gross:.3f}% · "
+                f"h_min {float(settings.get('algo3_h_min') or 0) * 100:.4f}% · k {settings.get('algo3_depth_k')} · "
+                f"ρ {settings.get('algo3_decay_rho')} · β {settings.get('algo3_beta')} · lifetime {settings.get('cancel_after_minutes')} min")
+    return (f"fee {fee:.2f}% · required net {required:.2f}% · gross bar {gross:.3f}% · "
+            f"lifetime {settings.get('cancel_after_minutes')} min · EV floor {float(settings.get('ev_min') or 0) * 100:.4f}%")
+
+
+def _render_decision_tab(df: pd.DataFrame, track_key: str, settings: Dict[str, Any], selected=None,
+                         algorithm=None) -> html.Div:
+    documents = _decision_documents(track_key, algorithm)
     options = [
-        {"label": f"round {d.get('round')} · {str(d.get('session_id'))[:24]}", "value": _round_key(d)}
+        {"label": f"round {d.get('round')} · {algorithm_label(_document_algorithm(d))} · {str(d.get('session_id'))[:24]}",
+         "value": _round_key(d)}
         for d in reversed(documents)
     ]
     document = _pick_document(documents, selected)
     value = _round_key(document) if document is not None else None
+    shown = _document_algorithm(document) if document is not None else (
+        algorithm if algorithm in SELECTABLE_ALGORITHMS else settings.get("algorithm", DEFAULT_ALGORITHM))
     header = _card(html.Div([
         html.Div([html.Label("Round", style=_label_style),
                   dcc.Dropdown(id="decision-round", options=options, value=value, clearable=False)],
-                 style={"minWidth": "320px"}),
-        html.Div(
-            f"fee {float(settings.get('commission_perc') or 0) * 100:.2f}% · required net {float(settings.get('exp_ret_min') or 0) * 100:.2f}% · "
-            f"gross bar {float(settings.get('gross_bar') or 0) * 100:.3f}% · lifetime {settings.get('cancel_after_minutes')} min · "
-            f"EV floor {float(settings.get('ev_min') or 0) * 100:.4f}%",
-            style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "fontSize": "0.85rem", "alignSelf": "end"}),
+                 style={"minWidth": "360px"}),
+        html.Div(_decision_header_text(shown, settings),
+                 style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "fontSize": "0.85rem", "alignSelf": "end"}),
     ], style={"display": "flex", "gap": "1.5rem", "alignItems": "end", "flexWrap": "wrap"}))
     if document is None:
         body = _no_data_message("decision diagnostics (written by the worker while it runs)", diagnostics_path(track_key))
@@ -1780,7 +2244,15 @@ def _render_fill_model_tab(df: pd.DataFrame, track_key: str, settings: Dict[str,
             table_rows.append({"distance": f"{float(b['distance']) * 100:.2f}%", "p bid": f"{float(b.get('p_bid', 0)):.3f}",
                                "p ask": f"{float(b.get('p_ask', 0)):.3f}", "n bid": int(b.get("n_bid", 0)), "n ask": int(b.get("n_ask", 0)),
                                "own bid": int(b.get("n_bid_own", 0)), "own ask": int(b.get("n_ask_own", 0))})
+    note = []
+    if algorithms_in_rows(df) == ["algo3"]:
+        note.append(_card(html.P(
+            "These rounds were made by Algorithm 3, which quotes a fixed spread and never reads a fill "
+            "probability: there is no forecast to calibrate here. The table below is still measured from "
+            "the price path every night and is what Algorithm 1 uses.",
+            style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "margin": 0})))
     return html.Div([
+        *note,
         html.Div([
             _card(dcc.Graph(figure=_fill_curve_chart(table, settings), config={"displaylogo": False})),
             _card(dcc.Graph(figure=_calibration_chart(rows), config={"displaylogo": False})),
@@ -1898,6 +2370,130 @@ def _render_attribution_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
         _card(dcc.Graph(figure=_attribution_chart(att, comparing), config={"displaylogo": False})),
         how,
     ])
+
+
+# ---------- Algorithm tab ----------
+
+def _settings_chips(keys: Sequence[str], settings: Dict[str, Any]) -> html.Div:
+    chips = []
+    for key in keys:
+        if key not in settings or settings[key] is None:
+            continue
+        value = settings[key]
+        text = f"{value:g}" if isinstance(value, float) else str(value)
+        chips.append(html.Span([html.Span(key, style={"color": MUTED}), f" = {text}"], style={
+            "display": "inline-block", "background": PAGE, "border": f"1px solid {GRIDLINE}", "borderRadius": "6px",
+            "padding": "0.15rem 0.5rem", "margin": "0 0.4rem 0.4rem 0", "fontFamily": MONO, "fontSize": "0.78rem",
+            "color": TEXT_PRIMARY,
+        }))
+    return html.Div(chips)
+
+
+COMMON_SETTING_KEYS = ("commission_perc", "exp_ret_min", "order_size", "inv_min", "inv_max", "cancel_after_minutes")
+
+
+def _algorithm_description(key: str, settings: Dict[str, Any], track_key: str) -> html.Div:
+    info = algorithm_info(key)
+    selected = settings.get("algorithm") == key
+    pair = _pair_of(track_key).upper()
+    status = html.Span(
+        "selected in this track's configuration" if selected
+        else f"not selected — admin panel → Config {pair} → Algorithm",
+        style={"color": STATUS_GOOD if selected else STATUS_WARN, "fontWeight": 600, "fontSize": "0.85rem"})
+    text_style = {"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.9rem", "margin": "0 0 0.35rem"}
+    return _card(
+        html.Div([_h3(f"{info.label} — {info.title}"), status],
+                 style={"display": "flex", "justifyContent": "space-between", "alignItems": "baseline", "gap": "1rem", "flexWrap": "wrap"}),
+        html.Ol([html.Li(line, style=text_style) for line in info.summary], style={"paddingLeft": "1.2rem", "margin": "0 0 0.6rem"}),
+        html.Div(f"Specification: {info.doc} · code: market_maker/strategy/{key}.py"
+                 + (" · uses the fill model" if info.uses_fill_model else " · does not use the fill model"),
+                 style={"color": MUTED, "fontFamily": FONT_FAMILY, "fontSize": "0.8rem", "marginBottom": "0.6rem"}),
+        _h3("Settings in force", "profile + saved configuration of this track"),
+        _settings_chips(COMMON_SETTING_KEYS + tuple(info.fields), settings),
+    )
+
+
+def _algorithm_tiles(row: Dict[str, Any]) -> html.Div:
+    spread = f"{_fmt_pct(row['realised'])} / {_fmt_pct(row['computed'])}"
+    return html.Div([
+        _metric_card("Rounds", f"{row['rounds']:,}", TEXT_PRIMARY, f"{row['sessions']} session(s) · {row['hours']:.1f} h"),
+        _metric_card("Quote rate (rounds)", f"{row['quote_rate']:.0%}", STATUS_GOOD if row["quote_rate"] >= 0.5 else STATUS_WARN),
+        _metric_card("Fills / hour", "—" if row["fills_per_hour"] is None else f"{row['fills_per_hour']:.2f}", TEXT_PRIMARY, f"{row['fills']} fills · {row['round_trips']} round trips"),
+        _metric_card("Realised vs computed spread", spread, TEXT_PRIMARY, "per round trip, after fees"),
+        _metric_card("Adverse selection (60 s)", _fmt_pct(row["adverse_60"]), STATUS_CRITICAL if (row["adverse_60"] or 0) < 0 else STATUS_GOOD, f"n = {row['adverse_n']}"),
+        _metric_card("Net PnL after fees", "—" if row["net_pnl"] is None else f"{row['net_pnl']:+,.0f}",
+                     STATUS_GOOD if (row["net_pnl"] or 0) >= 0 else STATUS_CRITICAL,
+                     (f"fees {row['fees']:,.0f} · " if row["fees"] else "") + f"{row['verdict'].lower()}"),
+    ], style={"display": "flex", "gap": "0.75rem", "flexWrap": "wrap", "marginBottom": "1rem"})
+
+
+def _algorithm_charts(key: str, part: pd.DataFrame, settings: Dict[str, Any]) -> html.Div:
+    if key == "algo3":
+        specific = [_imbalance_chart(part), _centre_shift_chart(part)]
+    else:
+        specific = [_expected_value_chart(part), _fill_probability_chart(part)]
+    return html.Div([
+        html.Div([_card(dcc.Graph(figure=fig, config={"displaylogo": False})) for fig in specific],
+                 style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "1rem"}),
+        html.Div([
+            _card(dcc.Graph(figure=_quotes_chart(part), config={"displaylogo": False})),
+            _card(dcc.Graph(figure=_reasons_chart(part), config={"displaylogo": False})),
+        ], style={"display": "grid", "gridTemplateColumns": "2fr 1fr", "gap": "1rem"}),
+    ])
+
+
+def _comparison_table(rows: List[Dict[str, Any]]) -> html.Div:
+    def pct(value, digits=2):
+        return "—" if value is None else f"{value * 100:.{digits}f} %"
+
+    data = [{
+        "algorithm": r["label"], "rounds": f"{r['rounds']:,}", "sessions": r["sessions"], "hours": f"{r['hours']:.1f}",
+        "quote rate": pct(r["quote_rate"], 0), "fills / h": "—" if r["fills_per_hour"] is None else f"{r['fills_per_hour']:.2f}",
+        "round trips": r["round_trips"], "realised spread": pct(r["realised"], 3), "computed spread": pct(r["computed"], 3),
+        "adverse 60 s": pct(r["adverse_60"], 3), "net PnL": "—" if r["net_pnl"] is None else f"{r['net_pnl']:+,.0f}",
+        "trading PnL": "—" if r["trading_pnl"] is None else f"{r['trading_pnl']:+,.0f}",
+        "price PnL": "—" if r["price_pnl"] is None else f"{r['price_pnl']:+,.0f}",
+        "fees": "—" if r["fees"] is None else f"{r['fees']:,.0f}",
+        "drawdown": pct(r["drawdown"]), "verdict": r["verdict"],
+    } for r in rows]
+    columns = ["algorithm", "rounds", "sessions", "hours", "quote rate", "fills / h", "round trips", "realised spread",
+               "computed spread", "adverse 60 s", "net PnL", "trading PnL", "price PnL", "fees", "drawdown", "verdict"]
+    return dash_table.DataTable(
+        columns=[{"name": c, "id": c} for c in columns], data=data, style_table={"overflowX": "auto"},
+        style_header={"backgroundColor": PAGE, "fontWeight": 600, "color": TEXT_PRIMARY, "fontFamily": FONT_FAMILY, "border": f"1px solid {GRIDLINE}"},
+        style_cell={"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.84rem", "border": f"1px solid {GRIDLINE}", "padding": "0.4rem 0.6rem", "textAlign": "right"},
+        style_cell_conditional=[{"if": {"column_id": "algorithm"}, "textAlign": "left", "fontWeight": 600, "color": TEXT_PRIMARY}],
+    )
+
+
+def _render_algorithm_tab(df_all: pd.DataFrame, choice, track_key: str, settings: Dict[str, Any], comparing: bool) -> html.Div:
+    """Below the list of algorithms (algorithm-picker-panel): one
+    algorithm's description, headline numbers and signal charts, or every
+    algorithm side by side."""
+    choice = choice if choice in ALGORITHM_VIEWS else ALGORITHM_VIEW_ALL
+    if choice == ALGORITHM_VIEW_ALL:
+        rows = algorithm_comparison(df_all, settings)
+        present = algorithms_in_rows(df_all)
+        scope = "across every session" if comparing else "this session"
+        return html.Div([
+            _card(_h3("Side by side", f"{len(rows)} algorithm(s) in this view, {scope}; each measured on its own rounds"),
+                  _comparison_table(rows),
+                  html.Div("A fair comparison needs the same market: compare sessions that ran at the same time "
+                           "(the two pairs, or the same pair on different days, are different markets). A session "
+                           "that switched algorithm hands its inventory over, so the second algorithm's price PnL "
+                           "starts with the first one's position.",
+                           style={"color": MUTED, "fontFamily": FONT_FAMILY, "fontSize": "0.8rem", "marginTop": "0.5rem"})),
+            _card(dcc.Graph(figure=_algorithm_metric_bars(rows), config={"displaylogo": False})),
+            _card(dcc.Graph(figure=_pnl_by_algorithm_chart(df_all), config={"displaylogo": False})),
+            html.Div([_algorithm_description(key, settings, track_key) for key in present],
+                     style={"display": "grid", "gridTemplateColumns": "1fr 1fr" if len(present) > 1 else "1fr", "gap": "1rem"}),
+        ])
+    part = filter_algorithm(df_all, choice)
+    description = _algorithm_description(choice, settings, track_key)
+    if part.empty:
+        return html.Div([description, _no_rounds_for_algorithm(choice, track_key)])
+    row = algorithm_comparison(part, settings)[0]
+    return html.Div([description, _algorithm_tiles(row), _algorithm_charts(choice, part, settings)])
 
 
 def _gate_table(rows: List[Dict[str, Any]]) -> html.Div:

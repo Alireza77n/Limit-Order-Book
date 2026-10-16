@@ -58,6 +58,7 @@ from forward_config import (
 from config import TRADING_PROFILES, demo_csv_path
 from dashboard import activity_records, filter_session, load_track
 from result_store import DemoResultStore
+from strategy.catalog import ALGORITHMS, DEFAULT_ALGORITHM
 from validation.validation_engine import create_validation_engine
 from validation.reports import generate_validation_report, format_metric_card
 
@@ -679,9 +680,54 @@ def _serialized_schema(pair: str) -> dict:
             "maximum": definition.maximum,
             "mode": definition.mode.value,
             "help_text": definition.help_text,
+            "choices": list(definition.choices) if definition.choices else None,
         }
         for field, definition in editable_schema(pair, TRADING_PROFILES).items()
     }
+
+
+def _choice_labels() -> Dict[str, Dict[str, str]]:
+    """Display text for the choices of the str fields (the algorithm drop-down)."""
+    return {"algorithm": {key: f"{info.label}: {info.title}" for key, info in ALGORITHMS.items()}}
+
+
+def _algorithm_labels() -> Dict[str, str]:
+    return {key: info.label for key, info in ALGORITHMS.items()}
+
+
+def _algorithms_in_force(app: Flask) -> Dict[str, Dict[str, Optional[str]]]:
+    """The algorithm each pair's Demo overlay and live configuration name
+    (None when that configuration cannot be read). The live value is what a
+    worker gets when it is started; a running live worker keeps the
+    algorithm it started with."""
+    demo: Dict[str, Optional[str]] = {}
+    live: Dict[str, Optional[str]] = {}
+    for pair in PAIRS:
+        try:
+            desired = load_desired_config(pair, app.config["STATE_DIR"], TRADING_PROFILES)
+            demo[pair] = str(desired.get("algorithm") or DEFAULT_ALGORITHM)
+        except (OverlayLoadError, OverlayValidationError, KeyError, OSError):
+            demo[pair] = None
+        try:
+            desired = forward_desired_config(pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"])
+            live[pair] = str(desired.get("algorithm") or DEFAULT_ALGORITHM)
+        except (OverlayLoadError, OverlayValidationError, KeyError, OSError):
+            live[pair] = None
+    return {"demo": demo, "live": live}
+
+
+def _form_value(definition, values):
+    """Coerce the submitted form value(s) of one field to the type its
+    definition declares (None = unparseable)."""
+    value = values[-1]
+    if definition.value_type is bool:
+        return any(item in ("true", "on", "1", "True") for item in values)
+    if definition.value_type is str:
+        return value
+    try:
+        return int(value) if definition.value_type is int else float(value)
+    except ValueError:
+        return None
 
 
 def _config_view(app: Flask, pair: str, path) -> dict:
@@ -739,6 +785,7 @@ def _config_page_context(
         "values": values,
         "has_previous": has_previous(path),
         "schema": editable_schema(pair, TRADING_PROFILES),
+        "choice_labels": _choice_labels(),
         "csrf_token": get_csrf_token(),
         "session_id": _session_id(app),
         "error": error,
@@ -881,10 +928,12 @@ def _register_routes(app: Flask) -> None:
             "workers": {pair: _worker_running(app, pair) for pair in PAIRS},
             "forward_workers": {pair: _forward_worker_running(app, pair) for pair in PAIRS},
             "forward_trading_enabled": app.config["FORWARD_TRADING_ENABLED"],
+            "algorithms": _algorithms_in_force(app),
             "recent_audit": _recent_audit(app),
         }
         if _wants_html():
-            return render_template("admin/overview.html", csrf_token=get_csrf_token(), **status)
+            return render_template("admin/overview.html", csrf_token=get_csrf_token(),
+                                   algorithm_labels=_algorithm_labels(), **status)
         return jsonify(status)
 
     @app.route("/admin/config/<pair>", methods=["GET", "POST"])
@@ -1029,7 +1078,7 @@ def _register_routes(app: Flask) -> None:
             return render_template(
                 "admin/forward_config.html", pair=pair, schema=schema,
                 values=desired, csrf_token=get_csrf_token(), session_id=None,
-                success=None, error=None,
+                success=None, error=None, choice_labels=_choice_labels(),
                 wallet_snapshot=wallet_snapshot, wallet_error=wallet_error,
             )
         allowed = set(schema) | {"csrf_token"}
@@ -1040,15 +1089,10 @@ def _register_routes(app: Flask) -> None:
         for key, definition in schema.items():
             if key not in request.form:
                 continue
-            values = request.form.getlist(key)
-            value = values[-1]
-            if definition.value_type is bool:
-                submitted[key] = any(item in ("true", "on", "1", "True") for item in values)
-            else:
-                try:
-                    submitted[key] = int(value) if definition.value_type is int else float(value)
-                except ValueError:
-                    return _error_page(400, f"Invalid value for {key}.")
+            value = _form_value(definition, request.form.getlist(key))
+            if value is None:
+                return _error_page(400, f"Invalid value for {key}.")
+            submitted[key] = value
         desired.update(submitted)
         try:
             validated = validate_forward_config(desired, pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"])
@@ -1061,7 +1105,7 @@ def _register_routes(app: Flask) -> None:
             return render_template(
                 "admin/forward_config.html", pair=pair, schema=schema,
                 values=desired, csrf_token=get_csrf_token(), session_id=None,
-                success=None, error=message,
+                success=None, error=message, choice_labels=_choice_labels(),
                 wallet_snapshot=wallet_snapshot, wallet_error=wallet_error,
             ), status
         if not result.get("ok"):
@@ -1635,21 +1679,15 @@ def _admin_config_post(app: Flask, pair: str, path):
     for key, definition in schema.items():
         if key not in request.form:
             continue
-        values = request.form.getlist(key)
-        value = values[-1]
-        expected_type = definition.value_type
-        if expected_type is bool:
-            submitted[key] = any(item in ("true", "on", "1", "True") for item in values)
-            continue
-        try:
-            submitted[key] = int(value) if expected_type is int else float(value)
-        except ValueError:
+        value = _form_value(definition, request.form.getlist(key))
+        if value is None:
             message = f"invalid value for {key}"
             if wants_html:
                 return render_template(
                     "admin/config.html", **_config_page_context(app, pair, path, error=message),
                 ), 400
             return (message, 400)
+        submitted[key] = value
     desired.update(submitted)
     try:
         validated = validate_overrides(desired, pair=pair, profiles=TRADING_PROFILES)

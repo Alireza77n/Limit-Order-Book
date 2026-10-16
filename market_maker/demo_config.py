@@ -37,6 +37,12 @@ class FieldDefinition:
     maximum: Optional[float]
     mode: ApplicationMode
     help_text: str
+    choices: Optional[Tuple[str, ...]] = None   # str fields: the only values accepted
+
+
+# The algorithms the configuration may select (strategy/catalog.py's
+# SELECTABLE_ALGORITHMS; pinned equal by tests/test_strategy_catalog.py).
+ALGORITHM_CHOICES: Tuple[str, ...] = ("algo1", "algo3")
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,8 @@ class RuntimeReloadResult:
 
 
 FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
+    # ---- Which algorithm runs (strategy/catalog.py); first, so the config pages show it on top ----
+    "algorithm": FieldDefinition(str, None, None, ApplicationMode.HOT, "Quoting algorithm. algo1: distance grid, fill probabilities and expected value. algo3: order-book imbalance, microprice and a fixed spread. A Demo worker switches at its next round; a live worker reads it when it is started.", choices=ALGORITHM_CHOICES),
     "order_size": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Base amount per order. With inventory sizing on, each side is scaled around this amount (0 to 2x at strength 1)."),
     "inventory_sizing_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Scale buy and sell sizes linearly with inventory: buy more when inventory is low, sell more when it is high. Off sends a fixed order_size on both sides."),
     "inventory_sizing_strength": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Slope k of the linear rule. 0 keeps a fixed order_size; 1 makes the buy reach zero at inv_max and the sell reach zero at inv_min."),
@@ -83,6 +91,13 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "fill_kappa": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Fallback fill formula: decay of the fill rate per unit of relative distance (400 = e-fold every 0.25%)."),
     "fill_lambda_tau": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Fallback fill formula: expected fills at zero distance during one order lifetime."),
     "fill_queue_volume_ref": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Queue correction: fill probability is multiplied by exp(-volume ahead / this). 0 = no correction."),
+    # ---- Algorithm 3 (strategy/algo3.py) ----
+    "algo3_depth_k": FieldDefinition(int, 1, 50, ApplicationMode.HOT, "Book levels on each side that enter the imbalance."),
+    "algo3_decay_rho": FieldDefinition(float, 0.05, 1.0, ApplicationMode.HOT, "Weight of each deeper level in the imbalance, rho^i (1 = every level counts the same)."),
+    "algo3_beta": FieldDefinition(float, 0, 0.05, ApplicationMode.HOT, "Lean of the quote centre per unit of imbalance, as a fraction of price (0 = microprice centre only, until beta is estimated from data)."),
+    "algo3_half_spread": FieldDefinition(float, 0, 0.5, ApplicationMode.HOT, "Half-spread around the centre, as a fraction of price. 0 = the smallest half-spread that clears the fee bar, plus one tick."),
+    "algo3_min_volume_orders": FieldDefinition(float, 0, None, ApplicationMode.HOT, "A top of book thinner than this many order sizes carries no signal: imbalance 0, centre at the mid. 0 = always trust the book."),
+    "algo3_imbalance_clip": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Largest imbalance the lean may use (0.8 = one spoofed level cannot push the lean to its maximum)."),
 })
 
 ALLOWED_FIELDS = frozenset(FIELD_DEFINITIONS)
@@ -148,6 +163,12 @@ def _validate_field(key: str, raw_value: Any, definition: FieldDefinition) -> An
     if definition.value_type is bool:
         if not isinstance(raw_value, bool):
             raise OverlayValidationError(f"{key} must be a boolean")
+        return raw_value
+    if definition.value_type is str:
+        if not isinstance(raw_value, str):
+            raise OverlayValidationError(f"{key} must be a string")
+        if definition.choices is not None and raw_value not in definition.choices:
+            raise OverlayValidationError(f"{key} must be one of: {', '.join(definition.choices)}")
         return raw_value
     if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
         raise OverlayValidationError(f"{key} must be numeric")

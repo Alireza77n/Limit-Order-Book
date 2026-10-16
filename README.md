@@ -8,14 +8,17 @@ The project currently includes:
 
 * **Algorithm 1:** a custom depth-aware, inventory-skewed quoting strategy — **implemented, tested, and runnable live** against Nobitex.
 * **Algorithm 2:** the Avellaneda-Stoikov optimal market-making model — **not implemented**. Only documented below and explored in parameter-estimation notebooks (`market_maker/research/`). See [Algorithm 2](#algorithm-2-avellaneda-stoikov-model) for the full model and [Known limitations / next steps](#known-limitations--next-steps) for the honest picture of what's missing.
+* **Algorithm 3:** an order-book imbalance and microprice market maker — **implemented and tested** (branch `MM_algo2`). It centres its quotes on the microprice, leans them with the volume imbalance of the top levels, skews them by inventory and quotes the smallest symmetric spread that clears the fee bar. Specification and proofs: [`docs/algorithms/ALGORITHM_3.md`](docs/algorithms/ALGORITHM_3.md).
+
+Which algorithm a worker runs is a setting (`algorithm`: `algo1` or `algo3`), chosen per pair in the admin panel (Demo: applied at the next round; live: when the worker is started). The results dashboard has an **Algorithm** tab: pick one algorithm to see its own panels (every other tab then shows its rounds only), or all of them side by side to compare.
 
 The goal of this project is to simulate, backtest, and compare different market-making approaches on cryptocurrency order book data.
 
-| | Algorithm 1 | Algorithm 2 |
-|---|---|---|
-| Status | Implemented, tested | **Not implemented** (stub only) |
-| Code | `market_maker/strategy/algo1.py` | `market_maker/strategy/algo2.py` (raises `NotImplementedError`) |
-| Runnable live | Yes, via `run.py --algorithm algo1` | No |
+| | Algorithm 1 | Algorithm 2 | Algorithm 3 |
+|---|---|---|---|
+| Status | Implemented, tested | **Not implemented** (stub only) | Implemented, tested |
+| Code | `market_maker/strategy/algo1.py` | `market_maker/strategy/algo2.py` (raises `NotImplementedError`) | `market_maker/strategy/algo3.py` |
+| Runnable | Yes: `algorithm = algo1` (default) or `run.py --algorithm algo1` | No | Yes: `algorithm = algo3` in the admin panel, or `run.py --algorithm algo3` |
 
 ---
 
@@ -384,7 +387,7 @@ inventory caps and the locked-exposure guards are as described in
 | W4 `break` assumes a monotone book | fixed — all pairs scored |
 | W5 the bid can never quote at level 0 | fixed — candidates may anchor at level 0 without crossing |
 | W6 execution probability is a placeholder | fixed — fill model (table + fallback) |
-| W7 no volatility / imbalance / trade-flow input | open — see `Suggested Algorithm/` (Algorithms 3 and 4) |
+| W7 no volatility / imbalance / trade-flow input | imbalance: Algorithm 3 (selectable, `docs/algorithms/ALGORITHM_3.md`); volatility and trade flow: open (Algorithm 4 design) |
 | W8 `denom == 0` and standalone `exp_ret_min = None` raise | fixed — position defaults to 0.5; `exp_ret_min` bootstraps to the fee |
 
 Still open and outside the strategy: transient API errors stop the live
@@ -569,8 +572,11 @@ market_maker/
   dashboard.py             Dash history dashboard, reads SQLite (falls back to CSV)
   strategy/
     base.py                Strategy interface (decide_order contract)
+    common.py               Order-book arithmetic shared by the algorithms (tick, mid, returns, fee bar)
     algo1.py                Algorithm 1 v2: distance-anchored, expected-value quoting (pure, no I/O)
     algo2.py                Algorithm 2 stub (raises NotImplementedError)
+    algo3.py                Algorithm 3: imbalance + microprice centre, fixed fee-bar spread (pure, no I/O)
+    catalog.py              The algorithms: keys, labels, the selectable ones, build_strategy()
   exchange/
     base.py                 ExchangeClient interface
     nobitex.py                NobitexExchangeClient (Nobitex HTTP calls)
@@ -637,7 +643,7 @@ A live-updating results dashboard (`python dashboard.py`) shows, for every real/
 
 # Extending
 
-**Add a new algorithm:** implement `Strategy` (`decide_order`) in `market_maker/strategy/`, add it to `run.py`'s `STRATEGIES` dict. No engine or exchange changes needed.
+**Add a new algorithm:** implement `Strategy` (`decide_order`, plus `diagnostics` / `no_quote_reason` for the dashboard and alerts) in `market_maker/strategy/` with a class attribute `key`, and add one `AlgorithmInfo` entry to `strategy/catalog.py`; add its key to `demo_config.ALGORITHM_CHOICES` (pinned equal by a test) and its settings to both `TRADING_PROFILES`, `demo_config.FIELD_DEFINITIONS` and `forward_config.FORWARD_FIELDS`. The CLI, the admin drop-down and the dashboard's Algorithm tab pick it up from the catalog. No engine or exchange changes needed.
 
 **Add a new exchange:** implement `ExchangeClient` (`market_maker/exchange/base.py`) in `market_maker/exchange/`, add it to `run.py`'s `EXCHANGES` dict. No engine or strategy changes needed.
 

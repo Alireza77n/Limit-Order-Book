@@ -10,7 +10,7 @@ import pandas as pd
 from config import MMConfig, RESULTS_DIR
 from portfolio import Nobitex_portfolio
 from strategy.base import Strategy
-from strategy.algo1 import Algo1Strategy
+from strategy.catalog import algorithm_label, build_strategy, strategy_key
 from exchange.base import ExchangeClient
 from safety import enforce_engine_safety
 from telegram_lifecycle import PaperTelegramReporter, TelegramClient
@@ -108,7 +108,7 @@ class SimpleMarketMaker:
             self.conn = None
             self.cursor = None
         self.exchange = exchange
-        self.strategy = strategy if strategy is not None else Algo1Strategy(self.cfg)
+        self.strategy = strategy if strategy is not None else build_strategy(self.cfg)
         if self.cfg.exp_ret_min is None:
             self.cfg.exp_ret_min = self.cfg.commission_perc
         if self.cfg.order_size is None:
@@ -322,6 +322,36 @@ class SimpleMarketMaker:
     # ---------- Quote selection ----------
     def _decide_order(self, ob: Dict[str, Any], inv_current: float) -> Optional[Dict[str, Any]]:
         return self.strategy.decide_order(ob, inv_current)
+
+    def _strategy_name(self) -> str:
+        """The catalog key written into every round row ("Strategy"), or the
+        class name of a stand-in strategy."""
+        return strategy_key(self.strategy) or self.strategy.__class__.__name__
+
+    def _sync_strategy_with_config(self) -> None:
+        """Demo hot reload: when the admin changes the ``algorithm`` field,
+        build the new strategy at the round boundary (its memory starts
+        empty; the ledger, inventory and session continue). A stand-in
+        strategy without a catalog key (tests) is never replaced."""
+        wanted = getattr(self.cfg, "algorithm", None)
+        current = strategy_key(self.strategy)
+        if current is None or not wanted or wanted == current:
+            return
+        try:
+            replacement = build_strategy(self.cfg, wanted)
+        except KeyError:
+            print(json.dumps({
+                "event": "unknown_algorithm_ignored", "algorithm": wanted,
+                "session_id": str(self.session), "symbol": self.pair,
+                "timestamp": self.now_provider().isoformat(),
+            }, sort_keys=True), flush=True)
+            return
+        self.strategy = replacement
+        print(json.dumps({
+            "event": "algorithm_switched", "from": current, "to": wanted,
+            "session_id": str(self.session), "symbol": self.pair,
+            "timestamp": self.now_provider().isoformat(),
+        }, sort_keys=True), flush=True)
 
     @staticmethod
     def _quote_side_price(quote: Optional[Dict[str, Any]], key: str) -> Optional[float]:
@@ -558,7 +588,8 @@ class SimpleMarketMaker:
             f"{self._mode_tag()}\n\n"
             f"<b>Market Maker Connected</b>\n\n"
             f"Symbol: <b>{self.pair}</b>\n"
-            f"Algorithm: <b>{self.strategy.__class__.__name__}</b> (profile: {self.algorithm_id})\n"
+            f"Algorithm: <b>{algorithm_label(strategy_key(self.strategy))}</b> "
+            f"({self.strategy.__class__.__name__}, profile: {self.algorithm_id})\n"
             f"Commission: <b>{self.cfg.commission_perc:.2%}</b>\n"
             f"Session: <code>{self.session}</code>"
         )
@@ -878,7 +909,7 @@ class SimpleMarketMaker:
     # ---------- Main loop (uses wallet_balance + send_order) ----------
 
     DEMO_COLUMNS = [
-        "Session_id", "Algorithm", "Crypto", "Mode", "Round", "Timestamp",
+        "Session_id", "Algorithm", "Strategy", "Crypto", "Mode", "Round", "Timestamp",
         "Quote Status", "No Quote Reason", "No Quote Consecutive Count",
         "No Quote Episode Seconds", "No Quote Alert State",
         "No Quote Candidate Diagnostics", "Bid Level", "Ask Level",
@@ -897,27 +928,32 @@ class SimpleMarketMaker:
         "Sell Telegram Message ID",
         "Round Fee", "Session Pair Fee", "Session All Symbols Fee",
         "Pair All Time Fee", "All Symbols All Time Fee",
-        # Algorithm 1 v2 decision fields (dashboard "Quote decision" /
-        # "Fill model" tabs); None on no-quote rounds and on the absent side.
+        # The strategy's decision fields (dashboard "Quote decision" /
+        # "Fill model" / "Algorithm" tabs); None on no-quote rounds, on the
+        # absent side, and where the algorithm has no such number
+        # (Algorithm 3 reports no fill probability, Algorithm 1 no imbalance).
         "Quote Mode", "Selection Reason", "Centre", "Bid Distance", "Ask Distance",
         "Bid Fill Prob", "Ask Fill Prob", "Expected Value", "Reference Price",
+        "Imbalance", "Microprice",
     ]
 
-    # The same nine fields, in the order the live CSV and the demo rows carry them.
+    # The same fields, in the order the live CSV and the demo rows carry them.
     QUOTE_EXTRA_COLUMNS = [
         "Quote Mode", "Selection Reason", "Centre", "Bid Distance", "Ask Distance",
         "Bid Fill Prob", "Ask Fill Prob", "Expected Value", "Reference Price",
+        "Imbalance", "Microprice",
     ]
 
     @staticmethod
     def _quote_extra_fields(quote: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        """Algorithm 1 v2's decision numbers for the round row (all None when
+        """The strategy's decision numbers for the round row (all None when
         there was no quote or the strategy does not report them)."""
         keys = {
             "Quote Mode": "quote mode", "Selection Reason": "selection reason",
             "Centre": "centre", "Bid Distance": "bid distance", "Ask Distance": "ask distance",
             "Bid Fill Prob": "bid exec prob", "Ask Fill Prob": "ask exec prob",
             "Expected Value": "expected value", "Reference Price": "reference price",
+            "Imbalance": "imbalance", "Microprice": "microprice",
         }
         if not quote:
             return {column: None for column in keys}
@@ -1395,6 +1431,8 @@ class SimpleMarketMaker:
                 reload_result = self.config_sync.reload_at_round_boundary()
                 if not reload_result.ok:
                     self._record_config_reload_error(reload_result.error)
+                else:
+                    self._sync_strategy_with_config()
                 run_rounds += 1
                 round_no += 1
                 if self.cfg.max_rounds and run_rounds > self.cfg.max_rounds:
@@ -1658,6 +1696,7 @@ class SimpleMarketMaker:
                 row = {
                     "Session_id": str(self.session),
                     "Algorithm": self.algorithm_id,
+                    "Strategy": self._strategy_name(),
                     "Crypto": self.pair,
                     "Mode": "demo",
                     "Round": round_no,
@@ -1818,6 +1857,7 @@ class SimpleMarketMaker:
         columns = [
             "Session_id",
             "Algorithm",
+            "Strategy",
             "Crypto",
             "Timestamp",
             "Bid Level",
@@ -2012,6 +2052,7 @@ class SimpleMarketMaker:
                 new_row = [
                     self.session,
                     self.algorithm_id,
+                    self._strategy_name(),
                     self.pair,
                     stamp, bid_lvl, ask_lvl,
                     inv_current, cash_current,

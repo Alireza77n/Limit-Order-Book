@@ -139,6 +139,21 @@ def test_load_view_by_session_and_session_summary(tmp_path):
     assert summary[1]["last_timestamp"] == "2026-08-01 12:00:04"
 
 
+def test_session_summary_names_the_algorithms_each_session_ran(tmp_path):
+    """Rows written before the Strategy column existed count as Algorithm 1;
+    a session that switched algorithm lists both."""
+    store = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS + ["Strategy"])
+    store.append_round(row(1))                                         # legacy row: no Strategy
+    store.append_round({**row(2), "Strategy": "algo1"})
+    store.append_round({**row(3), "Session_id": "session-2", "Strategy": "algo3"})
+    store.append_round({**row(4), "Session_id": "session-3", "Strategy": "algo1"})
+    store.append_round({**row(5), "Session_id": "session-3", "Strategy": "algo3"})
+
+    summary = {s["session_id"]: s["algorithms"] for s in store.session_summary()}
+
+    assert summary == {"session-1": ["algo1"], "session-2": ["algo3"], "session-3": ["algo1", "algo3"]}
+
+
 def test_read_only_reader_sees_every_row_and_never_writes(tmp_path):
     """The dashboard and admin containers mount the results directory
     read-only; a reader opened there must read the writer's WAL store
