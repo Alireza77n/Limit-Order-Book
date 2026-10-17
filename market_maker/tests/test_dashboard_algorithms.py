@@ -283,6 +283,7 @@ def test_the_empty_state_says_where_the_algorithm_has_run(tmp_path, monkeypatch)
         {"Session_id": "demo-1", "Strategy": "algo1", "Timestamp": "2026-10-17 10:00:00"},
         {"Session_id": "demo-1", "Strategy": "algo3", "Timestamp": "2026-10-17 11:00:00"},
         {"Session_id": "demo-1", "Strategy": "algo3", "Timestamp": "2026-10-17 11:01:00"},
+        {"Session_id": "demo-2", "Strategy": "algo3", "Timestamp": "2026-10-17 12:00:00"},
     ]).to_csv(btc, index=False)
     monkeypatch.setattr(dashboard, "TRACKS", {
         "btc_demo": dict(dashboard.TRACKS["btc_demo"], path=str(btc)),
@@ -291,9 +292,10 @@ def test_the_empty_state_says_where_the_algorithm_has_run(tmp_path, monkeypatch)
     monkeypatch.setattr(dashboard, "DEMO_STATE_DIR", str(tmp_path / "state"))
 
     assert dashboard.where_algorithm_ran("algo3") == [
+        {"track": "btc_demo", "label": "BTC — Demo (paper trading)", "session_id": "demo-2", "rounds": 1},
         {"track": "btc_demo", "label": "BTC — Demo (paper trading)", "session_id": "demo-1", "rounds": 2}]
     text = _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
-    assert ("MM_algo2 has run on BTC — Demo (paper trading), session demo-1 (2 rounds): "
+    assert ("MM_algo2 has run on BTC — Demo (paper trading), sessions demo-2 (1 round), demo-1 (2 rounds): "
             "pick that track and session above to see its rounds.") in text
     monkeypatch.setattr(dashboard, "TRACKS", {"usdt_demo": dict(dashboard.TRACKS["usdt_demo"], path=str(usdt))})
     text = _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))

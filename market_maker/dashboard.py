@@ -2147,7 +2147,8 @@ def _no_rounds_for_algorithm(algorithm, track_key: str) -> html.Div:
         parts = []
         for label, entries in by_track.items():
             shown = ", ".join(
-                str(entry["session_id"]) + (f" ({entry['rounds']:,} rounds)" if entry.get("rounds") else "")
+                str(entry["session_id"])
+                + (f" ({entry['rounds']:,} round{'' if entry['rounds'] == 1 else 's'})" if entry.get("rounds") else "")
                 for entry in entries[:3])
             more = f" and {len(entries) - 3} more" if len(entries) > 3 else ""
             parts.append(f"{label}, session{'s' if len(entries) > 1 else ''} {shown}{more}")
