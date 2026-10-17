@@ -58,38 +58,42 @@ start (see [§5](#5-what-demo-mode-does-not-do)). Without both Telegram
 variables, notifications are silently skipped -- they're optional and
 never required to run the bot.
 
-### 1.2 Run: BTC, Algorithm 1 (the common case)
+### 1.2 Run: BTC with MM_algo2
 
 ```sh
 cd market_maker
-python run.py --profile btc
+python run.py --profile btc --mode real --algorithm algo3
 ```
 
-Equivalent to old `demo_btc.py`: `BTCIRT` pair, `depth_max=10`,
+**This places real orders with real money** (for paper trading use
+`--mode demo`, §1b). `algo3` is MM_algo2, this branch's algorithm. Without
+`--algorithm` the configured `algorithm` setting runs, and its code default
+is `algo1` (MM_algo1v2). The profile: `BTCIRT` pair,
 `inv_max=0.000472`, `order_size=0.000015`, 60s between rounds, up to 500
-rounds, logs to `market_maker/results/btc_track.csv`.
+rounds (unless `--continuous`), logs to `market_maker/results/btc_track.csv`.
 
-### 1.3 Run: USDT, Algorithm 1
+### 1.3 Run: USDT with MM_algo2
 
 ```sh
 cd market_maker
-python run.py --profile usdt
+python run.py --profile usdt --mode real --algorithm algo3
 ```
 
-Equivalent to old `demo_usdt.py`: `USDTIRT` pair, `inv_max=50`,
-`order_size=1`, 10s between rounds, up to 50000 rounds, logs to
-`market_maker/results/usdt_track.csv`.
+`USDTIRT` pair, `inv_max=50`, `order_size=1`, 10s between rounds, up to
+50000 rounds, logs to `market_maker/results/usdt_track.csv`. The comparison
+algorithm runs with `--algorithm algo1` (MM_algo1v2).
 
-### 1.4 Run: Algorithm 2 (not implemented -- will error)
+### 1.4 Run: the Avellaneda-Stoikov placeholder (not implemented -- will error)
 
 ```sh
 cd market_maker
-python run.py --profile btc --algorithm algo2
+python run.py --profile btc --mode demo --algorithm algo2
 ```
 
 Starts normally, then raises `NotImplementedError` the first time the
-engine asks `Algo2Strategy` for a quote. Expected -- see README.md's
-"Algorithm 2" section for what's missing.
+engine asks `Algo2Strategy` for a quote. Expected -- `strategy/algo2.py` is
+an empty placeholder, unrelated to the name MM_algo2 (see README.md's
+"Other algorithms in the code").
 
 ### 1.5 All flags
 
@@ -99,19 +103,24 @@ python run.py --help
 
 ```text
 --profile {btc,usdt}       Currency-pair configuration to run. Required.
---algorithm {algo1,algo2,algo3}  Quoting strategy. Default: the profile's `algorithm`
-                           setting (algo1), as overridden by the saved Demo or
-                           live configuration. algo2 is a stub and will error.
---exchange {nobitex}       Exchange providing real market data. Default: nobitex.
---mode {real,demo}         real: real orders, needs MySQL (default).
-                           demo: simulated orders, no MySQL -- see §1b.
---continuous               run until intentionally stopped; ignore profile
-                           round/time-horizon limits.
+--algorithm {algo1,algo2,algo3}
+                           Quoting strategy to use. Default: the profile's
+                           `algorithm` setting (algo1), as overridden by the saved
+                           Demo or live configuration. algo3 = MM_algo2 (this
+                           branch's algorithm), algo1 = MM_algo1v2, algo2 = the
+                           Avellaneda-Stoikov placeholder (errors).
+--exchange {nobitex}       Exchange to trade on (default: nobitex).
+--mode {real,demo}         Required. real: places real orders; the isolated
+                           forward runtime uses CSV without MySQL. demo: real
+                           market data, simulated fills, no real orders, no
+                           MySQL, writes to a separate _demo.csv -- see §1b.
+--continuous               Run until intentionally stopped; ignore profile
+                           round/time horizon limits.
 ```
 
-Adding a new currency pair is a `config.TRADING_PROFILES` entry; adding a
-new algorithm/exchange is a `run.py` registry entry -- neither needs a new
-file. See README.md's "Extending" section.
+Adding a new currency pair is a `config.TRADING_PROFILES` entry; a new
+algorithm is a strategy class plus one `strategy/catalog.py` entry; a new
+exchange is a `run.py` registry entry. See README.md's "Extending" section.
 
 ### 1.6 Stopping
 
@@ -125,15 +134,15 @@ skips this cleanup and can leave open orders on the exchange.
 Optional, off by default. Set both `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` in `.env` to get:
 
-- A **startup message** when `run()` begins: symbol, algorithm, commission
-  rate, session id.
+- A **startup message** when `run()` begins: symbol, the algorithm's name
+  (for example MM_algo2), commission rate, session id.
 - Persisted paper-order submission and lifecycle messages. Each round's
   summary message is the parent thread; submitted-order, fill, and
   cancellation updates for that round reply to it when Telegram returns a
   usable message ID (see §6.8 for the exact reason vocabulary).
 - A sustained **no-quote alert** after the configured count or duration,
-  containing the reason, candidate spreads/prices, commission,
-  `exp_ret_min`, and required threshold. Cooldown and state-change rules
+  containing the reason, the prices evaluated (for MM_algo2 its one pair),
+  commission, `exp_ret_min`, and required threshold. Cooldown and state-change rules
   prevent repeated alert spam; a later valid quote resets the episode and
   can emit a recovery message.
 
@@ -159,9 +168,10 @@ and retried without mutating paper accounting.
 
 ## 1b. Demo mode (real market data, simulated orders)
 
-`--mode demo` runs the exact same Algorithm 1 decision logic against the
-exact same real, live Nobitex order book -- the only thing that changes is
-what happens after a quote is decided:
+`--mode demo` runs the exact same decision logic (MM_algo2, or MM_algo1v2 if
+that is the configured algorithm) against the exact same real, live Nobitex
+order book -- the only thing that changes is what happens after a quote is
+decided:
 
 - **Order book, prices, spreads: real.** `DemoExchangeClient` delegates
   only public order-book reads to the real Nobitex client. It does not
@@ -175,8 +185,7 @@ what happens after a quote is decided:
 - **Transaction cost: simulated realistically.** Each simulated fill's fee
   is `amount * commission_perc` (buys, base currency) or
   `amount * price * commission_perc` (sells, quote currency) -- the same
-  `commission_perc` the profile already uses for the spread-feasibility
-  check, not a hardcoded zero. See §1.7 for how costs are reported and
+  `commission_perc` MM_algo2 uses for its fee bar, not a hardcoded zero. See §1.7 for how costs are reported and
   accumulated.
 - **Inventory starts from a configurable value, not a hardcoded one.**
   `run.py --mode demo` sets `inv_initial` from each profile's own
@@ -195,10 +204,11 @@ what happens after a quote is decided:
   Demo CSV files are atomic, bounded dashboard exports rather than an
   unbounded history rewrite. Paper state is persisted separately and old
   terminal orders are archived before hot-state pruning.
-- **Profitability protection remains authoritative.** If Algorithm 1 finds
-  no candidate above `commission_perc + exp_ret_min`, Demo records a
-  `no_quote` round and sends no paper order. The monitor records the exact
-  reason and candidate diagnostics; it never forces a quote.
+- **Profitability protection remains authoritative.** MM_algo2 only returns
+  pairs whose round trip clears `exp_ret_min` after both fees (its half-spread
+  is derived from that condition, and rounding cannot break it); when the
+  book is unusable it returns no quote, Demo records a `no_quote` round with
+  the reason and sends no paper order. The monitor never forces a quote.
 
 ```sh
 cd market_maker
@@ -225,21 +235,23 @@ Its level-1 fast-fill and optional queue model are deterministic operating
 assumptions; they do not model every source of latency, slippage, or queue
 priority on Nobitex.
 
-`algo1` and `algo3` run in both modes; `algo2` still raises
-`NotImplementedError` in demo mode exactly as in real mode. In the Docker demo
-stack the algorithm is not a command-line flag: it is the `algorithm` field of
-the pair's Demo configuration (admin panel, *Config BTC/USDT*), and a running
-worker switches at its next round. Algorithm 3 is specified in
-`docs/algorithms/ALGORITHM_3.md`.
+`algo3` (MM_algo2) and `algo1` (MM_algo1v2) run in both modes; `algo2` still
+raises `NotImplementedError` in demo mode exactly as in real mode. In the Docker
+demo stack the algorithm is not a command-line flag: it is the `algorithm` field
+of the pair's Demo configuration (admin panel, *Config BTC/USDT*, first field),
+and a running worker switches at its next round. MM_algo2 is specified in
+`docs/algorithms/MM_algo2.md`.
 
 ---
 
-## 1c. Fill-probability table (Algorithm 1 v2)
+## 1c. Fill-probability table (MM_algo1v2 only)
 
-Algorithm 1 v2 scores quotes with a fill probability per distance. It reads
+MM_algo2 does not use fill probabilities. The comparison algorithm, MM_algo1v2,
+scores quotes with a fill probability per distance: it reads
 `fill_table_<pair>.json` from the results directory when the file is fresh
-(default: younger than 48 h) and uses a formula otherwise. Build the table from
-the CSVs the engine writes (see `docs/algorithms/FILL_MODEL.md`):
+(default: younger than 48 h) and uses a formula otherwise. The dashboard's Fill
+model tab shows the table. Build it from the CSVs the engine writes (method:
+`docs/algorithms/FILL_MODEL.md` on the `MM_algo1v2` branch):
 
 ```bash
 cd market_maker
@@ -250,10 +262,10 @@ python -m tools.build_fill_table --pair usdt --horizon-seconds 600 \
 
 A running worker picks the new file up at its next round. The related
 settings (`fill_table_enabled`, `fill_table_max_age_hours`,
-`fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`) and the other v2
-settings (`grid_*`, `skew_perc`, `one_sided_*`, `ev_min`,
-`adverse_selection_perc`, `hysteresis_ticks`, `refresh_seconds`) are editable
-from the admin panel's Config pages for demo and live.
+`fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`) and MM_algo1v2's
+other settings (`grid_*`, `one_sided_*`, `cost_basis_reference`, `ev_min`,
+`adverse_selection_perc`) are editable from the admin panel's Config pages for
+demo and live; MM_algo2 does not read them.
 
 ## 2. Automated tests
 
@@ -305,16 +317,16 @@ cannot push the dashboard container over its memory limit; older rows
 stay in the store). The tabs:
 
 * **Algorithm** -- the first tab: the list of algorithms, named after the git
-  branch each was built on (**MM_algo1v2** = Algorithm 1 v2, **MM_algo2** =
-  Algorithm 3, and "All algorithms"). Choosing one shows its description, the settings in force,
-  its headline numbers and its own charts (Algorithm 3: the imbalance and
-  where the centre sat relative to the mid; Algorithm 1: the expected value
-  and the fill probabilities of the quotes sent), and every other tab then
-  shows that algorithm's rounds only. "All algorithms" shows them side by
-  side: a comparison table, headline bars and each algorithm's running net
-  PnL. The choice is remembered per browser tab; deep link
-  `?tab=algorithm&algo=algo3`. Rows written before the `Strategy` column
-  existed count as Algorithm 1.
+  branch each was built on (**MM_algo2**, this branch's algorithm;
+  **MM_algo1v2**, Algorithm 1 version 2; and "All algorithms"). Choosing one
+  shows its description, the settings in force, its headline numbers and its
+  own charts (MM_algo2: the imbalance over time and where the centre sat
+  relative to the mid; MM_algo1v2: the expected value and the fill
+  probabilities of the quotes sent), and every other tab then shows that
+  algorithm's rounds only. "All algorithms" shows them side by side: a
+  comparison table, headline bars and each algorithm's running net PnL. The
+  choice is remembered per browser tab; deep link `?tab=algorithm&algo=algo3`.
+  Rows written before the `Strategy` column existed count as MM_algo1v2.
 * **Overview** -- six headline tiles: quote rate (split into pair / bid
   only / ask only / none), fills per hour, realised vs computed net spread
   per round trip, adverse selection 60 s after our fills, net PnL after
@@ -323,36 +335,39 @@ stay in the store). The tabs:
   where the quotes sat (% from the mid, per side); inventory inside the band
   with the order sizes sent; the decision mix (quoted pair / bid only / ask
   only and every no-quote reason, as a share of rounds); portfolio wealth.
-* **Quote decision** -- one round, drawn for the algorithm that made it
-  (an Algorithm 3 round shows its top-k book levels, the price ladder of
-  touch, mid, microprice, centre and quote, and its step-by-step trace).
-  For Algorithm 1 v2, read from the strategy's diagnostics file (`<pair>_algo1_diagnostics.jsonl` in the
-  results directory, written every round while `algo1_diagnostics_enabled`
-  is on): the candidate ladder (price, distance, book level or synthetic,
+* **Quote decision** -- one round, read from the strategy's diagnostics file
+  (`<pair>_algo1_diagnostics.jsonl` in the results directory, written every
+  round while `algo1_diagnostics_enabled` is on; the name is historical and
+  the file holds both algorithms' rounds) and drawn for the algorithm that
+  made it. An MM_algo2 round shows its top-k book levels, the price ladder of
+  touch, mid, microprice, centre and quote, and its step-by-step trace. An
+  MM_algo1v2 round shows the candidate ladder (price, distance, book level or synthetic,
   volume ahead, fill probability, which ones were sent), the expected-value
   heat map of every bid/ask pair (`J = p_bid · p_ask · R_net`; rejected
   pairs marked ✗, the sent pair framed), a step-by-step decision trace
   (inventory → centre → candidates → fill model → bar and EV floor → pair /
   one-sided / none), a round picker that keeps its choice across the 20 s
   refresh, and a strip of the last 80 decisions.
-* **Fill model** -- the measured fill-probability table against the
-  formula fallback, with sample counts; predicted vs realised fill rate per
+* **Fill model** -- MM_algo1v2's measured fill-probability table (MM_algo2
+  makes no fill forecast, and the tab says so) against the formula fallback, with sample counts; predicted vs realised fill rate per
   distance bucket (calibration); adverse selection at 10/30/60/300/600 s;
   table health (file, method, age, samples, own orders, sources); and the
   table itself.
 * **Order book** -- selected depth levels and quoted spreads (`Bid
   Spread`/`Ask Spread` computed from the logged `Best Bid`/`Best Ask` and
   quote prices, plus the relative quoted spread).
-* **Validation** -- the demo-to-real gate of
-  `docs/algorithms/ALGORITHM_1_V2.md` §7 first (each metric with its value,
-  threshold and pass / fail / not measurable yet), then the inventory
+* **Validation** -- the demo-to-real gate of `docs/algorithms/MM_algo2.md`
+  §17 first (each metric with its value, threshold and pass / fail / not
+  measurable yet; the fill-forecast row is not measurable for MM_algo2), then the inventory
   position with the one-sided thresholds, the fill-rate forecast per day,
   and the performance metrics from `validation/` (return, Sharpe, Sortino,
   drawdown, Calmar, win rate, profit factor, inventory statistics).
 * **Rounds** -- a sortable, filterable table of every round, newest first,
-  including the nine decision columns the engine writes (`Quote Mode`,
+  including the eleven decision columns the engine writes (`Quote Mode`,
   `Selection Reason`, `Centre`, `Bid/Ask Distance`, `Bid/Ask Fill Prob`,
-  `Expected Value`, `Reference Price`).
+  `Expected Value`, `Reference Price`, `Imbalance`, `Microprice`; MM_algo2
+  leaves the fill-probability, expected-value and reference columns empty)
+  and the `Strategy` column.
 * **PnL attribution** -- did the result come from our quotes or from the
   price? Every round's change in wealth `W_t = cash_t + inv_t · mid_t` is
   split exactly into price PnL `P_t = inv_{t−1} · (mid_t − mid_{t−1})` (the
@@ -560,11 +575,13 @@ rows per symbol store, 1,000 hot terminal paper orders, and 10,000,000
 bytes per archive segment. Adjust the corresponding `MMConfig` fields in
 `market_maker/config.py` if another operational envelope is required.
 
-USDT may legitimately show `no_quote` for every round. Algorithm 1 refuses
-paper orders when no candidate clears the configured profitability
-threshold. The dashboard exposes the consecutive count, duration, reason,
-alert state, and exact candidate diagnostics. A valid quote resets the
-episode.
+A `no_quote` round means the strategy returned nothing. MM_algo2 does so only
+when the order book is unusable (missing, crossed, or shallower than
+`algo3_depth_k` levels; `docs/algorithms/MM_algo2.md` §7.4); MM_algo1v2 also
+when no candidate clears its profitability threshold or expected-value floor.
+An unreadable book (for example an HTTP 403) records no round at all. The
+dashboard exposes the consecutive count, duration, reason, alert state, and the
+evaluated prices. A valid quote resets the episode.
 
 ### 6.5 Restart and session behavior
 
@@ -727,10 +744,10 @@ the agent if this checkout may contain older queued requests.
 
 The per-pair configuration surface contains these fields:
 
-| Field | Application mode |
+| Field (41 per pair) | Application mode |
 |---|---|
-| `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio` | Hot — applied at a worker round boundary |
-| `demo_inv_initial`, `cash_initial`, `commission_perc` | New session — saved now, applied by **New session** |
+| `algorithm` (`algo3` = MM_algo2, `algo1` = MM_algo1v2); MM_algo2's `algo3_depth_k`, `algo3_decay_rho`, `algo3_beta`, `algo3_half_spread`, `algo3_min_volume_orders`, `algo3_imbalance_clip`; shared: `skew_perc`, `hysteresis_ticks`, `refresh_seconds`, `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio`; MM_algo1v2 only: `grid_min_perc`, `grid_ratio`, `grid_max_perc`, `one_sided_lo`, `one_sided_hi`, `cost_basis_reference`, `ev_min`, `adverse_selection_perc`, `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | Hot (38 fields) — applied at a worker round boundary; a change of `algorithm` builds the new strategy at that boundary |
+| `demo_inv_initial`, `cash_initial`, `commission_perc` | New session (3 fields) — saved now, applied by **New session** |
 
 No current field requires a restart. Desired overlays are pair-isolated and
 persist across worker/Compose restarts. Runtime snapshots separately report

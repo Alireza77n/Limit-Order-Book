@@ -160,7 +160,8 @@ def test_all_algorithms_side_by_side(mixed_track):
 
 def test_one_algorithm_shows_its_own_panels(mixed_track):
     text = _text_of(dashboard.render_tab_content("algorithm", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
-    assert "MM_algo2" in text and "Algorithm 3: order-book imbalance, microprice and a fixed spread" in text
+    assert "MM_algo2" in text and "order-book imbalance, microprice and a fixed spread" in text
+    assert "Algorithm 3:" not in text
     assert "Measures the imbalance of the resting volumes" in text
     assert "Order-book imbalance I = (V_bid − V_ask)" in text
     assert "Where the centre sat" in text

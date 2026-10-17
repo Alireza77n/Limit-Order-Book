@@ -1,12 +1,16 @@
-# Project guide
+# Project guide — branch MM_algo2
 
-A plain-language map of this repository: what every file is, how the system
-runs from a browser click to an order on Nobitex, exactly what Algorithm 1
-does, how order sizes are decided (the linear inventory rule added on
-2026-10-03), and the problems found in a code review on the same day.
+A plain-language map of this repository on the branch `MM_algo2`:
+* what every file is;
+* how the system runs, from a browser click to an order on Nobitex;
+* exactly what MM_algo2 does;
+* how order sizes are decided;
+* the settings in force;
+* the known problems.
 
-`README.md` and `usage.md` remain the detailed references. This guide is the
-short path through them.
+`README.md` and `usage.md` remain the detailed references, and
+[`docs/algorithms/MM_algo2.md`](docs/algorithms/MM_algo2.md) is the full specification of the algorithm. This
+guide is the short path through them.
 
 Contents
 
@@ -15,11 +19,10 @@ Contents
 3. [What every file is](#3-what-every-file-is)
 4. [Where configuration values come from](#4-where-configuration-values-come-from)
 5. [One round of the trading loop](#5-one-round-of-the-trading-loop)
-6. [Algorithm 1 in detail](#6-algorithm-1-in-detail-version-2-2026-10-11)
+6. [MM_algo2 in detail](#6-mm_algo2-in-detail)
 7. [How order sizes are decided](#7-how-order-sizes-are-decided)
-8. [What changed on 2026-10-03](#8-what-changed-on-2026-10-03)
-9. [Problems found in review](#9-problems-found-in-review)
-10. [What the first live run showed](#10-what-the-first-live-run-showed)
+8. [Known problems](#8-known-problems)
+9. [History](#9-history)
 
 ---
 
@@ -29,17 +32,19 @@ A market-making bot for the Nobitex exchange. It trades two pairs, BTC/IRT and
 USDT/IRT. Every round it places one limit buy below the market and one limit
 sell above it, and earns the difference when both fill.
 
-There are three algorithms in the code:
+**The algorithm of this branch is MM_algo2**, which decides those two prices from the order book's volumes
+(imbalance and microprice), the inventory and the fee bar
+([section 6](#6-mm_algo2-in-detail)). Its code is `strategy/algo3.py`, and its key in the settings and the
+recorded rounds is `algo3`, because it is the third algorithm designed for this project. It is shown
+everywhere else as **MM_algo2**, the name of this branch.
 
-| | Status |
-|---|---|
-| Algorithm 1 (`strategy/algo1.py`), shown as **MM_algo1v2** | Implemented. The default (`algorithm = algo1`). |
-| Algorithm 2, Avellaneda-Stoikov (`strategy/algo2.py`) | Placeholder only. Not implemented. |
-| Algorithm 3, order-book imbalance and microprice (`strategy/algo3.py`), shown as **MM_algo2** | Implemented. Selected per pair with `algorithm = algo3` ([`docs/algorithms/ALGORITHM_3.md`](docs/algorithms/ALGORITHM_3.md)). |
+The code holds three strategy classes:
 
-The dashboard and the admin panel name each algorithm after the git branch it
-was built on (**MM_algo1v2**, **MM_algo2**); settings and recorded rounds keep
-the keys `algo1` and `algo3`.
+| Name shown | Code | Status |
+|---|---|---|
+| **MM_algo2** | `strategy/algo3.py`, key `algo3` | This branch's algorithm. Implemented and tested; running on the BTC demo since 17 Oct 2026, 11:15 UTC. |
+| **MM_algo1v2** (Algorithm 1 version 2) | `strategy/algo1.py`, key `algo1` | Kept selectable for comparison; it is the code default of the setting. Documented on its own branch; summary in [`docs/algorithms/MM_algo1v2.md`](docs/algorithms/MM_algo1v2.md). |
+| Avellaneda–Stoikov | `strategy/algo2.py`, key `algo2` | Placeholder only, not implemented. Unrelated to the name MM_algo2. |
 
 Which one a worker runs is the `algorithm` setting, chosen per pair on the admin
 panel's config pages: a demo worker switches at its next round, a live worker
@@ -66,7 +71,7 @@ flowchart TD
     N --> D[Charts dashboard<br/>dashboard.py, read-only]
     A -->|writes a command file| Q[Control queue<br/>files on disk]
     Q --> G[Forward agent<br/>forward_control_agent.py<br/>holds the Nobitex API keys]
-    G -->|starts or stops| W[Worker, one per pair<br/>run.py + engine.py + algo1.py or algo3.py]
+    G -->|starts or stops| W[Worker, one per pair<br/>run.py + engine.py + the algorithm saved for the pair]
     W -->|order book, orders, wallet| X[Nobitex]
     W -->|one row per round| R[Results CSV]
     W --> T[Telegram]
@@ -76,19 +81,19 @@ flowchart TD
 Step by step:
 
 1. You open the admin panel in a browser. nginx forwards the request.
-2. On **Live Config** you set the parameters for a pair and save. The values
-   are written to `forward_config_<pair>.json`.
+2. On **Live Config** you set the parameters for a pair, including **Algorithm** (MM_algo2 or MM_algo1v2), and
+   save. The values are written to `forward_config_<pair>.json`.
 3. On **Live Forward Test** you type the confirmation phrase, for example
    `START BTCIRT LIVE`.
 4. The admin panel does not trade and does not have the API keys. It only
    writes a command file into the control queue.
 5. The forward agent, a separate service under a separate Linux user, reads
-   the command. It accepts only four fixed actions (`start_forward_worker`,
-   `stop_forward_worker`, `apply_forward_config`, `read_wallet_balances`) and
+   the command. It accepts only a fixed list of actions (`start_forward_worker`,
+   `stop_forward_worker`, `apply_forward_config`, `read_wallet_balances`, `delete_forward_session`) and
    only the pairs `btc` and `usdt`.
 6. To start a worker it runs this fixed command, with the algorithm saved on the
-   pair's Live Config page (`algo1` or `algo3`, checked against the catalog):
-   `python run.py --profile <pair> --algorithm <algo1|algo3> --exchange nobitex --mode real --continuous`
+   pair's Live Config page (`algo3` for MM_algo2, `algo1` for MM_algo1v2, checked against the catalog):
+   `python run.py --profile <pair> --algorithm <algo3|algo1> --exchange nobitex --mode real --continuous`
 7. The worker reads the real wallet balances from Nobitex, uses them as its
    starting inventory and cash, and enters the trading loop
    ([section 5](#5-one-round-of-the-trading-loop)).
@@ -110,9 +115,9 @@ Runtime state lives outside the code, under `/var/lib/market-maker-forward/`
 
 ### Demo (paper trading)
 
-The same engine and the same Algorithm 1, but `exchange/demo.py` replaces the
-real exchange. Orders go into a local ledger (`paper.py`) and fills are
-simulated from real market data. It runs under Docker Compose
+The same engine and the same algorithms, but `exchange/demo.py` replaces the
+real exchange. Orders go into a local ledger (`paper.py`), and a resting order fills when the real market price
+reaches it. It runs under Docker Compose
 (`deploy/docker-compose.production.yml`) with its own admin panel, dashboard
 and control agent (`deploy/control_agent.py`). Demo mode cannot be wired to
 real trading or to MySQL: `safety.py` refuses to start.
@@ -126,18 +131,17 @@ real trading or to MySQL: `safety.py` refuses to start.
 | File | What it does |
 |---|---|
 | `run.py` | Entry point. Builds the config for a profile, picks the exchange client and the strategy, takes the worker lock, starts the loop. |
-| `engine.py` | `SimpleMarketMaker`, the main loop. Fetches the market, tracks fills, inventory and cash, decides order sizes, sends and cancels orders, writes the CSV, sends Telegram messages. Has two loops: `run()` for real mode and `_run_demo()` for demo mode. |
-| `strategy/algo1.py` | Algorithm 1 (version 2). Decides the bid and ask prices, or one of them: distance-anchored candidates, fill probabilities, expected-value selection, one-sided quotes, hysteresis. No network or file access beyond the fill table. |
-| `strategy/algo3.py` | Algorithm 3. Microprice centre leaned by the order-book imbalance and skewed by inventory, one symmetric half-spread (the smallest that clears the fee bar, plus a tick), outward rounding, hysteresis. No fill probabilities. |
+| `engine.py` | `SimpleMarketMaker`, the main loop. Fetches the market, tracks fills, inventory and cash, decides order sizes, sends and cancels orders, writes the round rows, sends Telegram messages. Has two loops: `run()` for real mode and `_run_demo()` for demo mode. In demo it builds a new strategy at a round boundary when the `algorithm` setting changes. |
+| `strategy/algo3.py` | **MM_algo2.** Imbalance of the top levels, microprice centre (leaned by $\beta I$, skewed by inventory), one symmetric half-spread (the smallest that clears the fee bar, plus a tick), outward rounding that never crosses the touch, a final fee-bar check, hysteresis. Pure: no network or file access. |
 | `strategy/common.py` | Order-book arithmetic shared by the algorithms: tick, mid, returns, the fee bar, inventory position. |
-| `strategy/catalog.py` | The list of algorithms (key, label, class, settings, description). `run.py`, the engine, the admin drop-down and the dashboard's Algorithm tab read it. |
-| `fill_model.py` | `FillModel`: loads `fill_table_<pair>.json` (reloaded when it changes), falls back to the parametric fill formula. |
-| `tools/build_fill_table.py` | Builds the fill table from the CSVs (price path + own orders); run daily. |
-| `strategy/algo2.py` | Placeholder for Avellaneda-Stoikov. Not implemented. |
+| `strategy/catalog.py` | The list of algorithms (key, display name, class, settings, description). `run.py`, the engine, the admin drop-down and the dashboard's Algorithm tab read it. |
+| `strategy/algo1.py` | MM_algo1v2 (Algorithm 1 version 2), selectable for comparison. |
+| `fill_model.py`, `tools/build_fill_table.py` | The fill-probability table and its nightly builder, used by MM_algo1v2 only. |
+| `strategy/algo2.py` | Placeholder for Avellaneda–Stoikov. Not implemented. |
 | `strategy/base.py` | The interface every strategy implements (`decide_order`). |
-| `config.py` | The `MMConfig` dataclass and `TRADING_PROFILES`, the default parameters for `btc` and `usdt`. |
-| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts the 39 editable fields only (including `algorithm` and the Algorithm 3 settings), forces the commission to at least 0.25% (any non-negative target return is allowed), forces both exposure guards on with a ratio of at most 25%. |
-| `demo_config.py` | Defines which fields the admin panel may edit, validates them, and reloads changed values into a running demo worker at round boundaries. |
+| `config.py` | The `MMConfig` dataclass and `TRADING_PROFILES`, the default parameters for `btc` and `usdt`, including the `algo3_*` settings. |
+| `forward_config.py` | Live-mode settings saved from the admin panel. Accepts the 39 editable fields only (including `algorithm` and the `algo3_*` settings), forces the commission to at least 0.25% (any non-negative target return is allowed), forces both exposure guards on with a ratio of at most 25%. |
+| `demo_config.py` | Defines which fields the admin panel may edit (41 per pair), validates them, and reloads changed values into a running demo worker at round boundaries. |
 | `safety.py` | Refuses to start demo mode with a real exchange client or with MySQL persistence. |
 | `session.py` | Session ids and `WorkerLease`, a file lock that prevents two workers on the same pair. |
 
@@ -157,7 +161,7 @@ real trading or to MySQL: `safety.py` refuses to start.
 | File | What it does |
 |---|---|
 | `paper.py` | `PaperLedger`: simulated orders, fills, fees, locked cash and inventory, with state saved to JSON. |
-| `result_store.py` | `DemoResultStore`: demo round rows in SQLite, exported to a bounded CSV. |
+| `result_store.py` | `DemoResultStore`: demo round rows in SQLite, exported to a bounded CSV; its session summary names the algorithm(s) each session ran. |
 | `no_quote.py` | Counts consecutive rounds without a quote and decides when to alert. |
 | `telegram_lifecycle.py` | Telegram client and the per-order, per-round reporter. |
 | `demo_entrypoint.py` | Container entry point that validates the demo environment before starting. |
@@ -166,20 +170,31 @@ real trading or to MySQL: `safety.py` refuses to start.
 
 | File | What it does |
 |---|---|
-| `admin_app.py` | Flask admin panel: login, config pages, worker start and stop, live forward control, orders, balances, backups, sessions, logs, audit. |
+| `admin_app.py` | Flask admin panel: login, config pages (the first field is Algorithm), worker start and stop, live forward control, orders, balances, backups, sessions, logs, audit. |
 | `templates/admin/*.html` | The 15 admin pages. |
 | `static/admin/` | Admin CSS and JavaScript. |
 | `control_queue.py` | File-based command queue between the admin panel (writes commands) and the agents (execute them). Includes the audit log. |
-| `docs/guide/MARKET_MAKER_EXPLAINED.md` (and `.html`) | The whole project explained from the ground up: what a market maker does, the processes and files, one round of a worker step by step, the order decision as eight numbered checks (part 4.0), Algorithm 1 v2 with proofs, how the fill probability is estimated and how kappa is fitted, every dashboard metric and the validation gate, operations and deployment, the live forward test, known limitations, a glossary of settings, and the complete pseudocode (part 11). Examples were produced by running the code. |
-| `docs/reports/INVESTOR_UPDATE_2026-10-11.md` | Investor update: the version 2 rule with formulas and pseudocode, the fill model, each dashboard figure with the formula behind it, the gate readings, the demo state and Algorithm 3 as the next step (screenshots in `docs/reports/figures/`). |
-| `dashboard.py` | Dash results dashboard, eight tabs: Algorithm (pick Algorithm 1 or 3: its description, settings, headline numbers and own charts, and every other tab then shows its rounds only; or all algorithms side by side), Overview (quote rate, fills per hour, realised vs computed spread, adverse selection, PnL, inventory), Quote decision (candidate ladder, expected-value heat map and decision trace of one round, from the diagnostics file), Fill model (measured table vs formula, calibration, table health), Order book (levels, spreads), Validation (demo-to-real gate, then the metrics), Rounds (every round as a table), PnL attribution (each round's wealth change split exactly into price PnL and trading PnL, running sums and a verdict; `docs/algorithms/PNL_ATTRIBUTION.md`). Reads the result stores, the fill table and the diagnostics file only. |
+| `dashboard.py` | Dash results dashboard, eight tabs. **Algorithm** comes first: choose MM_algo2 (its description, settings, headline numbers and two charts of its own) or MM_algo1v2, and every other tab then shows that algorithm's rounds only; or show all algorithms side by side. Then Overview, Quote decision (an MM_algo2 round as its book levels, a price ladder and a step-by-step trace), Fill model (MM_algo1v2's table; it says that MM_algo2 makes no forecast), Order book, Validation (the demo-to-real gate, then the metrics), Rounds, and PnL attribution (`docs/algorithms/PNL_ATTRIBUTION.md`). Reads the result stores, the fill table and the diagnostics file only. |
 | `validation/` | Performance metrics for the dashboard: return, Sharpe, Sortino, drawdown, win rate, inventory statistics. |
+
+### Documentation (`docs/`, committed with `git add -f` because `docs/` is in `.gitignore`)
+
+| Path | What it is |
+|---|---|
+| `docs/algorithms/MM_algo2.md` | MM_algo2, the full specification: every step with its formula and proof, three worked examples (a USDT book, a real BTC demo round, the design note's book), behaviour on 1,276 real books, the calibration of $\beta$, what the live settings would send, the test map, the settings, the demo-to-real gate. |
+| `docs/algorithms/data/` | The real order books, settings and demo rounds every number comes from, and `make_mm_algo2_doc_data.py`, which computes them with this branch's code. |
+| `docs/algorithms/figures/` | The specification's figures and the script that draws them. |
+| `docs/algorithms/PNL_ATTRIBUTION.md` | How the dashboard splits each round's change in wealth into price PnL and trading PnL. |
+| `docs/algorithms/MM_algo1v2.md` | One page on the comparison algorithm, with links to its branch. |
+| `docs/guide/MARKET_MAKER_EXPLAINED.md` (and `.html`) | The whole system explained from the ground up around MM_algo2: one round of a worker, the order decision as numbered checks, every formula with proofs, the book signal on real data, the dashboard metrics, operations, the live forward test, limitations, glossary and pseudocode. |
+| `docs/deployment/` | The admin page and deployment notes. |
+| `docs/reports/`, `docs/superpowers/` | Dated records: the 11 October investor update (about MM_algo1v2, the algorithm then running) and earlier plans. |
 
 ### Deployment (`deploy/` and the repository root)
 
 | File | What it does |
 |---|---|
-| `deploy/forward_control_agent.py` | Live-mode agent. Starts and stops workers, reads wallet balances. The only process that holds the API keys. |
+| `deploy/forward_control_agent.py` | Live-mode agent. Starts and stops workers with the saved algorithm, reads wallet balances. The only process that holds the API keys. |
 | `deploy/control_agent.py` | Demo-mode agent. Manages the Docker workers, config apply and rollback, backups, reset, session deletion. |
 | `deploy/market-maker-forward-*.service` | The three systemd units for the live forward test. |
 | `deploy/systemd/lob-control-agent.service` | systemd unit for the demo agent. |
@@ -192,10 +207,9 @@ real trading or to MySQL: `safety.py` refuses to start.
 
 | Path | What it is |
 |---|---|
-| `market_maker/tests/` | 52 automated test files. |
-| `market_maker/research/` | Three notebooks estimating parameters for Algorithm 2. |
+| `market_maker/tests/` | The automated tests; MM_algo2's are `test_strategy_algo3.py`, `test_strategy_catalog.py` and `test_dashboard_algorithms.py` (map: `docs/algorithms/MM_algo2.md` §14). |
+| `market_maker/research/` | Notebooks estimating parameters for the Avellaneda–Stoikov placeholder. |
 | `market_maker/test_nobitex_api.ipynb` | Preflight notebook run by hand before a real-mode start: offline signing test, the API-auth pytest files, public order book, authenticated read-only wallet/order/portfolio calls, `send_order`/`cancel_order` with HTTP mocked, demo lifecycle. Needs `NOBITEX_API_KEY`/`NOBITEX_SECRET_KEY` in `market_maker/.env`. The only cell that can place a real order (12b) is off by default and asks for confirmation. |
-| `README.md`, `usage.md`, `FORWARD_TEST.md`, `docs/` | Documentation and design notes. |
 | `market_maker/results/` | Runtime output. Not tracked in git. |
 
 ---
@@ -209,61 +223,59 @@ A worker's parameters are built in three layers (`run.py`, `make_cfg`):
 3. In live mode, the overlay file `forward_config_<pair>.json`, saved from the
    admin panel's Live Config page. In demo mode, `demo_config_<pair>.json`.
 
-The parameters that matter for trading:
+The parameters that matter for MM_algo2:
 
 | Parameter | Meaning |
 |---|---|
-| `order_size` | Base-asset amount per order (BTC or USDT) at the middle of the inventory band. Each side is scaled between 0 and 2× this ([section 7](#7-how-order-sizes-are-decided)). |
-| `inv_min`, `inv_max` | The inventory band. Drives the price skew and the order sizes, and caps buying. |
-| `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction` | The linear size rule ([section 7](#7-how-order-sizes-are-decided)). Editable from the admin panel, for demo and for live. |
-| `depth_max` | How many order-book levels the strategy may use when anchoring candidates. |
-| `commission_perc` | Fee per leg, as a fraction (0.0025 = 0.25%). |
-| `exp_ret_min` | Minimum net round-trip return required to quote. |
-| `time_step` | Seconds between rounds. |
-| `cancel_after_minutes` | Age at which a resting order is cancelled; also the lifetime the fill probabilities refer to. |
-| `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_ratio` | Maximum share of cash or inventory that may be locked in open orders. |
-| `grid_min_perc`, `grid_ratio`, `grid_max_perc` | Candidate distances from the quote centre ([section 6](#6-algorithm-1-in-detail-version-2-2026-10-11), step 2). |
-| `skew_perc` | How far the inventory moves the quote centre at the band edges (step 1). |
-| `one_sided_lo`, `one_sided_hi`, `cost_basis_reference` | When only one side is quoted and against which reference price (step 5). |
-| `ev_min`, `adverse_selection_perc` | Expected-value floor and the one-leg cost in the pair score (step 4). |
-| `hysteresis_ticks`, `refresh_seconds` | Keep a resting price / do not re-post within this window (step 6). |
-| `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | The fill model (step 3; `docs/algorithms/FILL_MODEL.md`). |
-| `algorithm` | Which algorithm runs: `algo1` (default) or `algo3`. Demo: applied at the next round; live: when the worker is started. |
-| `algo3_depth_k`, `algo3_decay_rho`, `algo3_beta`, `algo3_half_spread`, `algo3_min_volume_orders`, `algo3_imbalance_clip` | Algorithm 3: levels and weights of the imbalance, the lean per unit of imbalance (0 until estimated), the half-spread (0 = automatic), the thin-book guard and the clip (`docs/algorithms/ALGORITHM_3.md` §1, §7). |
+| `algorithm` | Which algorithm runs: `algo3` = MM_algo2, `algo1` = MM_algo1v2 (the code default). Demo: applied at the next round; live: when the worker is started. |
+| `algo3_depth_k`, `algo3_decay_rho` | Levels per side in the imbalance (3) and the weight of each deeper level (0.5). |
+| `algo3_imbalance_clip`, `algo3_min_volume_orders` | The clip of the imbalance (0.8) and the thin-book guard: a top of book thinner than this many order sizes (20) carries no signal. |
+| `algo3_beta` | The lean of the centre per unit of imbalance (0 until estimated, `docs/algorithms/MM_algo2.md` §12). |
+| `algo3_half_spread` | The half-spread; 0 (the default) = the smallest that clears the fee bar, plus one tick. |
+| `commission_perc`, `exp_ret_min` | Fee per leg and the required net return of a round trip; together they fix MM_algo2's half-spread $h_{\min} = G/(2+G)$. |
+| `skew_perc` | How far the inventory moves the quote centre at the band edges (0.2 %). |
+| `inv_min`, `inv_max`, `order_size` | The inventory band and the base order size. They drive the skew, the order sizes, the cap on buying and the thin-book threshold. |
+| `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction` | The linear size rule ([section 7](#7-how-order-sizes-are-decided)). |
+| `hysteresis_ticks`, `refresh_seconds` | Keep a pair that moved by at most this many ticks for up to this long; the engine also does not re-post an order within that window. |
+| `time_step`, `cancel_after_minutes` | Seconds between rounds; age at which a resting order is cancelled. |
+| `depth_max` | Book levels read for the recorded bid and ask level. |
+| `buy_locked_cash_limit_*`, `sell_locked_inventory_limit_*` | The exposure guards: maximum share of cash or inventory locked in open orders. |
+| `grid_*`, `one_sided_*`, `cost_basis_reference`, `ev_min`, `adverse_selection_perc`, `fill_*` | Read by MM_algo1v2 only. |
 
-Live-mode values at the time of the review:
+Values in force on 17 October 2026 (the demo's applied settings and the saved live settings):
 
-| | BTC/IRT | USDT/IRT |
-|---|---|---|
-| `order_size` | 0.00001189 | 1 |
-| `inv_max` | 0.0001527 | 15 |
-| `inv_min` | 0 | 0 |
-| `depth_max` | 10 | 10 |
-| `commission_perc` | 0.0025 | 0.0025 |
-| `exp_ret_min` | 0.0025 | 0.0025 |
-| `time_step` | 60 s | 10 s |
-| `cancel_after_minutes` | 10 | 10 |
-| Exposure guards | on, 25% | on, 25% |
+| | Demo BTC | Demo USDT | Live BTC | Live USDT |
+|---|---:|---:|---:|---:|
+| `algorithm` | **algo3 (MM_algo2)** since 11:15 UTC | algo1 (MM_algo1v2) | **algo3 (MM_algo2)**, saved; the worker is stopped | none saved, so algo1 (MM_algo1v2) |
+| `commission_perc` | 0.0008 | 0.0008 | 0.0025 | 0.0025 |
+| `exp_ret_min` | 0.0001 | 0.0001 | 0.0001 | 0.0001 |
+| MM_algo2 half-spread $h_{\min}$ | 0.0850 % | 0.0850 % | 0.2553 % | 0.2553 % |
+| `inv_min` – `inv_max` | 0 – 0.0037 | 0 – 300 | 0 – 0.0001527 | 0 – 15 |
+| `order_size` | 0.000062 | 5 | 0.00001189 | 1 |
+| `time_step` | 60 s | 10 s | 60 s | 30 s |
+| `cancel_after_minutes` | 10 | 10 | 10 | 10 |
+| `algo3_*` | defaults | defaults | defaults | defaults |
+| `skew_perc`, `hysteresis_ticks`, `refresh_seconds` | 0.002, 5, 300 | 0.002, 5, 300 | 0.002, 5, 300 | 0.002, 5, 300 |
+| Exposure guards | off | off | on, 25% | on, 25% |
 
-A changed live config takes effect only after the worker is stopped and
-started again.
+A changed live config takes effect only after the worker is stopped and started again.
 
 ---
 
 ## 5. One round of the trading loop
 
-Real mode, `engine.py`, `SimpleMarketMaker.run()`.
+Real mode, `engine.py`, `SimpleMarketMaker.run()`; the demo loop `_run_demo()` has the same steps.
 
 ```mermaid
 flowchart TD
     A[Fetch order book] --> B[Update fills<br/>new inventory and cash]
     B --> C[Cancel own orders older than 10 minutes]
-    C --> D[Algorithm 1: pick bid and ask levels<br/>skewed by inventory]
-    D --> E{Net return after fees<br/>above exp_ret_min?}
+    C --> D[MM_algo2: imbalance and microprice,<br/>centre skewed by inventory,<br/>pair at ± h, rounded, never crossing]
+    D --> E{Usable book?}
     E -- no --> H
     E -- yes --> F[Size both orders, apply guards]
     F --> G[Send buy and sell limit orders]
-    G --> H[Append CSV row, send Telegram, sleep time_step]
+    G --> H[Append the round row, send Telegram, sleep time_step]
     H --> A
 ```
 
@@ -275,105 +287,109 @@ currency and of `rls`. If either read fails it exits without trading.
 | A | `GET /v3/orderbook/<pair>`. If it fails, the round is skipped. | `exchange/nobitex.py` |
 | B | Lists the worker's own open and closed orders. For each, takes the newly matched amount since the last round. A buy adds `matched − fee` to inventory and subtracts `matched × price` from cash. A sell subtracts `matched` from inventory and adds `matched × price − fee` to cash. | `update_inventory_and_cash` |
 | C | Cancels the worker's own open orders older than `cancel_after_minutes`. Orders it did not send are never touched. | `_cancel_owned_stale_orders` |
-| D, E | [Section 6](#6-algorithm-1-in-detail-version-2-2026-10-11). | `strategy/algo1.py` |
+| D, E | [Section 6](#6-mm_algo2-in-detail). MM_algo2 quotes a pair whenever the book is usable; every pair it returns clears the fee bar by construction. | `strategy/algo3.py` |
 | F, G | [Section 7](#7-how-order-sizes-are-decided). | `run()` |
-| H | One row appended to the CSV, one Telegram message, then `sleep(time_step)`. | `run()` |
+| H | One row appended to the CSV (with `Strategy`, `Imbalance`, `Microprice`), one Telegram message, then `sleep(time_step)`. | `run()` |
 
 On shutdown (SIGTERM, SIGINT, or `max_rounds` reached) the worker cancels all
 of its own open orders.
 
 ---
 
-## 6. Algorithm 1 in detail (version 2, 2026-10-11)
+## 6. MM_algo2 in detail
 
-The full specification with every formula, figures, the worked example and
-the test map is in [`docs/algorithms/ALGORITHM_1_V2.md`](docs/algorithms/ALGORITHM_1_V2.md);
-the fill probabilities are explained in [`docs/algorithms/FILL_MODEL.md`](docs/algorithms/FILL_MODEL.md);
-the differences from version 1 in [`docs/algorithms/CHANGES_V1_TO_V2.md`](docs/algorithms/CHANGES_V1_TO_V2.md).
-Version 1 stays on the git branch `MM_algo1v1`. This section is the short form.
+The full specification, with every formula and its proof, the worked examples, the behaviour on real books,
+the calibration of $\beta$ and the test map, is
+[`docs/algorithms/MM_algo2.md`](docs/algorithms/MM_algo2.md). This section is the short form. MM_algo2
+decides the bid price and the ask price; the engine decides the sizes ([section 7](#7-how-order-sizes-are-decided)).
 
-Algorithm 1 decides the bid price and the ask price (or only one of them, or
-none); the engine decides the sizes ([section 7](#7-how-order-sizes-are-decided)).
-
-### Step 1: the inventory moves the quote centre
+### Step 1: read the book signal
 
 ```
-x = clamp( (inv − inv_min) / (inv_max − inv_min), 0, 1 )
-c = mid × (1 − skew_perc × (2x − 1))
+V_b = sum over the top k levels of rho^i x bid volume      (k = 3, rho = 0.5)
+V_a = the same on the ask side
+I   = (V_b - V_a) / (V_b + V_a)        in [-1, 1]
+if V_b + V_a < algo3_min_volume_orders x order_size:  I = 0, and the centre starts at the mid
+else:                                                  clip I to +-0.8
 ```
 
-Half-full inventory leaves the centre at the mid. A full band moves it
-`skew_perc` (0.2%) below the mid, so every ask candidate is nearer the market
-and every bid candidate farther; an empty band does the opposite. Inventory
-outside the band saturates at 0 or 1 instead of switching the quote off.
+$I > 0$: more volume waits to buy than to sell. **While `algo3_beta` = 0 (now), $I$ does not move the quotes**;
+it is recorded and charted, and $V_b + V_a$ decides the thin-book test.
 
-### Step 2: candidates at fixed distances from the centre
-
-A geometric grid of distances, 0.05%, 0.07%, 0.10%, … 1.45% (`grid_min_perc`
-× `grid_ratio`^k up to `grid_max_perc`). For each distance the first book level
-at or beyond the target is found and the price one tick inside it is the
-candidate (the same anchoring version 1 used for level indices). When the book
-ends before the target the tick-rounded target itself is used. Candidates
-never cross the touch and duplicates are kept once. The *real* distance of
-each candidate from the centre is what the next step uses.
-
-### Step 3: each candidate gets a fill probability
-
-`p(distance)` = probability that an order resting at that distance is filled
-within `cancel_after_minutes`. From the measured table
-`fill_table_<pair>.json` (built daily by `tools/build_fill_table.py` from the
-CSVs) when it is fresh, otherwise from the fallback formula
-`p = 1 − exp(−fill_lambda_tau × exp(−fill_kappa × distance))`.
-
-### Step 4: every bid/ask pair is scored by expected value
+### Step 2: the microprice
 
 ```
-R_net = ask × (1 − fee)² / bid − 1                      (unchanged from version 1)
-J     = p_bid × p_ask × R_net − adverse_selection_perc × (p_bid(1 − p_ask) + p_ask(1 − p_bid))
+microprice = (a0 x v_b0 + b0 x v_a0) / (v_b0 + v_a0)  =  mid + (spread / 2) x I0
 ```
 
-A pair is feasible when `R_net > exp_ret_min` and `J > ev_min`. The feasible
-pair with the largest `J` is quoted. All pairs are scored, so one odd level
-in the book cannot hide a better pair (version 1 stopped at the first failure).
+$I_0$ is the imbalance of the best level alone. The microprice always lies between the best bid and the best
+ask, nearer the side with less volume.
 
-### Step 5: one side alone when that is what makes sense
+### Step 3: the quote centre
 
-A lone sell is allowed when `ask > P_ref × (1 + G)`, a lone buy when
-`bid < P_ref / (1 + G)`, with `G = (1 + exp_ret_min)/(1 − fee)² − 1` (0.753% at
-0.25%/0.25%) and `P_ref` the centre or, for a sell of inventory we bought
-ourselves, its average cost. Used when the inventory position is at or beyond
-`one_sided_hi` (asks only) / `one_sided_lo` (bids only), and as the fallback
-when no pair is feasible.
+```
+x = clamp( (inv - inv_min) / (inv_max - inv_min), 0, 1 )
+c = microprice x (1 + beta x I) x (1 - skew_perc x (2x - 1))
+```
 
-### Step 6: resting prices are kept
+A half-full band leaves the centre at the microprice; a full band moves it `skew_perc` (0.2 %) down, so
+selling becomes more likely; an empty band moves it 0.2 % up.
 
-A new price within `hysteresis_ticks` of the resting one, while the resting
-quote is younger than `refresh_seconds`, is replaced by the resting price, and
-the engine does not re-post a side when one of its own orders already rests
-within that window.
+### Step 4: the half-spread from the fee bar
+
+```
+G     = (1 + exp_ret_min) / (1 - fee)^2 - 1
+h_min = G / (2 + G)                       0.0850 % in demo, 0.2553 % live
+h     = max(algo3_half_spread, h_min + tick / c)
+```
+
+With $B = c(1-h)$ and $A = c(1+h)$, a completed round trip returns $(1-f)^2(1+h)/(1-h) - 1$, which is above
+`exp_ret_min` exactly when $h > h_{\min}$. The centre, and with it the signal and the inventory, cancels out.
+
+### Step 5: prices on the tick, never crossing
+
+```
+B = floor_to_tick( min(c (1 - h), best ask - tick) )
+A = ceil_to_tick ( max(c (1 + h), best bid + tick) )
+```
+
+The clip and the rounding only lower the bid and raise the ask, so every pair sent still clears the bar. The
+code re-checks it on the exact prices anyway (`net_return_below_bar`, which cannot fire while $h > h_{\min}$).
+
+### Step 6: keep a pair that barely moved
+
+The previous pair is sent again while both prices moved by at most `hysteresis_ticks` (5 ticks, 50 rial), the
+pair is younger than `refresh_seconds` (300), and it still clears the bar. The engine also does not re-post a
+side that already rests within 5 ticks.
 
 ### Worked example
 
-USDT/IRT, fee 0.25%, `exp_ret_min` 0.25%, 25 of 50 USDT held, formula fill
-model, the book of `docs/algorithms/ALGORITHM_1_V2.md` §3. Output of the
-actual code (pinned by `tests/test_strategy_algo1.py`):
+A real USDT/IRT book of 17 October 2026, 11:40:34 UTC, with the USDT demo's settings that day (fee 0.08 %,
+target 0.01 %, band 0–300 USDT, order size 5) and its holding of 92.4712 USDT. Output of the actual code
+([`MM_algo2.md` §8](docs/algorithms/MM_algo2.md#8-worked-example-1-a-usdtirt-book-of-17-october)):
 
-| Inventory | Quote mode | Bid | Ask | Net return | Expected value |
-|---|---|---|---|---|---|
-| 25 of 50 | pair | 2,650,010 (level 4) | 2,669,990 (level 4) | 0.251% | 0.0100% per lifetime |
-| 48 of 50, cost basis 2,640,000 | ask only | — | 2,664,990 (level 3) | 0.44% vs cost | 0.17% |
-| 2 of 50 | bid only | 2,640,010 (level 5) | — | 0.44% vs centre | 0.010% |
+| Quantity | Value |
+|---|---|
+| best bid / best ask | 2,633,020 (384.6 USDT) / 2,634,000 (698.87 USDT) |
+| imbalance $I$ (top 3 levels) | −0.40493 |
+| microprice | 2,633,367.87 (142.13 rial below the mid) |
+| inventory position $x$; skew | 0.30824; ×1.00076705 |
+| centre | 2,635,387.80 |
+| half-spread $h$ | 0.0854112 % |
+| **bid / ask sent** | **2,633,130 / 2,637,640** |
+| net return of the pair | 0.011069 % |
+| sizes | buy 6.9176 USDT, sell 3.0824 USDT |
 
-Version 1 quoted level pairs `(5,10) … (1,6)` at empty inventory and nothing
-at all above about 1.6 × `inv_max`.
+A real round of the BTC demo, with every recorded number recomputed by the code, is in
+[`MM_algo2.md` §9](docs/algorithms/MM_algo2.md#9-worked-example-2-a-real-round-of-the-btc-demo).
 
 ---
 
 ## 7. How order sizes are decided
 
 Sizes are decided in `engine.py`, in `_inventory_sized_order_targets`, not in
-the strategy. Each round that has a quote sends at most one buy and one sell.
-The live loop and the demo loop call the same function.
+the strategy, so the rule is the same for every algorithm. Each round that has a quote sends at most one buy
+and one sell. The live loop and the demo loop call the same function.
 
 ### The linear inventory rule
 
@@ -397,6 +413,7 @@ sell = 2 × order_size × x
   it does not grow.
 - Inventory is pulled toward the middle of the band: the fuller it is, the
   less the bot buys and the more it sells.
+- MM_algo2 always returns both prices; at the band edges this rule is what leaves one side out.
 
 ### Resting orders count as inventory
 
@@ -434,6 +451,12 @@ Then, for each side separately:
 - Locked-exposure guard: a side is not sent if it would push the cash (buy) or
   inventory (sell) locked in open orders above the configured ratio, 25% in
   live mode.
+- Resting-order guard: a side is not re-sent when one of the worker's own orders already rests within
+  `hysteresis_ticks` of the price (`resting_order_kept`).
+
+With the live BTC settings and an empty wallet, MM_algo2's first buy is 0.00002378 BTC (8.83 % of the rial
+wallet), and at most three unfilled buys can rest before the 25 % guard refuses a fourth
+([`MM_algo2.md` §13](docs/algorithms/MM_algo2.md#13-what-mm_algo2-would-send-with-the-live-settings)).
 
 ### The settings
 
@@ -461,132 +484,91 @@ rejected. Turning the rule off sends a fixed `order_size` on both sides.
 - When the rule scales a side below the tradable minimum although cash or
   inventory is available, the round row says `not_sent_inventory_sizing`
   instead of `not_sent_insufficient_cash` or `not_sent_insufficient_inventory`.
-- The paper ledger's fill budget per market observation is unchanged:
-  `order_size × demo_max_fill_per_observation_orders` when no trade volume is
-  reported. An order of `2 × order_size` filled by a price touch therefore
-  takes two observations. The level-1 fast fill still fills a whole order.
+- The paper ledger fills at most one `order_size` per side per market observation, so an order of
+  `2 × order_size` filled by a price touch takes two observations.
 
 ---
 
-## 8. What changed on 2026-10-03
+## 8. Known problems
 
-Before this change both sides were always `order_size`. An inventory rule
-existed in the code but was switched off, used a slope of 0.75 with a floor of
-25%, and looked at wallet inventory only.
+Found by reading the code paths MM_algo2 runs through. The first group is about the algorithm; the second is
+about the engine, and is still open.
 
-| File | Change |
-|---|---|
-| `market_maker/engine.py` | `_inventory_sized_order_targets` takes the open buy and open sell amounts and sizes each side on its effective inventory. The live loop and the demo loop pass those amounts. The demo loop logs `inventory_sizing` as the not-sent reason when the rule holds a side back. |
-| `market_maker/config.py` | Both profiles turn the rule on with strength 1.0 and no floor. The `MMConfig` defaults for strength and floor match. |
-| `market_maker/demo_config.py` | The three sizing settings are editable fields again (hot in demo), each with help text. The help text of `order_size` explains the scaling. |
-| `market_maker/forward_config.py`, `templates/admin/forward_config.html` | The three sizing settings are part of the Live Config page and of the saved live config. |
-| `market_maker/dashboard.py` | Reads `DASHBOARD_REQUESTS_PATHNAME_PREFIX` so the charts work behind nginx at `/forward/`. This was already running on the server and was missing from the repository. |
-| `README.md` | The inventory sizing paragraph describes the new rule and defaults. |
-| `market_maker/tests/` | New tests for the rule, for both loops and for the new reason. Older tests that assert amounts with a constant order size now switch the rule off explicitly. |
+MM_algo2:
 
-What to expect in a live session:
+1. **The lean is off.** `algo3_beta` = 0 until the imbalance is shown to predict the next move
+   (`MM_algo2.md` §12); until then the quotes follow the microprice, the inventory and the fee bar only.
+2. **Every completed round trip earns about `exp_ret_min`.** The half-spread is the smallest that clears the
+   bar; nothing weighs the chance of a fill or the cost of only one side filling.
+3. **Its orders usually wait behind the best prices** (`MM_algo2.md` §11): at the demo fee the pair spans at
+   least 0.17 %, at the live fee 0.51 %, while the market spread is usually narrower.
+4. **The hysteresis window is in ticks:** 5 ticks are meaningful for USDT and almost nothing for BTC.
 
-- A session that starts with no base inventory sends buys of
-  `2 × order_size` and no sells until something fills.
-- A session that starts with inventory at or above `inv_max` sends sells of up
-  to `2 × order_size` and no buys.
-- The 25% locked-exposure guards still cap how much can rest at once.
-
----
-
-## 9. Problems found in review
-
-Found by reading the live-mode code path on 2026-10-03. Items 2 to 5 and 9
-are still open; items 1, 6, 7 and 8 were fixed by Algorithm 1 version 2 on
-2026-10-11 (inventory is clamped and a full wallet quotes sells only, the last
-price is optional, an empty band defaults to the middle position, candidates
-never cross the touch). Items 2 to 5 matter for real money.
-
-Fixed since then: the live worker crashed whenever it produced a quote while one
-of its own orders was still resting, because Nobitex reports an open order as
-`Active` and `get_open_order_totals` accepted only `open`. That ended the
-BTC/IRT worker on 2026-09-27. The check now accepts `open`, `Active` and `New`
-(`OPEN_ORDER_STATUSES` in `engine.py`).
-
-1. **No quote, and no way to sell down, when inventory is well above
-   `inv_max`.** A live session starts from the whole wallet balance. Once
-   `inv_d` exceeds `depth_max` there is no valid level pair, so the strategy
-   returns no quote at all (`algo1.py`, `leg_pairs`). With `depth_max = 10`
-   this happens above roughly 1.6 × `inv_max`. Confirmed with the worked
-   example in section 6.
-
-2. **The full closed-order history is fetched several times per round.**
-   `get_status_orders('close')` pages through every closed order on the
-   account (`max_pages=100`, no pair or date filter) and is called about four
-   to five times a round. On the 10-second USDT loop that is a rate-limit
-   risk, and once the account has more than 10,000 closed orders
-   `order_status.py` raises and the worker stops.
-
-3. **Fills that happen just before a cancel are lost.** When a stale order is
-   cancelled its id is removed from tracking immediately. Any amount matched
-   between the last accounting pass and the cancel is never added to
-   inventory or cash. The ledger is never re-synchronised with the wallet
-   during a session, so the error accumulates.
-
-4. **An order can exist on the exchange without the worker knowing.**
-   If `send_order` times out after the exchange accepted the order, the id is
-   never recorded. The same applies to orders left open by a worker that
-   crashed: a restarted worker does not treat them as its own and never
-   cancels them.
+The engine:
 
 5. **Any transient API error in order-status calls stops the live worker.**
    `update_inventory_and_cash` and `get_open_order_totals` are not wrapped in
    error handling in the real loop. The worker cancels its orders and exits,
-   which is safe but fragile for continuous running.
+   which is safe but fragile for continuous running. This stopped the BTC live worker on 16 October 2026
+   after an order-status request timed out.
+6. **The full closed-order history is fetched several times per round.**
+   `get_status_orders('close')` pages through every closed order on the
+   account (`max_pages=100`, no pair or date filter). On a short loop that is a rate-limit
+   risk, and once the account has more than 10,000 closed orders
+   `order_status.py` raises and the worker stops.
+7. **Fills that happen just before a cancel are lost.** When a stale order is
+   cancelled its id is removed from tracking immediately. Any amount matched
+   between the last accounting pass and the cancel is never added to
+   inventory or cash. The ledger is never re-synchronised with the wallet
+   during a session, so the error accumulates.
+8. **An order can exist on the exchange without the worker knowing.**
+   If `send_order` times out after the exchange accepted the order, the id is
+   never recorded. The same applies to orders left open by a worker that
+   crashed: a restarted worker does not treat them as its own and never
+   cancels them.
+9. **Each live worker reads the whole rial wallet as its own starting cash**, so the USDT and BTC workers each
+   count the same rial; only the 25 % exposure guards keep their combined orders within the real balance.
+10. **`portfolio.py` is unused by the engine.** `Nobitex_portfolio` is built
+    and stored but never called.
+11. **The live order amount is sent as `str(amount)`**, which for small BTC sizes is scientific notation
+    (`2.378e-05`). No live order has been sent with it yet, and MM_algo2 would send one in its first live BTC
+    round; check with the preflight notebook that Nobitex accepts it.
 
-6. **A `null` `lastTradePrice` crashes the round.** The order-book check only
-   tests that the key exists; `float(None)` then raises in `algo1.py`.
-
-7. **Division by zero if `inv_max == inv_min`** in `algo1.py`. The live config
-   validator rejects this, the profile defaults do not.
-
-8. **The ask can land on the best bid.** When the gap between best bid and
-   best ask is one tick and the chosen ask level is 0, `ask − tick` equals the
-   best bid, so the sell would execute as a taker.
-
-9. **`portfolio.py` is unused by the engine.** `Nobitex_portfolio` is built
-   and stored but never called.
-
-Test suite: a full run on the server did not complete cleanly. About the
-first 60% passed, then tests began failing with `Too many open files` at the
-default limit of 1024 open files. The cause was not investigated.
+Four findings of the 3 October review do not apply to MM_algo2's path. They were Algorithm 1 version 1
+crashes and corner cases:
+* no quote above about 1.6 × `inv_max`: MM_algo2 always quotes, and at a full band the sizing sells only;
+* a `null` last trade price: MM_algo2 does not use the last trade price;
+* a division by zero for an empty band: the position falls back to the middle;
+* an ask landing on the best bid: MM_algo2's ask is at least the best bid plus a tick.
 
 ---
 
-## 10. What the first live run showed
+## 9. History
 
-BTC/IRT, 26 to 27 September 2026, 1,330 rounds:
-
-- 7 buy orders were sent. No sell orders.
-- 1,323 rounds produced no quote, because the market spread did not reach the
-  roughly 0.75% that a 0.25% fee per leg plus a 0.25% minimum return requires.
-- Inventory and cash did not change during the run: no fills were recorded.
-
-The bot is quiet on BTC/IRT because of the threshold, not because of a fault.
-
----
-
-## 11. Algorithm 1 version 2 (2026-10-11)
-
-The selection rule of Algorithm 1 was replaced; the fee bar, the sizing rule,
-the engine's accounting and the file formats were kept. Short list (details in
-`docs/algorithms/`):
+### MM_algo2 (2026-10-17, this branch)
 
 | Change | Where |
 |---|---|
-| Candidates by price distance instead of level index; inventory moves the quote centre continuously | `strategy/algo1.py` |
-| Every pair scored by expected value with fill probabilities; best feasible pair wins | `strategy/algo1.py`, `fill_model.py` |
-| One-sided quotes at the band edges and as a fallback (reference: centre or own cost basis) | `strategy/algo1.py`, `engine.py` (a quote may omit a side) |
-| Resting prices kept; the engine does not re-post a side that already rests at the price | `strategy/algo1.py`, `engine.py` |
-| 18 new settings, all editable in the admin panel for demo and live | `config.py`, `demo_config.py`, `forward_config.py` |
-| Daily fill-table builder | `tools/build_fill_table.py` |
-| Demo matcher's level-1 fast fill switched off in the profiles | `config.py` |
-| Tests rewritten for the new rule; new tests for the fill model, the builder and the engine's one-sided handling | `tests/` |
+| MM_algo2: imbalance, microprice centre, inventory skew, fee-bar half-spread, outward rounding, final check, hysteresis | `strategy/algo3.py` |
+| Shared order-book arithmetic moved out of Algorithm 1 unchanged | `strategy/common.py` |
+| The algorithm catalog; the names shown are the branch names (MM_algo2, MM_algo1v2) | `strategy/catalog.py` |
+| `algorithm` setting and the six `algo3_*` settings, editable for demo and live | `config.py`, `demo_config.py`, `forward_config.py` |
+| Demo worker switches algorithm at a round boundary; live worker starts with the saved one | `engine.py`, `deploy/forward_control_agent.py`, `run.py` |
+| Round rows carry `Strategy`, `Imbalance`, `Microprice`; session summaries name the algorithms | `engine.py`, `result_store.py` |
+| Dashboard Algorithm tab (one algorithm, or all side by side); admin Algorithm field and "algorithm in force" | `dashboard.py`, `admin_app.py`, `templates/admin/` |
+| Tests for the rule, the catalog, the switch and the dashboard | `tests/test_strategy_algo3.py`, `test_strategy_catalog.py`, `test_dashboard_algorithms.py` |
+| Documentation rewritten around MM_algo2, with the data and scripts behind every number | `README.md`, this guide, `docs/` |
 
-Before switching the new code to real mode, run it in demo for at least five
-days and apply the gate in `docs/algorithms/ALGORITHM_1_V2.md` §7.
+The BTC demo switched to MM_algo2 on 17 October 2026 at 11:15 UTC. Before any real money: run it in demo for at
+least five days and check the gate (`MM_algo2.md` §17).
+
+### Earlier
+
+* **2026-10-11:** Algorithm 1 version 2 (now MM_algo1v2) replaced version 1; its history is on the
+  `MM_algo1v2` branch.
+* **2026-10-03:** the linear inventory sizing rule of [section 7](#7-how-order-sizes-are-decided) replaced
+  fixed sizes; resting orders started counting as inventory.
+* **15–16 October 2026, live:** both live workers ran MM_algo1v2 with fee 0.25 % and target 0.01 % and sent no
+  order in about 30 hours: their wallets held almost no coins, so only lone buys were allowed, and none reached
+  the expected-value floor. The BTC worker stopped on 16 October (problem 5 above). MM_algo2 under the same
+  settings would place a buy in its first round (`MM_algo2.md` §13).

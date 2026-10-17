@@ -27,7 +27,7 @@ class AlgorithmInfo:
     key: str                 # config value, CLI --algorithm, "Strategy" column of every round row
     number: int              # the number in the project's design documents ("Algorithm 3")
     label: str               # display name on the dashboard and in the admin: the git branch it was built on
-    title: str               # one-line description, starting with the design-document name
+    title: str               # one-line description, shown after the name
     cls: type                # the Strategy class
     implemented: bool
     doc: str                 # where it is specified
@@ -40,7 +40,7 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
     "algo1": AlgorithmInfo(
         key="algo1", number=1, label="MM_algo1v2",
         title="Algorithm 1, version 2: distance grid, fill probabilities and expected value",
-        cls=Algo1Strategy, implemented=True, doc="docs/algorithms/ALGORITHM_1_V2.md",
+        cls=Algo1Strategy, implemented=True, doc="docs/algorithms/MM_algo1v2.md",
         summary=(
             "Moves a quote centre away from the mid as the inventory fills: c = mid · (1 − skew · (2x − 1)).",
             "Builds candidate bids and asks on a geometric grid of distances from the centre, each one tick inside a real book level.",
@@ -56,12 +56,12 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
     ),
     "algo3": AlgorithmInfo(
         key="algo3", number=3, label="MM_algo2",
-        title="Algorithm 3: order-book imbalance, microprice and a fixed spread",
-        cls=Algo3Strategy, implemented=True, doc="docs/algorithms/ALGORITHM_3.md",
+        title="order-book imbalance, microprice and a fixed spread",
+        cls=Algo3Strategy, implemented=True, doc="docs/algorithms/MM_algo2.md",
         summary=(
             "Measures the imbalance of the resting volumes in the top k levels, I = (V_bid − V_ask) / (V_bid + V_ask), deeper levels weighted ρ^i.",
             "Starts the centre at the microprice, the mid pulled toward the thinner side: (a₀·v_bid₀ + b₀·v_ask₀) / (v_bid₀ + v_ask₀).",
-            "Leans the centre with the imbalance (× (1 + β·I)) and skews it against the inventory (× (1 − skew · (2x − 1))).",
+            "Leans the centre with the imbalance (× (1 + β·I)) and skews it against the inventory (× (1 − skew · (2x − 1))). With algo3_beta = 0, the default, the imbalance is recorded and charted but does not move the quotes.",
             "Quotes one symmetric half-spread h = max(h_config, h_min + one tick) around the centre, with h_min = G / (2 + G) the smallest half-spread that clears the fee bar.",
             "Rounds the bid down and the ask up to the tick without crossing the touch, re-checks R_net > exp_ret_min on the final prices, and keeps the resting pair within hysteresis_ticks. Fill probabilities are not used.",
         ),
@@ -72,8 +72,9 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
     ),
 }
 
-# What the CLI accepts: the implemented algorithms plus the Algorithm 2 stub
-# (kept so `--algorithm algo2` fails loudly, as documented in README.md).
+# What the CLI accepts: the implemented algorithms plus the Avellaneda-Stoikov
+# stub (key algo2, unrelated to the name MM_algo2; kept so `--algorithm algo2`
+# fails loudly, as documented in README.md).
 STRATEGIES: Dict[str, type] = {key: info.cls for key, info in ALGORITHMS.items()}
 STRATEGIES["algo2"] = Algo2Strategy
 

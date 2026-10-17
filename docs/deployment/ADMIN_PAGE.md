@@ -89,11 +89,13 @@ active session and while the live workers run.
 
 > **Current field list:** `demo_config.FIELD_DEFINITIONS` is the source of truth (41 fields per pair in
 > the `MM_algo2` code; the table below is the original nine-field release). The first field on both config
-> pages is **`algorithm`**, a drop-down offering **MM_algo1v2** (Algorithm 1 version 2, value `algo1`) and
-> **MM_algo2** (Algorithm 3, value `algo3`) — each algorithm is shown under the git branch it was built on: hot on the Demo page (the worker builds the new
-> strategy at its next round, keeping its session and ledger) and read at start on the Live Config page (the
-> forward agent starts `run.py --algorithm <value>`). The Overview page and the Live Forward page show the
-> algorithm in force for each pair (the forward-only admin of the Docker stack lands on the Live Forward page). Algorithm 3's own settings (`algo3_*`) are described in `docs/algorithms/ALGORITHM_3.md`.
+> pages is **`algorithm`**, a drop-down offering **MM_algo2** (this branch's algorithm, value `algo3`) and
+> **MM_algo1v2** (Algorithm 1 version 2, value `algo1`); each algorithm is shown under the git branch it was
+> built on. It is hot on the Demo page (the worker builds the new strategy at its next round, keeping its
+> session and ledger) and read at start on the Live Config page (the forward agent starts
+> `run.py --algorithm <value>`). The Overview page and the Live Forward page show the algorithm in force for
+> each pair (the forward-only admin of the Docker stack lands on the Live Forward page). MM_algo2's own
+> settings (`algo3_*`) are described in `docs/algorithms/MM_algo2.md` §15.
 
 The Admin exposes exactly nine numeric fields for each pair. The six hot
 fields are applied by the running worker at a round boundary; the three

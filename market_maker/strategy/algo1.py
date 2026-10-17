@@ -7,7 +7,8 @@ sizes, caps and sends whatever comes back; ``diagnostics`` and
 ``no_quote_reason`` describe the same decision for the CSV, Telegram and
 the admin panel.
 
-What changed from version 1 (see docs/algorithms/ALGORITHM_1_V2.md):
+What changed from version 1 (see docs/algorithms/ALGORITHM_1_V2.md on the
+MM_algo1v2 branch):
 
 * candidates are built on a geometric grid of *price distances* from the
   quote centre and anchored to the first book level at or beyond each

@@ -6,7 +6,9 @@ little above it, paying fees) and the market moving while it holds inventory.
 This note derives the exact split used by the dashboard's **PnL attribution**
 tab (`market_maker/dashboard.py`, helpers `pnl_attribution` and
 `attribution_totals`) and shows a worked round. The same split applies to the
-demo tracks and the live tracks of both pairs.
+demo tracks and the live tracks of both pairs, and to whichever algorithm is
+chosen on the dashboard's **Algorithm** tab: with MM_algo2 chosen, the sums
+run over MM_algo2's rounds only.
 
 ## 1. What is recorded every round
 
@@ -118,7 +120,7 @@ USDT, $P_{t+1} = -50{,}000$.
 
 ## 8. What the tab shows
 
-![PnL attribution of the demo session of 2026-10-15](figures/pnl_attribution_demo_2026-10-15.png)
+![PnL attribution of MM_algo2's first rounds on the BTC demo, 17 October 2026](figures/pnl_attribution_mm_algo2_2026-10-17.jpg)
 
 Four tiles (Total PnL, Trading PnL net of fees with the gross edge and fees,
 Price PnL, Verdict) and one chart: time on the x axis and three running sums,
@@ -127,17 +129,21 @@ $W_t - W_0$, which is always orange plus blue. Where the black line hugs the
 orange one the market made the result; where it hugs the blue one, we did.
 Deep link: `?tab=attribution&track=<track>&session=<session>`.
 
-The demo session of 2026-10-15 (both pairs started with 1,000,000,000 IRT):
+The figure is the tab for MM_algo2's first 108 rounds on the BTC demo
+(track *BTC — Demo*, session `demo-20261015T131629Z-2f38f0a407fa`, Algorithm
+tab set to MM_algo2), on 17 October 2026 from 14:45 to 16:32 Tehran time. The
+session switched to MM_algo2 at 14:45, so its sums start from MM_algo2's
+first round:
 
-| | USDT/IRT | BTC/IRT |
-|---|---|---|
-| $\sum P_t$ price | −1,188,567 | +3,531,539 |
-| $\sum T_t$ trading, net of fees | −422,761 | −1,325,475 |
-| of which fees $\sum f_t$ | −338,076 | −442,346 |
-| $W_T - W_0$ total | **−1,611,328** | **+2,206,064** |
+| | MM_algo2, BTC demo |
+|---|---|
+| $\sum P_t$ price | −753,100 |
+| $\sum T_t$ trading, net of fees | −497,804 (gross edge −260,396, fees 237,408) |
+| $W_T - W_0$ total | **−1,250,904** (−0.126 % of the starting wealth) |
 
-Both pairs: the result was mainly price movement on the inventory we had
-accumulated; the quoting itself lost after fees.
+In these 107 minutes the price moved against the BTC held, and the quoting lost
+after fees: "Mainly price". So few rounds say nothing yet about MM_algo2; the
+tab is where to watch it over days.
 
 ## 9. Caveats
 

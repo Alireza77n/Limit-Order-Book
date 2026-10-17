@@ -1109,7 +1109,7 @@ def test_config_page_offers_the_algorithms_as_a_drop_down(client):
     assert [value for value, _ in options] == ["algo1", "algo3"]
     assert dict(options) == {"algo1": "selected", "algo3": ""}   # the profile default is selected
     assert ">MM_algo1v2 — Algorithm 1, version 2: distance grid, fill probabilities and expected value (algo1)<" in select.group(1)
-    assert ">MM_algo2 — Algorithm 3: order-book imbalance, microprice and a fixed spread (algo3)<" in select.group(1)
+    assert ">MM_algo2 — order-book imbalance, microprice and a fixed spread (algo3)<" in select.group(1)
     for field in ("algo3_depth_k", "algo3_beta", "algo3_half_spread"):
         assert f'name="{field}"' in body
 

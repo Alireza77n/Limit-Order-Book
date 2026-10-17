@@ -87,8 +87,9 @@ class MMConfig:
     inventory_sizing_strength: float = 1.0
     inventory_sizing_min_fraction: float = 0.0
 
-    # Algorithm 1 v2 quote selection -- see strategy/algo1.py and
-    # docs/algorithms/ALGORITHM_1_V2.md. All of these are hot-reloadable from
+    # MM_algo1v2 (Algorithm 1 v2) quote selection -- see strategy/algo1.py; it is
+    # specified on the MM_algo1v2 branch (summary here: docs/algorithms/MM_algo1v2.md).
+    # All of these are hot-reloadable from
     # the admin panel (demo_config.FIELD_DEFINITIONS / forward_config.FORWARD_FIELDS).
     #
     # Candidate distances from the quote centre, as fractions of price:
@@ -122,7 +123,7 @@ class MMConfig:
     fill_lambda_tau: float = 1.0
     # Queue correction p *= exp(-volume_ahead / fill_queue_volume_ref); 0 = off.
     fill_queue_volume_ref: float = 0.0
-    # Algorithm 3 (strategy/algo3.py, docs/algorithms/ALGORITHM_3.md): the
+    # MM_algo2 (strategy/algo3.py, docs/algorithms/MM_algo2.md): the
     # imbalance of the top algo3_depth_k levels (weights algo3_decay_rho^i)
     # leans a microprice centre by algo3_beta per unit of imbalance; the
     # inventory skew is shared with Algorithm 1 (skew_perc); one symmetric

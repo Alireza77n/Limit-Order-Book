@@ -62,7 +62,8 @@ def test_every_strategy_class_carries_its_catalog_key():
 def test_labels_and_unknown_keys():
     assert algorithm_label("algo3") == "MM_algo2"          # shown under its branch name
     assert algorithm_label("algo1") == "MM_algo1v2"
-    assert ALGORITHMS["algo3"].title.startswith("Algorithm 3")      # the design-document name stays visible
+    # shown as MM_algo2 only; the design note's number stays in `number`, not in the visible title
+    assert ALGORITHMS["algo3"].number == 3 and "Algorithm 3" not in ALGORITHMS["algo3"].title
     assert algorithm_info(None).key == "algo1"            # rows written before the Strategy column
     assert algorithm_info("no-such").key == "algo1"
 

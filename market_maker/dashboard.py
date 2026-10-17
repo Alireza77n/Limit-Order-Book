@@ -136,7 +136,8 @@ def _url_params(search) -> Dict[str, str]:
 # every scored pair (~50 KB), so this bounds what one refresh reads.
 DECISION_ROUNDS = 120
 
-# The demo-to-real gate (docs/algorithms/ALGORITHM_1_V2.md section 7).
+# The demo-to-real gate (docs/algorithms/MM_algo2.md section 17; the same nine
+# conditions for every algorithm).
 GATE_THRESHOLDS = {
     "quote_rate": 0.50, "fills_per_hour": 1.0, "round_trips": 30,
     "spread_gap": -0.0005, "adverse_60s": -0.001, "fill_forecast_error": 0.30,
@@ -728,7 +729,7 @@ def drawdown_fraction(df: pd.DataFrame) -> Optional[float]:
 
 
 def gate_rows(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The demo-to-real gate of ALGORITHM_1_V2.md section 7, one row per
+    """The demo-to-real gate of docs/algorithms/MM_algo2.md section 17, one row per
     metric with its value, threshold and pass/fail (None = not measurable yet)."""
     fee = float(settings.get("commission_perc") or 0.0)
     modes = quote_mode_counts(df)
@@ -1482,7 +1483,7 @@ def _algo3_levels_table(document: Dict[str, Any]) -> html.Div:
 
 
 def _algo3_decision_trace(document: Dict[str, Any], settings: Dict[str, Any]) -> html.Div:
-    """Algorithm 3's decision as the steps of docs/algorithms/ALGORITHM_3.md."""
+    """MM_algo2's decision as the steps of docs/algorithms/MM_algo2.md (sections 4-5)."""
     def line(ok, text):
         mark = "✓" if ok else ("•" if ok is None else "✗")
         color = STATUS_GOOD if ok else (STATUS_WARN if ok is None else STATUS_CRITICAL)
@@ -2254,7 +2255,7 @@ def _render_fill_model_tab(df: pd.DataFrame, track_key: str, settings: Dict[str,
     note = []
     if algorithms_in_rows(df) == ["algo3"]:
         note.append(_card(html.P(
-            f"These rounds were made by {algorithm_label('algo3')} (Algorithm 3), which quotes a fixed spread and "
+            f"These rounds were made by {algorithm_label('algo3')}, which quotes a fixed spread and "
             "never reads a fill probability: there is no forecast to calibrate here. The table below is still "
             f"measured from the price path every night and is what {algorithm_label('algo1')} uses.",
             style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "margin": 0})))
@@ -2594,7 +2595,7 @@ def _render_validation_tab(
 
     return html.Div([
         _card(
-            _h3("Switch-to-real gate", "every metric against its threshold (docs/algorithms/ALGORITHM_1_V2.md §7)"),
+            _h3("Switch-to-real gate", "every metric against its threshold (docs/algorithms/MM_algo2.md §17)"),
             _gate_table(gate) if gate else html.Div(f"gate unavailable: {gate_error}", style={"color": MUTED}),
         ),
         html.Div([

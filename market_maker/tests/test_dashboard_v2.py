@@ -71,7 +71,7 @@ def _frame():
 
 
 def _example_book():
-    """The running example of docs/algorithms/ALGORITHM_1_V2.md."""
+    """The running example of docs/algorithms/ALGORITHM_1_V2.md (MM_algo1v2 branch)."""
     bids = [[2_659_990, "20000"], [2_659_900, "300"], [2_658_000, "1500"], [2_655_000, "8000"],
             [2_650_000, "40000"], [2_640_000, "10000"], [2_630_000, "5000"], [2_620_000, "5000"],
             [2_610_000, "5000"], [2_600_000, "5000"], [2_590_000, "5000"]]
