@@ -1424,8 +1424,26 @@ def test_new_demo_session_from_the_algorithm_page_returns_to_it(forward_app, fak
     assert _commands_written(forward_app)[0]["action"] == "new_session"
 
 
-def test_forward_only_admin_does_not_offer_demo_activation(forward_app, fake_agent):
+def test_the_docker_admin_offers_demo_activation_although_it_lands_on_the_live_page(
+    forward_app, fake_agent, monkeypatch, tmp_path,
+):
+    """The production Docker admin sets LOB_FORWARD_ONLY_ADMIN=1, which only
+    makes the index land on Live Forward Test: it has the Demo control queue
+    and manages the Demo, so the Demo table and its Activate buttons stay."""
+    _algorithm_setup(forward_app, monkeypatch, tmp_path)
     forward_app.config["FORWARD_ONLY_ADMIN"] = True
+    client = forward_app.test_client()
+    _login(client)
+
+    body = _html(client.get("/admin/algorithm?algorithm=algo3", headers=HTML))
+
+    assert client.get("/admin/", headers=HTML).status_code == 302       # lands on the live page
+    assert "This panel does not manage the Demo stack." not in body
+    assert 'data-activate="demo:usdt"' in body
+
+
+def test_a_panel_without_the_demo_control_queue_does_not_offer_demo_activation(forward_app, fake_agent, tmp_path):
+    forward_app.config["CONTROL_DIR"] = str(tmp_path / "no-demo-control")
     client = forward_app.test_client()
     token = _login(client)
 
@@ -1434,7 +1452,8 @@ def test_forward_only_admin_does_not_offer_demo_activation(forward_app, fake_age
         "algorithm": "algo3", "target": "demo", "pair": "btc", "csrf_token": token})
 
     assert "This panel does not manage the Demo stack." in body and 'data-activate="demo:' not in body
-    assert response.status_code == 400 and _commands_written(forward_app) == []
+    assert response.status_code == 400
+    assert not (tmp_path / "no-demo-control").exists()                # nothing was enqueued
 
 
 def test_admin_script_finds_every_element_it_wires_up():

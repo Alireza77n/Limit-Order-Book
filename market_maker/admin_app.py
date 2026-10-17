@@ -979,11 +979,18 @@ def _sessions_html_response(app: Flask):
     )
 
 
+def _demo_managed(app: Flask) -> bool:
+    """Whether this panel drives the Demo stack: it has the Demo control
+    queue. FORWARD_ONLY_ADMIN only makes the index land on the Live Forward
+    page; the Docker admin sets it and still manages the Demo."""
+    return Path(app.config["CONTROL_DIR"]).is_dir()
+
+
 def _algorithm_html_response(app: Flask, selected: Optional[str], status: int = 200):
     return render_template(
         "admin/algorithm.html", selected=selected, algorithm_choices=_algorithm_choices(),
         algorithm_labels=_algorithm_labels(), state=_algorithm_state(app),
-        demo_managed=not app.config["FORWARD_ONLY_ADMIN"],
+        demo_managed=_demo_managed(app),
         trading_enabled=app.config["FORWARD_TRADING_ENABLED"],
         csrf_token=get_csrf_token(), session_id=_session_id(app),
     ), status
@@ -1076,7 +1083,7 @@ def _register_routes(app: Flask) -> None:
             problem = "Invalid target (expected demo or live)."
         elif pair not in PAIRS:
             problem = "Invalid pair (expected btc or usdt)."
-        elif target == "demo" and app.config["FORWARD_ONLY_ADMIN"]:
+        elif target == "demo" and not _demo_managed(app):
             problem = "This panel does not manage the Demo stack."
         if problem:
             if _wants_html():

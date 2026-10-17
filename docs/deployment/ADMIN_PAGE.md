@@ -100,7 +100,8 @@ active session and while the live workers run.
 > *Activate* goes through the same validation and control-queue actions as the config pages (`apply_config`,
 > `apply_forward_config`) and never starts or stops a live worker; the page also offers *Start a new demo
 > session*. The Overview and Live Forward pages carry the same drop-down, and Overview shows what each pair
-> runs (the forward-only admin of the Docker stack lands on the Live Forward page and manages no Demo). MM_algo2's own
+> runs. The Docker stack's admin sets `LOB_FORWARD_ONLY_ADMIN=1`, which only makes it land on the Live Forward
+> page; it still manages the Demo. Only a panel without the Demo control queue shows no Demo table. MM_algo2's own
 > settings (`algo3_*`) are described in `docs/algorithms/MM_algo2.md` §15.
 
 The Admin exposes exactly nine numeric fields for each pair. The six hot
