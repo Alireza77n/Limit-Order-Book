@@ -93,8 +93,14 @@ active session and while the live workers run.
 > **MM_algo1v2** (Algorithm 1 version 2, value `algo1`); each algorithm is shown under the git branch it was
 > built on. It is hot on the Demo page (the worker builds the new strategy at its next round, keeping its
 > session and ledger) and read at start on the Live Config page (the forward agent starts
-> `run.py --algorithm <value>`). The Overview page and the Live Forward page show the algorithm in force for
-> each pair (the forward-only admin of the Docker stack lands on the Live Forward page). MM_algo2's own
+> `run.py --algorithm <value>`). The **Algorithm** page (`/admin/algorithm`, second menu item) is the simpler
+> way to switch: a drop-down of the algorithm names, then a Demo table (per pair: worker, algorithm now,
+> *Activate*; the active demo session next to it) and a Live table (per pair: worker, algorithm of the running
+> worker, algorithm saved for its next start, *Activate*; each live worker's active session next to it).
+> *Activate* goes through the same validation and control-queue actions as the config pages (`apply_config`,
+> `apply_forward_config`) and never starts or stops a live worker; the page also offers *Start a new demo
+> session*. The Overview and Live Forward pages carry the same drop-down, and Overview shows what each pair
+> runs (the forward-only admin of the Docker stack lands on the Live Forward page and manages no Demo). MM_algo2's own
 > settings (`algo3_*`) are described in `docs/algorithms/MM_algo2.md` §15.
 
 The Admin exposes exactly nine numeric fields for each pair. The six hot

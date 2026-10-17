@@ -9,7 +9,7 @@ import os
 import sqlite3
 import tempfile
 from pathlib import Path
-from typing import Iterable, Mapping, Optional, Sequence
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 import pandas as pd
 
@@ -243,24 +243,32 @@ class DemoResultStore:
 
     def session_summary(self) -> list:
         """Every session in the store, oldest first: id, row count, first and
-        last timestamp, and the algorithms its rounds ran (rows written
-        before the Strategy column existed count as algo1). Cheap (one
-        aggregate query), however large the store."""
+        last timestamp, the algorithms its rounds ran in the order they first
+        ran, and the rounds of each (rows written before the Strategy column
+        existed count as algo1). Cheap (one aggregate query), however large
+        the store."""
         query = (
-            "SELECT session_id, COUNT(*), "
-            "MIN(json_extract(payload_json, '$.Timestamp')), "
-            "MAX(json_extract(payload_json, '$.Timestamp')), "
-            "GROUP_CONCAT(DISTINCT COALESCE(json_extract(payload_json, '$.Strategy'), 'algo1')) "
-            "FROM rounds GROUP BY session_id ORDER BY MIN(id)"
+            "SELECT session_id, COALESCE(json_extract(payload_json, '$.Strategy'), 'algo1') AS strategy, "
+            "COUNT(*), MIN(json_extract(payload_json, '$.Timestamp')), "
+            "MAX(json_extract(payload_json, '$.Timestamp')) "
+            "FROM rounds GROUP BY session_id, strategy ORDER BY MIN(id)"
         )
         with self._connect() as connection:
             rows = connection.execute(query).fetchall()
-        return [
-            {"session_id": str(session_id), "rounds": int(count),
-             "first_timestamp": first, "last_timestamp": last,
-             "algorithms": sorted(set(str(algorithms or "algo1").split(",")))}
-            for session_id, count, first, last, algorithms in rows
-        ]
+        sessions: Dict[str, Dict[str, Any]] = {}
+        for session_id, strategy, count, first, last in rows:
+            entry = sessions.setdefault(str(session_id), {
+                "session_id": str(session_id), "rounds": 0, "first_timestamp": None,
+                "last_timestamp": None, "algorithms": [], "algorithm_rounds": {},
+            })
+            entry["rounds"] += int(count)
+            if first is not None and (entry["first_timestamp"] is None or first < entry["first_timestamp"]):
+                entry["first_timestamp"] = first
+            if last is not None and (entry["last_timestamp"] is None or last > entry["last_timestamp"]):
+                entry["last_timestamp"] = last
+            entry["algorithms"].append(str(strategy))
+            entry["algorithm_rounds"][str(strategy)] = int(count)
+        return list(sessions.values())
 
     def export_bounded_csv(self) -> bool:
         """Write the newest ``csv_export_max_rows`` rows (oldest first) to

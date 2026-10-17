@@ -1,0 +1,14 @@
+{# The algorithm drop-down: choosing a name opens the Algorithm page with its Demo and Live tables. #}
+{% set picked = selected|default(none) %}
+<form method="get" action="{{ url_for('admin_algorithm_page') }}" class="algorithm-picker" data-auto-submit>
+  <label class="form-label" for="algorithm-picker-{{ picker_id|default('main') }}">Choose an algorithm</label>
+  <div class="algorithm-picker__row">
+    <select id="algorithm-picker-{{ picker_id|default('main') }}" name="algorithm" class="form-select" required>
+      <option value="" disabled {% if not picked %}selected{% endif %}>Choose an algorithm…</option>
+      {% for key, text in algorithm_choices %}
+      <option value="{{ key }}" {% if key == picked %}selected{% endif %}>{{ text }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-primary">Show Demo and Live options</button>
+  </div>
+</form>

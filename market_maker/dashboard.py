@@ -36,6 +36,7 @@ import json
 import math
 import os
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs
 from typing import Any, Dict, List, Optional, Sequence
@@ -877,8 +878,9 @@ def algorithms_in_rows(df: pd.DataFrame) -> List[str]:
 
 def available_sessions_detail(path: str) -> Optional[List[Dict[str, Any]]]:
     """Every session of a track, newest first, with the algorithms its
-    rounds ran: from the store's summary, else from the loaded frame.
-    None when the track has no data."""
+    rounds ran (in the order they first ran) and the rounds of each: from
+    the store's summary, else from the loaded frame. None when the track
+    has no data."""
     store_path = Path(path).with_suffix(".sqlite3")
     if store_path.exists():
         try:
@@ -886,14 +888,51 @@ def available_sessions_detail(path: str) -> Optional[List[Dict[str, Any]]]:
         except Exception:
             summary = None
         if summary:
-            return [{"session_id": row["session_id"], "algorithms": list(row.get("algorithms") or [DEFAULT_ALGORITHM])}
+            return [{"session_id": row["session_id"],
+                     "algorithms": list(row.get("algorithms") or [DEFAULT_ALGORITHM]),
+                     "algorithm_rounds": dict(row.get("algorithm_rounds") or {})}
                     for row in summary][::-1]
     df = load_track(path)
     if df is None:
         return None
-    keys = strategy_column(df)
-    return [{"session_id": session, "algorithms": sorted(set(keys[df["Session_id"] == session]))}
-            for session in session_ids(df)]
+    keys = strategy_column(df).reset_index(drop=True)
+    sessions = df["Session_id"].reset_index(drop=True)
+    if "Timestamp" in df.columns:          # oldest first, so the algorithms come in the order they ran
+        order = pd.to_datetime(df["Timestamp"], errors="coerce").reset_index(drop=True).sort_values(kind="stable").index
+        keys, sessions = keys.loc[order], sessions.loc[order]
+    detail = []
+    for session in session_ids(df):
+        ran = keys[sessions == session]
+        detail.append({"session_id": session, "algorithms": list(dict.fromkeys(ran)),
+                       "algorithm_rounds": {key: int(count) for key, count in ran.value_counts().items()}})
+    return detail
+
+
+def session_option_label(row: Dict[str, Any]) -> str:
+    """A session picker entry: the algorithms first, in the order they ran
+    (a narrow drop-down cuts the end of the text off, and the algorithm is
+    what the session is chosen for), then the session id; live session ids
+    are Unix start times, so their date follows."""
+    label = " → ".join(algorithm_label(key) for key in row["algorithms"]) + f" · {row['session_id']}"
+    try:
+        started = float(row["session_id"])
+    except (TypeError, ValueError):
+        return label
+    if started > 1e9:            # a Unix time (2001 onwards), not a small test id
+        label += f" (started {datetime.fromtimestamp(started, tz=timezone.utc):%Y-%m-%d %H:%M} UTC)"
+    return label
+
+
+def where_algorithm_ran(algorithm: str) -> List[Dict[str, Any]]:
+    """Every track and session whose rounds include `algorithm`, newest
+    session first, with its rounds of that algorithm."""
+    found = []
+    for track_key, track in TRACKS.items():
+        for row in available_sessions_detail(track["path"]) or []:
+            if algorithm in row["algorithms"]:
+                found.append({"track": track_key, "label": track["label"], "session_id": row["session_id"],
+                              "rounds": row.get("algorithm_rounds", {}).get(algorithm)})
+    return found
 
 
 def algorithm_comparison(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1880,8 +1919,7 @@ def refresh_session_options(track_key, _, current_value, search=None):
         return [], None
     ids = [row["session_id"] for row in detail]
     options = [{"label": "All sessions (compare)", "value": "all"}] + [
-        {"label": f"{row['session_id']} · " + " + ".join(algorithm_label(k) for k in row["algorithms"]),
-         "value": row["session_id"]} for row in detail
+        {"label": session_option_label(row), "value": row["session_id"]} for row in detail
     ]
     if current_value is None:
         wanted = _url_params(search).get("session")
@@ -2099,14 +2137,34 @@ def _no_data_message(label: str, path: str) -> html.Div:
 
 
 def _no_rounds_for_algorithm(algorithm, track_key: str) -> html.Div:
-    """The chosen algorithm has not run on this track (in this view) yet."""
+    """The chosen algorithm has not run in this view (track and session)
+    yet: say where it has run, and how to run it on this track."""
+    name = algorithm_label(algorithm)
+    by_track: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in where_algorithm_ran(algorithm):
+        by_track.setdefault(entry["label"], []).append(entry)
+    if by_track:
+        parts = []
+        for label, entries in by_track.items():
+            shown = ", ".join(
+                str(entry["session_id"]) + (f" ({entry['rounds']:,} rounds)" if entry.get("rounds") else "")
+                for entry in entries[:3])
+            more = f" and {len(entries) - 3} more" if len(entries) > 3 else ""
+            parts.append(f"{label}, session{'s' if len(entries) > 1 else ''} {shown}{more}")
+        ran = f"{name} has run on {'; '.join(parts)}: pick that track and session above to see its rounds. "
+    else:
+        ran = f"{name} has not run on any track yet. "
     pair = _pair_of(track_key).upper()
+    if TRACKS.get(track_key, {}).get("status") == "real":
+        target = f"the {pair} live worker (it is used when the worker is next started)"
+    else:
+        target = f"the {pair} demo (the worker switches at its next round)"
     return html.Div([
         _card(html.P([
-            html.Strong(f"No rounds of {algorithm_label(algorithm)} in this view yet. "),
-            f"To run it, open the admin panel → Config {pair} → Algorithm and choose {algorithm_label(algorithm)}: a Demo worker "
-            "switches at its next round, a live worker when it is started. Pick \"All algorithms\" on the "
-            "Algorithm tab to see every round again.",
+            html.Strong(f"No rounds of {name} in this view yet. "),
+            ran,
+            f"To run it on this track, open the admin panel → Algorithm, choose {name} and activate it for {target}. "
+            "Pick \"All algorithms\" on the Algorithm tab to see every round again.",
         ], style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "textAlign": "center", "padding": "2rem"})),
     ])
 
@@ -2403,10 +2461,9 @@ COMMON_SETTING_KEYS = ("commission_perc", "exp_ret_min", "order_size", "inv_min"
 def _algorithm_description(key: str, settings: Dict[str, Any], track_key: str) -> html.Div:
     info = algorithm_info(key)
     selected = settings.get("algorithm") == key
-    pair = _pair_of(track_key).upper()
     status = html.Span(
         "selected in this track's configuration" if selected
-        else f"not selected — admin panel → Config {pair} → Algorithm",
+        else "not selected — admin panel → Algorithm",
         style={"color": STATUS_GOOD if selected else STATUS_WARN, "fontWeight": 600, "fontSize": "0.85rem"})
     text_style = {"fontFamily": FONT_FAMILY, "color": TEXT_SECONDARY, "fontSize": "0.9rem", "margin": "0 0 0.35rem"}
     return _card(

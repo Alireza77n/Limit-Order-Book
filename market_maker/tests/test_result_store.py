@@ -154,6 +154,25 @@ def test_session_summary_names_the_algorithms_each_session_ran(tmp_path):
     assert summary == {"session-1": ["algo1"], "session-2": ["algo3"], "session-3": ["algo1", "algo3"]}
 
 
+def test_session_summary_lists_the_algorithms_in_the_order_they_ran(tmp_path):
+    """A session that switched from MM_algo2 back to MM_algo1v2 lists them in
+    that order (not sorted), with the rounds of each; the session's totals
+    and time span cover every algorithm."""
+    store = DemoResultStore(tmp_path / "btc.sqlite3", COLUMNS + ["Strategy"])
+    store.append_round({**row(1), "Strategy": "algo3"})
+    store.append_round({**row(2), "Strategy": "algo3"})
+    store.append_round({**row(3), "Strategy": "algo1"})
+    store.append_round({**row(4), "Session_id": "session-2", "Strategy": "algo1"})
+
+    first, second = store.session_summary()
+
+    assert (first["session_id"], first["algorithms"], first["algorithm_rounds"]) == (
+        "session-1", ["algo3", "algo1"], {"algo3": 2, "algo1": 1})
+    assert (first["rounds"], first["first_timestamp"], first["last_timestamp"]) == (
+        3, "2026-08-01 12:00:01", "2026-08-01 12:00:03")
+    assert (second["session_id"], second["rounds"]) == ("session-2", 1)
+
+
 def test_read_only_reader_sees_every_row_and_never_writes(tmp_path):
     """The dashboard and admin containers mount the results directory
     read-only; a reader opened there must read the writer's WAL store

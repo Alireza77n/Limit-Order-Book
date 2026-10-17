@@ -696,9 +696,9 @@ So, unlike MM_algo1v2, which sent no order at all in 30 hours with the same sett
 never reached `ev_min`), MM_algo2 places a real buy in the first round.
 
 **Check before starting it.** The live client sends the amount as Python text (`str(amount)` in
-`exchange/nobitex.py`), which for this size is `2.378e-05`: scientific notation. No live order has ever been
-sent with it (MM_algo1v2 placed none), so whether Nobitex accepts that format is untested. The preflight
-notebook `market_maker/test_nobitex_api.ipynb` is the place to check it before the first real start.
+`exchange/nobitex.py`), which for this size is `2.378e-05`: scientific notation. The test suite does not
+check that format against Nobitex; the preflight notebook `market_maker/test_nobitex_api.ipynb` is the place to
+check that Nobitex accepts it.
 
 **If none of the buys fills:** each new buy is placed at a price more than 5 ticks from the others. The
 resting buys count in its size, and the 25 % guard caps them:
@@ -745,7 +745,7 @@ sell of 0.133 USDT in the first round.
 All MM_algo2 settings are fields of both trading profiles in `config.py`. They are editable in the admin
 panel on *Config BTC/USDT* (demo: applied at the next round, except `commission_perc`, `cash_initial` and
 `demo_inv_initial`, which wait for the next demo session) and *Live Config BTC/USDT* (live: read when the
-worker is started).
+worker is started). The algorithm itself is easiest to switch on the admin **Algorithm** page (section 16).
 
 | Setting | Admin label | Type, range | Default | Meaning |
 |---|---|---|---:|---|
@@ -769,15 +769,16 @@ The other MM_algo1v2 settings (`grid_*`, `one_sided_*`, `ev_min`, `adverse_selec
 
 ## 16. Choosing MM_algo2 and reading its results
 
-* **Admin panel** (`https://37.32.31.162/admin/`): the first field on *Config BTC* / *Config USDT* and *Live
-  Config BTC* / *Live Config USDT* is **Algorithm**, a drop-down with "MM_algo1v2 — …" and "MM_algo2 — …".
-  * **Demo:** *Apply Configuration*, and the worker switches at its next round. It keeps the same session,
-    ledger and inventory, and the new strategy starts with no memory. *Workers → New Session* starts a clean
-    session instead, which builds a fresh ledger from `cash_initial` and `demo_inv_initial`.
-  * **Live:** *Save live configuration*, and the value is used when the worker is next started: the forward
-    agent starts `run.py --algorithm <saved value>`. A running live worker keeps the algorithm it started
-    with.
-  * The *Live Forward Test* page shows the algorithm in force for each pair, demo and live.
+* **Admin panel** (`https://37.32.31.162/admin/`): open **Algorithm** and choose "MM_algo2 — …" in the
+  drop-down. Two tables follow, each with its active session ID.
+  * **Demo:** *Activate* on a pair, and the worker switches at its next round. It keeps the same session,
+    ledger and inventory, and the new strategy starts with no memory, so on the dashboard that session lists
+    both algorithms. *Start a new demo session* (same page, or *Workers → New Session*) starts a clean session
+    instead, which builds a fresh ledger from `cash_initial` and `demo_inv_initial`.
+  * **Live:** *Activate* saves the value in the pair's live configuration, and it is used when the worker is
+    next started: the forward agent starts `run.py --algorithm <saved value>`. Nothing is started there; a
+    running live worker keeps the algorithm it started with.
+  * The same setting is the first field (**Algorithm**) of *Config BTC/USDT* and *Live Config BTC/USDT*.
 * **Command line:** `python run.py --profile btc --mode demo --algorithm algo3` overrides the setting.
 * **Results dashboard** (`http://37.32.31.162/`): the first tab, **Algorithm**, lists **MM_algo1v2**,
   **MM_algo2** and **All algorithms — side by side**.
@@ -787,8 +788,9 @@ The other MM_algo1v2 settings (`grid_*`, `one_sided_*`, `ev_min`, `adverse_selec
   * The Quote decision tab draws an MM_algo2 round as its book levels, a price ladder and the steps of
     sections 4–5. The Fill model tab says that MM_algo2 makes no fill forecast.
   * *All algorithms* shows a comparison table, bars and the running net PnL of each algorithm.
-  * Deep link: `?tab=algorithm&algo=algo3`. Sessions in the session list are labelled with the algorithms
-    they ran, for example `… · MM_algo1v2 + MM_algo2` for a session that switched.
+  * Deep link: `?tab=algorithm&algo=algo3`. Each session in the session list starts with the algorithms it
+    ran, in the order they ran, for example `MM_algo1v2 → MM_algo2 · demo-…` for a session that switched.
+  * Where MM_algo2 has no rounds in the chosen view, the page names the tracks and sessions where it has run.
 
 ---
 
@@ -824,5 +826,5 @@ days; then every measurable condition must pass. The tab computes them on the ch
 | Spoofing (large volume placed and pulled) | Limited by the clip $I_{\max}$ and by $\rho < 1$; harmless while $\beta = 0$, because only level 0 moves the microprice. |
 | A one-sided book over a long period | A lasting imbalance would make one side fill repeatedly once $\beta > 0$; the skew, the sizing and the band bound the position. |
 | No order book (for example HTTP 403) | No round is recorded; resting orders are cancelled by the 10-minute rule. |
-| Live BTC amounts are sent as `str(amount)`, e.g. `2.378e-05` | Untested against Nobitex; MM_algo2 would send such orders in its first live BTC round (section 13). |
+| Live BTC amounts are sent as `str(amount)`, e.g. `2.378e-05` | Not checked against Nobitex by the test suite; MM_algo2 sends such orders from its first live BTC round (section 13). |
 | The diagnostics file keeps the name `…_algo1_diagnostics.jsonl` | Historical name, shared by both algorithms; each document carries `algorithm`. |

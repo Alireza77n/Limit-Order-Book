@@ -144,8 +144,31 @@ def test_deep_link_selects_the_algorithm():
 def test_sessions_are_labelled_with_their_algorithm(mixed_track):
     options, value = dashboard.refresh_session_options("usdt_demo", 0, None)
     labels = {o["value"]: o["label"] for o in options}
-    assert labels["s1"] == "s1 · MM_algo1v2" and labels["s2"] == "s2 · MM_algo2"
+    assert labels["s1"] == "MM_algo1v2 · s1" and labels["s2"] == "MM_algo2 · s2"
     assert value == "all"
+
+
+def test_a_session_label_starts_with_its_algorithms_in_the_order_they_ran():
+    """A narrow session drop-down cuts the end of the label off, so the
+    algorithm names come first; live session ids are Unix start times."""
+    switched = {"session_id": "demo-20261015T131629Z-2f38f0a407fa", "algorithms": ["algo1", "algo3"]}
+    assert dashboard.session_option_label(switched) == "MM_algo1v2 → MM_algo2 · demo-20261015T131629Z-2f38f0a407fa"
+    live = {"session_id": "1792236787.294069", "algorithms": ["algo3"]}
+    assert dashboard.session_option_label(live) == "MM_algo2 · 1792236787.294069 (started 2026-10-17 11:33 UTC)"
+    assert dashboard.session_option_label({"session_id": 2, "algorithms": ["algo1"]}) == "MM_algo1v2 · 2"
+
+
+def test_csv_sessions_list_their_algorithms_in_the_order_they_ran(tmp_path):
+    frame = pd.DataFrame([
+        {"Session_id": "s1", "Strategy": "algo3", "Timestamp": "2026-10-17 11:00:00"},
+        {"Session_id": "s1", "Strategy": "algo1", "Timestamp": "2026-10-17 10:00:00"},
+        {"Session_id": "s1", "Strategy": "algo3", "Timestamp": "2026-10-17 12:00:00"},
+    ])
+    path = tmp_path / "usdt_track.csv"
+    frame.to_csv(path, index=False)
+    [detail] = dashboard.available_sessions_detail(str(path))
+    assert detail["algorithms"] == ["algo1", "algo3"]
+    assert detail["algorithm_rounds"] == {"algo1": 1, "algo3": 2}
 
 
 # ---------- the Algorithm tab ----------
@@ -180,7 +203,7 @@ def test_an_algorithm_that_has_not_run_yet_says_how_to_start_it(tmp_path, monkey
     monkeypatch.setattr(dashboard, "DEMO_STATE_DIR", str(tmp_path / "state"))
     text = _text_of(dashboard.render_tab_content("algorithm", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
     assert "No rounds of MM_algo2 in this view yet" in text
-    assert "Config USDT → Algorithm and choose MM_algo2:" in text
+    assert "admin panel → Algorithm, choose MM_algo2 and activate it for the USDT demo" in text
     assert "No rounds of MM_algo2" in _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
 
 
@@ -248,3 +271,31 @@ def test_the_picker_and_the_headings_show_the_exact_branch_names(mixed_track):
     heading = next(c for c in _components(rendered)
                    if getattr(c, "children", None) == "MM_algo1v2" and type(c).__name__ == "Span")
     assert "textTransform" not in (heading.style or {})
+
+
+def test_the_empty_state_says_where_the_algorithm_has_run(tmp_path, monkeypatch):
+    """The user's question: "why does MM_algo2 have no session here?" -- the
+    answer is on the page: the tracks and sessions where it did run."""
+    usdt = tmp_path / "usdt_track_demo.csv"
+    _frame().to_csv(usdt, index=False)                     # Algorithm 1 rounds only
+    btc = tmp_path / "btc_track_demo.csv"
+    pd.DataFrame([
+        {"Session_id": "demo-1", "Strategy": "algo1", "Timestamp": "2026-10-17 10:00:00"},
+        {"Session_id": "demo-1", "Strategy": "algo3", "Timestamp": "2026-10-17 11:00:00"},
+        {"Session_id": "demo-1", "Strategy": "algo3", "Timestamp": "2026-10-17 11:01:00"},
+    ]).to_csv(btc, index=False)
+    monkeypatch.setattr(dashboard, "TRACKS", {
+        "btc_demo": dict(dashboard.TRACKS["btc_demo"], path=str(btc)),
+        "usdt_demo": dict(dashboard.TRACKS["usdt_demo"], path=str(usdt)),
+    })
+    monkeypatch.setattr(dashboard, "DEMO_STATE_DIR", str(tmp_path / "state"))
+
+    assert dashboard.where_algorithm_ran("algo3") == [
+        {"track": "btc_demo", "label": "BTC — Demo (paper trading)", "session_id": "demo-1", "rounds": 2}]
+    text = _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
+    assert ("MM_algo2 has run on BTC — Demo (paper trading), session demo-1 (2 rounds): "
+            "pick that track and session above to see its rounds.") in text
+    monkeypatch.setattr(dashboard, "TRACKS", {"usdt_demo": dict(dashboard.TRACKS["usdt_demo"], path=str(usdt))})
+    text = _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
+    assert "MM_algo2 has not run on any track yet." in text
+

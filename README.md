@@ -30,7 +30,7 @@ Its code is `market_maker/strategy/algo3.py`.
 |---|---|
 | Status | Implemented and tested. Running on the **BTC demo** since 17 October 2026, 11:15 UTC. The saved **live BTC** settings select it; the live BTC worker is stopped. |
 | Code | `market_maker/strategy/algo3.py` (`Algo3Strategy`), shared arithmetic in `strategy/common.py` |
-| Selected by | the `algorithm` setting = `algo3`, per pair, in the admin panel (first field of each config page), or `run.py --algorithm algo3` |
+| Selected by | the `algorithm` setting = `algo3`, per pair: admin panel → **Algorithm** (or the first field of each config page), or `run.py --algorithm algo3` |
 | Full specification | [`docs/algorithms/MM_algo2.md`](docs/algorithms/MM_algo2.md): every formula with its proof, three worked examples, behaviour on real books, the calibration of $\beta$, the live settings, the test map |
 | The whole system explained | [`docs/guide/MARKET_MAKER_EXPLAINED.md`](docs/guide/MARKET_MAKER_EXPLAINED.md) (also a standalone [HTML page](docs/guide/MARKET_MAKER_EXPLAINED.html)) |
 
@@ -484,17 +484,23 @@ returns both prices; at the band edges it is the sizing that leaves one side out
 **Names.** The dashboard and the admin panel name each algorithm after the git branch it was built on:
 **MM_algo2** (this branch's algorithm; key `algo3`) and **MM_algo1v2** (Algorithm 1 version 2; key `algo1`).
 
-**In the admin panel** (`https://37.32.31.162/admin/`). The first field on *Config BTC* / *Config USDT* (demo)
-and *Live Config BTC* / *Live Config USDT* (live) is **Algorithm**, a drop-down offering "MM_algo2 — …" and
-"MM_algo1v2 — …".
+**In the admin panel** (`https://37.32.31.162/admin/`). Open **Algorithm** (second item of the menu; the
+same drop-down is on *Overview* and *Live Forward Test*) and choose "MM_algo2 — …" or "MM_algo1v2 — …". Two
+tables follow, each with its active session ID next to it:
 
-* **Demo:** after *Apply Configuration*, the worker switches at its next round. It keeps the same session,
-  ledger and inventory, and the new strategy starts with no memory. *Workers → New Session* starts a clean
-  session instead.
-* **Live:** the value is used when the worker is next started; a running live worker keeps the algorithm it
-  started with.
-* The *Live Forward Test* page shows the algorithm in force for each pair.
-* MM_algo2's own settings (`algo3_*`) are on the same pages.
+* **1. Demo (paper trading):** per pair, the worker, the algorithm it runs now and **Activate**. The worker
+  switches at its next round and keeps the same session, ledger and inventory; the new strategy starts with
+  no memory. Both pairs share one demo session, so on the dashboard a session that switched lists both
+  algorithms (`MM_algo1v2 → MM_algo2 · <session id>`). **Start a new demo session** (same page) gives the
+  algorithm a session of its own: running demo workers restart in it, and each pair's paper account starts
+  again from its starting balances.
+* **2. Live forward test (real money):** per pair, the worker, the algorithm it runs now, the one saved for
+  its next start, and **Activate**, which saves the algorithm in the pair's live configuration. Nothing is
+  started or stopped there: a stopped worker uses it when it is started on *Live Forward Test* (typed
+  confirmation), and a running worker keeps the algorithm it started with until it is stopped and started
+  again. Every start is a new live session.
+* The same `algorithm` setting is the first field of *Config BTC/USDT* and *Live Config BTC/USDT*, next to
+  MM_algo2's own settings (`algo3_*`).
 
 **On the results dashboard** (`http://37.32.31.162/`). The first tab is **Algorithm**: **MM_algo1v2**,
 **MM_algo2**, or **All algorithms — side by side**.
@@ -505,8 +511,11 @@ and *Live Config BTC* / *Live Config USDT* (live) is **Algorithm**, a drop-down 
   rounds only. The Quote decision tab draws an MM_algo2 round as its book levels, a price ladder and a
   step-by-step trace.
 * *All algorithms* shows a comparison table, bars and the running net PnL of each algorithm.
-* The choice is remembered per browser tab; deep link `?tab=algorithm&algo=algo3`. Sessions in the session
-  list are labelled with the algorithm(s) they ran.
+* The choice is remembered per browser tab; deep link `?tab=algorithm&algo=algo3`. Each session in the
+  session list starts with the algorithm(s) it ran, in the order they ran (`MM_algo1v2 → MM_algo2 · demo-…`
+  for a demo session that switched); a live session id is its start time, shown with the date.
+* When the chosen algorithm has no rounds in the view, the page names the tracks and sessions where it has
+  run.
 
 **Command line.** `python run.py --profile btc --mode demo --algorithm algo3` overrides the setting.
 
@@ -604,7 +613,7 @@ market_maker/
   run.py                  Entry point: --algorithm / --exchange / --profile /
                            --mode / --continuous; installs shutdown signal handlers
   dashboard.py             Dash results dashboard (Algorithm tab first), reads SQLite (falls back to CSV)
-  admin_app.py             Authenticated admin panel (config pages, workers, live forward test, ...)
+  admin_app.py             Authenticated admin panel (algorithm page, config pages, workers, live forward test, ...)
   exchange/
     base.py                 ExchangeClient interface
     nobitex.py                NobitexExchangeClient (Nobitex HTTP calls)
@@ -688,8 +697,8 @@ The engine and the project:
 * **Any API error other than a failed order-book read ends a live worker** (after it cancels its own orders).
   This stopped the BTC live worker on 16 October 2026.
 * **Live order amounts are sent as `str(amount)`**, which for small BTC sizes is scientific notation
-  (`2.378e-05`). It has never been tested against Nobitex, and MM_algo2 would send such a buy in its first live
-  BTC round ([`MM_algo2.md` §13](docs/algorithms/MM_algo2.md#13-what-mm_algo2-would-send-with-the-live-settings)).
+  (`2.378e-05`). The test suite does not check it against Nobitex, and MM_algo2 sends such a buy from its first
+  live BTC round ([`MM_algo2.md` §13](docs/algorithms/MM_algo2.md#13-what-mm_algo2-would-send-with-the-live-settings)).
 * **`config.py` mixes strategy and exchange config** in one `MMConfig` dataclass. Splitting it (e.g. `StrategyConfig` + `ExchangeConfig`) was deferred; do it before adding a second exchange.
 * **Persistence (`save_to_db`, the MySQL connection in `__init__`) is not behind an interface** — `SimpleMarketMaker` still requires a live MySQL server to be constructed in real mode.
 * **`portfolio.py`'s `Nobitex_portfolio` is not behind `ExchangeClient`** — `run.py`'s `--exchange` flag today only changes order execution/quotes, not portfolio valuation.

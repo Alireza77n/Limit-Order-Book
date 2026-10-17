@@ -13,7 +13,7 @@
     <div class="confirm-dialog__content">
       <div class="confirm-dialog__header">
         <h3 id="confirm-title" class="confirm-dialog__title">Confirm Action</h3>
-        <button type="button" class="confirm-dialog__close" aria-label="Close">&times;</button>
+        <button type="button" class="confirm-dialog__close" id="confirm-close" aria-label="Close">&times;</button>
       </div>
       <div class="confirm-dialog__body">
         <div class="confirm-dialog__warning" id="confirm-warning"></div>
@@ -38,9 +38,12 @@
     const fieldsEl = confirmDialog.querySelector('#confirm-fields');
 
     messageEl.textContent = message;
+    // data-confirm-scope="live" marks a form that changes the live (real-money) configuration.
     warningEl.textContent = warningType === 'danger'
       ? '⚠️ DESTRUCTIVE ACTION: This cannot be undone without a backup restore.'
-      : '⚠️ This action will modify the demo state.';
+      : (form.getAttribute('data-confirm-scope') === 'live'
+        ? '⚠️ This action will modify the live (real-money) configuration.'
+        : '⚠️ This action will modify the demo state.');
     warningEl.className = 'confirm-dialog__warning' + (warningType === 'danger' ? ' danger' : '');
 
     // Only a VISIBLE confirm field means "the operator must type this exactly"
@@ -152,6 +155,16 @@
     if (e.persisted) {
       hideLoading();
     }
+  });
+
+  // Algorithm drop-down: choosing a name opens its Demo and Live options
+  // (the form's button does the same without JavaScript).
+  document.querySelectorAll('form[data-auto-submit] select').forEach(function(select) {
+    select.addEventListener('change', function() {
+      if (select.value) {
+        select.form.submit();
+      }
+    });
   });
 
   // Initialize on DOM ready

@@ -59,7 +59,7 @@ from forward_config import (
 from config import TRADING_PROFILES, demo_csv_path
 from dashboard import activity_records, filter_session, load_track
 from result_store import DemoResultStore
-from strategy.catalog import ALGORITHMS, DEFAULT_ALGORITHM
+from strategy.catalog import ALGORITHMS, DEFAULT_ALGORITHM, SELECTABLE_ALGORITHMS
 from validation.validation_engine import create_validation_engine
 from validation.reports import generate_validation_report, format_metric_card
 
@@ -717,12 +717,11 @@ def _algorithms_in_force(app: Flask) -> Dict[str, Dict[str, Optional[str]]]:
     return {"demo": demo, "live": live}
 
 
-def _live_running_algorithm(app: Flask, pair: str) -> Optional[str]:
-    """The algorithm a running live worker is using, read from the Strategy
-    cell of the newest row of its round history (<pair>_track.csv): the
-    process itself runs under another user and is not visible from here.
-    Rows written before the Strategy column existed mean Algorithm 1; None
-    when the history cannot be read."""
+def _live_newest_row(app: Flask, pair: str) -> Optional[Dict[str, str]]:
+    """The newest row of a pair's live round history (<pair>_track.csv), as
+    column -> text: the worker process runs under another user and is not
+    visible from here, so its rows are how this page knows what it runs.
+    None when the history cannot be read or holds no row."""
     path = Path(app.config["FORWARD_RESULTS_DIR"]) / f"{pair}_track.csv"
     try:
         data = path.read_bytes()        # read-only: admin_app never opens files itself
@@ -738,8 +737,52 @@ def _live_running_algorithm(app: Flask, pair: str) -> Optional[str]:
         values = next(csv.reader([last]))
     except (StopIteration, csv.Error):
         return None
-    row = dict(zip(columns, values))
+    return dict(zip(columns, values))
+
+
+def _row_algorithm(row: Dict[str, str]) -> str:
+    """Rows written before the Strategy column existed mean Algorithm 1."""
     return (row.get("Strategy") or "").strip() or DEFAULT_ALGORITHM
+
+
+def _live_running_algorithm(app: Flask, pair: str) -> Optional[str]:
+    """The algorithm a running live worker is using: the Strategy cell of the
+    newest row of its round history. None when the history cannot be read."""
+    row = _live_newest_row(app, pair)
+    return _row_algorithm(row) if row is not None else None
+
+
+def _algorithm_choices() -> list:
+    """(key, display text) of every algorithm that can be chosen, in catalog order."""
+    return [(key, f"{ALGORITHMS[key].label} — {ALGORITHMS[key].title}") for key in SELECTABLE_ALGORITHMS]
+
+
+def _algorithm_state(app: Flask) -> dict:
+    """Where each algorithm runs, for the Algorithm page: per pair, the Demo
+    worker (its saved configuration names the algorithm it runs from its
+    next round; every Demo pair shares one session) and the live worker
+    (the algorithm of its newest round while it runs, the algorithm saved
+    for its next start, and the session of its newest round)."""
+    in_force = _algorithms_in_force(app)
+    demo_session = _session_id(app)
+    demo, live = [], []
+    for pair in PAIRS:
+        symbol = TRADING_PROFILES[pair]["pair"]
+        demo.append({
+            "pair": pair, "symbol": symbol, "running": _worker_running(app, pair),
+            "algorithm": in_force["demo"][pair], "session_id": demo_session,
+        })
+        running = _forward_worker_running(app, pair)
+        newest = _live_newest_row(app, pair) if running else None
+        session_id = ((newest.get("Session_id") or "").strip() or None) if newest else None
+        live.append({
+            "pair": pair, "symbol": symbol, "running": running,
+            "running_algorithm": _row_algorithm(newest) if newest else None,
+            "next_algorithm": in_force["live"][pair],
+            "session_id": session_id,
+            "session_started_at": _live_session_started_at(session_id) if session_id else None,
+        })
+    return {"demo_session_id": demo_session, "demo": demo, "live": live}
 
 
 def _form_value(definition, values):
@@ -936,6 +979,48 @@ def _sessions_html_response(app: Flask):
     )
 
 
+def _algorithm_html_response(app: Flask, selected: Optional[str], status: int = 200):
+    return render_template(
+        "admin/algorithm.html", selected=selected, algorithm_choices=_algorithm_choices(),
+        algorithm_labels=_algorithm_labels(), state=_algorithm_state(app),
+        demo_managed=not app.config["FORWARD_ONLY_ADMIN"],
+        trading_enabled=app.config["FORWARD_TRADING_ENABLED"],
+        csrf_token=get_csrf_token(), session_id=_session_id(app),
+    ), status
+
+
+def _activate_algorithm(app: Flask, algorithm: str, target: str, pair: str) -> dict:
+    """Save `algorithm` in one configuration through the same path as the
+    config pages: the Demo overlay of `pair` (the worker switches at its
+    next round) or its live configuration (used when the live worker is
+    next started; a running one keeps its algorithm). Every other setting
+    is resubmitted unchanged. Raises what the config pages' saves raise."""
+    if target == "demo":
+        desired = load_desired_config(pair, app.config["STATE_DIR"], TRADING_PROFILES)
+        desired["algorithm"] = algorithm
+        validated = validate_overrides(desired, pair=pair, profiles=TRADING_PROFILES)
+        return enqueue_and_wait(app, "apply_config", pair, payload={"overrides": validated})
+    desired = forward_desired_config(pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"])
+    desired["algorithm"] = algorithm
+    validated = validate_forward_config(desired, pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"])
+    return enqueue_forward(app, "apply_forward_config", pair, payload={"overrides": validated})
+
+
+def _activation_message(app: Flask, algorithm: str, target: str, pair: str) -> str:
+    label, symbol = ALGORITHMS[algorithm].label, TRADING_PROFILES[pair]["pair"]
+    if target == "demo":
+        session_id = _session_id(app)
+        where = f", inside session {session_id}" if session_id else ""
+        when = "switches to it at its next round" if _worker_running(app, pair) else "runs it when it is started"
+        return f"{label} activated on the {symbol} demo: the worker {when}{where}."
+    message = f"{label} saved for the {symbol} live worker: it runs it from its next start."
+    running = _live_running_algorithm(app, pair) if _forward_worker_running(app, pair) else None
+    if running and running != algorithm:
+        message += (f" The running worker keeps {_algorithm_labels().get(running, running)} "
+                    "until it is stopped and started again on Live Forward Test.")
+    return message
+
+
 def _register_routes(app: Flask) -> None:
     @app.route("/admin/health")
     def admin_health():
@@ -959,8 +1044,65 @@ def _register_routes(app: Flask) -> None:
         }
         if _wants_html():
             return render_template("admin/overview.html", csrf_token=get_csrf_token(),
-                                   algorithm_labels=_algorithm_labels(), **status)
+                                   algorithm_labels=_algorithm_labels(),
+                                   algorithm_choices=_algorithm_choices(), **status)
         return jsonify(status)
+
+    @app.route("/admin/algorithm")
+    @login_required
+    def admin_algorithm_page():
+        """Choose an algorithm, then activate it per pair on the Demo stack
+        and for the live forward test, each table with its active session."""
+        selected = request.args.get("algorithm") or None
+        if selected is not None and selected not in SELECTABLE_ALGORITHMS:
+            if _wants_html():
+                return _error_page(400, f"Unknown algorithm: {selected}")
+            return (f"unknown algorithm: {selected}", 400)
+        if _wants_html():
+            return _algorithm_html_response(app, selected)
+        return jsonify(dict(_algorithm_state(app), algorithm=selected))
+
+    @app.route("/admin/algorithm/activate", methods=["POST"])
+    @login_required
+    @csrf_protected
+    def admin_algorithm_activate():
+        algorithm = request.form.get("algorithm")
+        target = request.form.get("target")
+        pair = request.form.get("pair")
+        problem = None
+        if algorithm not in SELECTABLE_ALGORITHMS:
+            problem = "Unknown algorithm."
+        elif target not in ("demo", "live"):
+            problem = "Invalid target (expected demo or live)."
+        elif pair not in PAIRS:
+            problem = "Invalid pair (expected btc or usdt)."
+        elif target == "demo" and app.config["FORWARD_ONLY_ADMIN"]:
+            problem = "This panel does not manage the Demo stack."
+        if problem:
+            if _wants_html():
+                return _error_page(400, problem)
+            return (problem, 400)
+        try:
+            result = _activate_algorithm(app, algorithm, target, pair)
+        except (OperationInProgress, ResultTimeout) as exc:
+            status, message = _control_error(exc)
+            result = None
+        except (OverlayLoadError, OverlayValidationError, KeyError, OSError) as exc:
+            config_page = "Config" if target == "demo" else "Live Config"
+            status, message = 400, f"{config_page} {pair.upper()} cannot be saved: {exc}"
+            result = None
+        if result is not None and not result.get("ok"):
+            status, message = 502, _command_failure_message(result)
+        elif result is not None:
+            message = _activation_message(app, algorithm, target, pair)
+            if _wants_html():
+                flash(message, "success")
+                return redirect(url_for("admin_algorithm_page", algorithm=algorithm))
+            return jsonify(dict(result, message=message))
+        if _wants_html():
+            flash(message, "error")
+            return _algorithm_html_response(app, algorithm, status)
+        return (message, status)
 
     @app.route("/admin/config/<pair>", methods=["GET", "POST"])
     @login_required
@@ -1042,6 +1184,7 @@ def _register_routes(app: Flask) -> None:
             trading_enabled=app.config["FORWARD_TRADING_ENABLED"],
             csrf_token=get_csrf_token(), session_id=None,
             algorithms=_algorithms_in_force(app), algorithm_labels=_algorithm_labels(),
+            algorithm_choices=_algorithm_choices(),
             live_running={pair: _live_running_algorithm(app, pair) if workers[pair] else None for pair in PAIRS},
         )
 
@@ -1145,19 +1288,29 @@ def _register_routes(app: Flask) -> None:
     @login_required
     @csrf_protected
     def admin_new_session():
+        # The Algorithm page offers a new session too and wants the operator back on it.
+        back_to_algorithm = request.form.get("return_to") == "algorithm"
+        chosen = request.form.get("algorithm")
+        chosen = chosen if chosen in SELECTABLE_ALGORITHMS else None
         try:
             result = enqueue_and_wait(app, "new_session")
         except (OperationInProgress, ResultTimeout) as exc:
             status, message = _control_error(exc)
             if _wants_html():
                 flash(message, "warning")
+                if back_to_algorithm:
+                    return _algorithm_html_response(app, chosen, status)
                 return _workers_html_response(app, None), status
             return (message, status)
         if _wants_html():
             if not result.get("ok"):
                 flash(_command_failure_message(result), "error")
+                if back_to_algorithm:
+                    return _algorithm_html_response(app, chosen, 502)
                 return _workers_html_response(app, result), 502
             flash("New demo session created.", "success")
+            if back_to_algorithm:
+                return redirect(url_for("admin_algorithm_page", **({"algorithm": chosen} if chosen else {})))
             return _workers_html_response(app, result)
         return jsonify(result)
 

@@ -47,8 +47,9 @@ The code holds three strategy classes:
 | Avellaneda–Stoikov | `strategy/algo2.py`, key `algo2` | Placeholder only, not implemented. Unrelated to the name MM_algo2. |
 
 Which one a worker runs is the `algorithm` setting, chosen per pair on the admin
-panel's config pages: a demo worker switches at its next round, a live worker
-when it is started. The dashboard's **Algorithm** tab shows one algorithm (and
+panel's **Algorithm** page (a drop-down, then a Demo table and a Live table with
+their active sessions; also the first field of the config pages): a demo worker
+switches at its next round, a live worker when it is started. The dashboard's **Algorithm** tab shows one algorithm (and
 filters every other tab to its rounds) or all of them side by side.
 
 There are two run modes:
@@ -81,8 +82,8 @@ flowchart TD
 Step by step:
 
 1. You open the admin panel in a browser. nginx forwards the request.
-2. On **Live Config** you set the parameters for a pair, including **Algorithm** (MM_algo2 or MM_algo1v2), and
-   save. The values are written to `forward_config_<pair>.json`.
+2. On **Live Config** you set the parameters for a pair, including **Algorithm** (MM_algo2 or MM_algo1v2; the
+   **Algorithm** page's *Activate* saves the same value), and save. The values are written to `forward_config_<pair>.json`.
 3. On **Live Forward Test** you type the confirmation phrase, for example
    `START BTCIRT LIVE`.
 4. The admin panel does not trade and does not have the API keys. It only
@@ -91,8 +92,8 @@ Step by step:
    the command. It accepts only a fixed list of actions (`start_forward_worker`,
    `stop_forward_worker`, `apply_forward_config`, `read_wallet_balances`, `delete_forward_session`) and
    only the pairs `btc` and `usdt`.
-6. To start a worker it runs this fixed command, with the algorithm saved on the
-   pair's Live Config page (`algo3` for MM_algo2, `algo1` for MM_algo1v2, checked against the catalog):
+6. To start a worker it runs this fixed command, with the algorithm saved in the
+   pair's live configuration (`algo3` for MM_algo2, `algo1` for MM_algo1v2, checked against the catalog):
    `python run.py --profile <pair> --algorithm <algo3|algo1> --exchange nobitex --mode real --continuous`
 7. The worker reads the real wallet balances from Nobitex, uses them as its
    starting inventory and cash, and enters the trading loop
@@ -170,7 +171,7 @@ real trading or to MySQL: `safety.py` refuses to start.
 
 | File | What it does |
 |---|---|
-| `admin_app.py` | Flask admin panel: login, config pages (the first field is Algorithm), worker start and stop, live forward control, orders, balances, backups, sessions, logs, audit. |
+| `admin_app.py` | Flask admin panel: login, the Algorithm page (choose an algorithm, activate it per pair on the demo or for live), config pages (the first field is Algorithm), worker start and stop, live forward control, orders, balances, backups, sessions, logs, audit. |
 | `templates/admin/*.html` | The 15 admin pages. |
 | `static/admin/` | Admin CSS and JavaScript. |
 | `control_queue.py` | File-based command queue between the admin panel (writes commands) and the agents (execute them). Includes the audit log. |
@@ -531,8 +532,8 @@ The engine:
 10. **`portfolio.py` is unused by the engine.** `Nobitex_portfolio` is built
     and stored but never called.
 11. **The live order amount is sent as `str(amount)`**, which for small BTC sizes is scientific notation
-    (`2.378e-05`). No live order has been sent with it yet, and MM_algo2 would send one in its first live BTC
-    round; check with the preflight notebook that Nobitex accepts it.
+    (`2.378e-05`). The test suite does not check it against Nobitex, and MM_algo2 sends one from its first live
+    BTC round; check with the preflight notebook that Nobitex accepts it.
 
 Four findings of the 3 October review do not apply to MM_algo2's path. They were Algorithm 1 version 1
 crashes and corner cases:
@@ -555,7 +556,7 @@ crashes and corner cases:
 | `algorithm` setting and the six `algo3_*` settings, editable for demo and live | `config.py`, `demo_config.py`, `forward_config.py` |
 | Demo worker switches algorithm at a round boundary; live worker starts with the saved one | `engine.py`, `deploy/forward_control_agent.py`, `run.py` |
 | Round rows carry `Strategy`, `Imbalance`, `Microprice`; session summaries name the algorithms | `engine.py`, `result_store.py` |
-| Dashboard Algorithm tab (one algorithm, or all side by side); admin Algorithm field and "algorithm in force" | `dashboard.py`, `admin_app.py`, `templates/admin/` |
+| Dashboard Algorithm tab (one algorithm, or all side by side); admin Algorithm page and field; session labels | `dashboard.py`, `admin_app.py`, `templates/admin/` |
 | Tests for the rule, the catalog, the switch and the dashboard | `tests/test_strategy_algo3.py`, `test_strategy_catalog.py`, `test_dashboard_algorithms.py` |
 | Documentation rewritten around MM_algo2, with the data and scripts behind every number | `README.md`, this guide, `docs/` |
 

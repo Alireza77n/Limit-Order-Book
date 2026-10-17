@@ -10,25 +10,10 @@
     {% if not trading_enabled %}
       <div class="flash flash-warning">Live trading is disabled. Set FORWARD_TRADING_ENABLED=1 for the dedicated forward-test service to enable the Start controls.</div>
     {% endif %}
-    <section class="card mb-lg" aria-label="Algorithm in force">
-      <div class="card-header"><h3>Algorithm in force</h3></div>
+    <section class="card mb-lg mt-md" aria-label="Algorithm">
+      <div class="card-header"><h3>Algorithm</h3></div>
       <div class="card-body">
-        <p class="text-muted">Chosen with the <code>Algorithm</code> field on each pair's config page. A Demo worker switches at its next round; a live worker uses the value saved on its Live Config page when it is started, so a running live worker keeps the algorithm it started with.</p>
-        <div class="grid grid-2">
-          {% for pair in ['btc', 'usdt'] %}
-          <div>
-            <strong>{{ pair.upper() }}/IRT</strong>
-            <div>Demo:
-              <span class="status-badge algo-name" data-demo-algorithm="{{ pair }}:{{ algorithms.demo[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.demo[pair], algorithms.demo[pair] or "unavailable") }}</span>
-              <a href="{{ url_for('admin_config', pair=pair) }}" class="btn btn-ghost btn-sm">change</a>
-            </div>
-            <div>Live, next start:
-              <span class="status-badge algo-name" data-live-algorithm="{{ pair }}:{{ algorithms.live[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.live[pair], algorithms.live[pair] or "unavailable") }}</span>
-              <a href="{{ url_for('admin_forward_config', pair=pair) }}" class="btn btn-ghost btn-sm">change</a>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
+        {% with picker_id = 'forward' %}{% include "admin/_algorithm_picker.html" %}{% endwith %}
       </div>
     </section>
     <div class="grid grid-2">
@@ -45,6 +30,11 @@
             {% if workers[pair] %}
               <span class="status-badge algo-name" data-running-algorithm="{{ pair }}:{{ live_running[pair] or 'unknown' }}">{{ algorithm_labels.get(live_running[pair], live_running[pair] or "unknown") }}</span>
               <span class="text-muted">(newest round of the running worker)</span>
+              {% if algorithms.live[pair] != live_running[pair] %}
+              <br>Next start:
+              <span class="status-badge algo-name" data-live-algorithm="{{ pair }}:{{ algorithms.live[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.live[pair], algorithms.live[pair] or "unavailable") }}</span>
+              <span class="text-muted">(saved; used when it is started again)</span>
+              {% endif %}
             {% else %}
               <span class="status-badge algo-name" data-start-algorithm="{{ pair }}:{{ algorithms.live[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.live[pair], algorithms.live[pair] or "unavailable") }}</span>
               <span class="text-muted">(used when it is started)</span>

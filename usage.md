@@ -238,8 +238,8 @@ priority on Nobitex.
 `algo3` (MM_algo2) and `algo1` (MM_algo1v2) run in both modes; `algo2` still
 raises `NotImplementedError` in demo mode exactly as in real mode. In the Docker
 demo stack the algorithm is not a command-line flag: it is the `algorithm` field
-of the pair's Demo configuration (admin panel, *Config BTC/USDT*, first field),
-and a running worker switches at its next round. MM_algo2 is specified in
+of the pair's Demo configuration (admin panel → **Algorithm**, or the first field
+of *Config BTC/USDT*), and a running worker switches at its next round. MM_algo2 is specified in
 `docs/algorithms/MM_algo2.md`.
 
 ---
@@ -308,8 +308,8 @@ ask, teal = fills), each on its own single axis. Every line chart uses
 
 Pick a **track** (which result store) and a **session** (a specific run,
 or "All sessions (compare)" to overlay runs), then use the eight tabs. The
-session picker lists every session in the store, however old, labelled with
-the algorithm(s) its rounds ran; choosing
+session picker lists every session in the store, however old, labelled first
+with the algorithm(s) its rounds ran, in the order they ran; choosing
 one loads that session's own newest rounds, while the comparison view
 loads the newest rounds across all sessions (both views are capped at
 `LOB_DASHBOARD_MAX_ROWS` rounds, default 2000, so a long-running stack

@@ -238,6 +238,19 @@ body {
 .status-warning { background: #fdeaea; color: #b71c1c; }
 .status-warning::before { background: var(--color-danger); }
 
+/* Algorithm page: the drop-down, and the Demo / Live tables with their active session */
+.algorithm-picker__row { display: flex; gap: var(--spacing-sm); flex-wrap: wrap; align-items: center; }
+.algorithm-picker__row .form-select { flex: 1 1 320px; width: auto; }
+.algorithm-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--spacing-md);
+  flex-wrap: wrap;
+}
+.session-chip { font-size: 0.85rem; color: var(--color-text-secondary); }
+.session-chip code { font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-text); }
+
 /* Key-value rows */
 .kv-list { list-style: none; display: flex; flex-direction: column; gap: var(--spacing-sm); }
 .kv-item {

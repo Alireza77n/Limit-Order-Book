@@ -1,0 +1,147 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Algorithm{% endblock %}
+
+{% block content %}
+{% set name = algorithm_labels.get(selected, selected) if selected else none %}
+<div class="card mb-lg">
+  <div class="card-header"><h2>Algorithm</h2></div>
+  <div class="card-body">
+    {% with picker_id = 'page' %}{% include "admin/_algorithm_picker.html" %}{% endwith %}
+    {% if not selected %}
+    <p class="text-muted mt-md">Pick an algorithm to see what the Demo and the live forward test run now on each pair, with their active session IDs, and to activate it on either.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if selected %}
+<section class="card mb-lg" aria-label="Demo" data-algorithm-table="demo">
+  <div class="card-header algorithm-table-header">
+    <h2>1. Demo (paper trading)</h2>
+    <span class="session-chip">Active session: <code data-demo-session>{{ state.demo_session_id or "none" }}</code></span>
+  </div>
+  <div class="card-body">
+    {% if not demo_managed %}
+    <div class="empty-state">This panel does not manage the Demo stack.</div>
+    {% else %}
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr><th>Pair</th><th>Worker</th><th>Algorithm now</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          {% for row in state.demo %}
+          <tr data-demo-row="{{ row.pair }}">
+            <td><strong>{{ row.symbol }}</strong></td>
+            <td class="status-cell">
+              {% if row.running %}<span class="status-badge status-running">Running</span>
+              {% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
+            </td>
+            <td><span class="status-badge algo-name" data-demo-algorithm="{{ row.pair }}:{{ row.algorithm or 'unknown' }}">{{ algorithm_labels.get(row.algorithm, row.algorithm or "unavailable") }}</span></td>
+            <td>
+              {% if row.algorithm == selected %}
+                <span class="status-badge status-running" data-demo-active="{{ row.pair }}">Active</span>
+                {% if not row.running %}<span class="text-muted">runs when the worker is started (Workers)</span>{% endif %}
+              {% elif row.algorithm is none %}
+                <span class="text-muted">Configuration unreadable: open Config {{ row.pair.upper() }}.</span>
+              {% else %}
+                <form method="post" action="{{ url_for('admin_algorithm_activate') }}" class="inline-form"
+                      data-confirm="Activate {{ name }} on the {{ row.symbol }} demo? {% if row.running %}The worker switches at its next round{% else %}The worker runs it when it is started{% endif %}, inside session {{ row.session_id or 'the current session' }}.">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="algorithm" value="{{ selected }}">
+                  <input type="hidden" name="target" value="demo">
+                  <input type="hidden" name="pair" value="{{ row.pair }}">
+                  <button type="submit" class="btn btn-primary btn-sm" data-activate="demo:{{ row.pair }}">Activate {{ name }}</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="text-muted mt-md">Both pairs share the one Demo session. Activate saves the algorithm in that pair's Demo configuration (the <code>Algorithm</code> field of Config BTC / Config USDT): a running worker switches at its next round and stays in the same session, so on the dashboard that session lists both algorithms. To give {{ name }} a session of its own, start a new demo session after activating it. Running demo workers restart in the new session and each pair's paper account starts again from its starting balances; the old session stays in the history.</p>
+    <form method="post" action="{{ url_for('admin_new_session') }}" class="inline-form"
+          data-confirm="Start a new demo session? Running demo workers restart in it and each pair's paper account starts again from its starting balances.">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="return_to" value="algorithm">
+      <input type="hidden" name="algorithm" value="{{ selected }}">
+      <button type="submit" class="btn btn-secondary btn-sm">Start a new demo session</button>
+    </form>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card mb-lg" aria-label="Live forward test" data-algorithm-table="live">
+  <div class="card-header algorithm-table-header">
+    <h2>2. Live forward test (real money)</h2>
+    <span class="session-chip">Active session:
+      {% for row in state.live %}
+        {{ row.symbol }}
+        {% if row.session_id %}<code data-live-session="{{ row.pair }}">{{ row.session_id }}</code>{% if row.session_started_at %} <span class="text-muted">(since {{ row.session_started_at }})</span>{% endif %}
+        {% elif row.running %}<span class="text-muted" data-live-session="{{ row.pair }}">running, no round yet</span>
+        {% else %}<span class="text-muted" data-live-session="{{ row.pair }}">none (stopped)</span>{% endif %}{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </span>
+  </div>
+  <div class="card-body">
+    {% if not trading_enabled %}
+    <div class="flash flash-warning">Live trading is disabled (FORWARD_TRADING_ENABLED). A saved algorithm is used once live workers can be started again.</div>
+    {% endif %}
+    <div class="table-wrapper">
+      <table class="table">
+        <thead>
+          <tr><th>Pair</th><th>Worker</th><th>Running now</th><th>Next start</th><th>Action</th></tr>
+        </thead>
+        <tbody>
+          {% for row in state.live %}
+          <tr data-live-row="{{ row.pair }}">
+            <td><strong>{{ row.symbol }}</strong></td>
+            <td class="status-cell">
+              {% if row.running %}<span class="status-badge status-running">Running</span>
+              {% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
+            </td>
+            <td>
+              {% if row.running and row.running_algorithm %}
+                <span class="status-badge algo-name" data-running-algorithm="{{ row.pair }}:{{ row.running_algorithm }}">{{ algorithm_labels.get(row.running_algorithm, row.running_algorithm) }}</span>
+              {% elif row.running %}<span class="text-muted">no round yet</span>
+              {% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td><span class="status-badge algo-name" data-live-algorithm="{{ row.pair }}:{{ row.next_algorithm or 'unknown' }}">{{ algorithm_labels.get(row.next_algorithm, row.next_algorithm or "unavailable") }}</span></td>
+            <td>
+              {% if row.next_algorithm == selected and row.running and row.running_algorithm == selected %}
+                <span class="status-badge status-running" data-live-active="{{ row.pair }}">Active</span>
+                <span class="text-muted">running, and saved for the next start</span>
+              {% elif row.next_algorithm == selected %}
+                <span class="status-badge status-running" data-live-active="{{ row.pair }}">Saved for next start</span>
+                {% if row.running %}
+                  <span class="text-muted">the running worker keeps {{ algorithm_labels.get(row.running_algorithm, row.running_algorithm or "its algorithm") }} until it is stopped and started again</span>
+                {% else %}
+                  <a class="btn btn-secondary btn-sm" href="{{ url_for('admin_forward_page') }}">Start it on Live Forward Test</a>
+                {% endif %}
+              {% elif row.next_algorithm is none %}
+                <span class="text-muted">Configuration unreadable: open Live Config {{ row.pair.upper() }}.</span>
+              {% else %}
+                {% if row.running and row.running_algorithm == selected %}
+                  <span class="text-muted">running it now, but its next start would use {{ algorithm_labels.get(row.next_algorithm, row.next_algorithm) }}</span>
+                {% endif %}
+                <form method="post" action="{{ url_for('admin_algorithm_activate') }}" class="inline-form" data-confirm-scope="live"
+                      data-confirm="Save {{ name }} as the {{ row.symbol }} live algorithm? {% if row.running %}The running worker keeps {{ algorithm_labels.get(row.running_algorithm, row.running_algorithm or 'its algorithm') }} until it is stopped and started again.{% else %}It is used when the worker is next started on Live Forward Test (real orders).{% endif %} Nothing is started or stopped here.">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="algorithm" value="{{ selected }}">
+                  <input type="hidden" name="target" value="live">
+                  <input type="hidden" name="pair" value="{{ row.pair }}">
+                  <button type="submit" class="btn btn-warning btn-sm" data-activate="live:{{ row.pair }}">Activate {{ name }} for live</button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="text-muted mt-md">Activate saves the algorithm in that pair's live configuration (the <code>Algorithm</code> field of Live Config BTC / Live Config USDT); nothing is started or stopped on this page. A stopped worker uses it when it is started on Live Forward Test, which places real orders and needs the typed confirmation there. A running worker keeps the algorithm it started with until it is stopped and started again. Every start of a live worker is a new live session.</p>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
