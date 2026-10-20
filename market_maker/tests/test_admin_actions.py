@@ -26,6 +26,7 @@ EXPECTED_FIELDS = {
     "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
     "algorithm", "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
     "algo3_min_volume_orders", "algo3_imbalance_clip",
+    "requote_band_perc", "trend_window_seconds", "trend_pause_perc", "algo1_enabled", "algo3_enabled",
 }
 
 

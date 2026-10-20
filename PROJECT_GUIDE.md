@@ -131,8 +131,8 @@ real trading or to MySQL: `safety.py` refuses to start.
 
 | File | What it does |
 |---|---|
-| `run.py` | Entry point. Builds the config for a profile, picks the exchange client and the strategy, takes the worker lock, starts the loop. |
-| `engine.py` | `SimpleMarketMaker`, the main loop. Fetches the market, tracks fills, inventory and cash, decides order sizes, sends and cancels orders, writes the round rows, sends Telegram messages. Has two loops: `run()` for real mode and `_run_demo()` for demo mode. In demo it builds a new strategy at a round boundary when the `algorithm` setting changes. |
+| `run.py` | Entry point. Builds the config for a profile, picks the exchange client and the strategy, takes the worker lock, starts the loop. In demo mode without `--algorithm` it runs `LaneRunner`: one engine per enabled algorithm (`algo1_enabled`, `algo3_enabled`), each in its own thread with its own files (`apply_lane_paths`), started and stopped as the configuration changes. |
+| `engine.py` | `SimpleMarketMaker`, the main loop. Fetches the market, tracks fills, inventory and cash, decides order sizes, sends and cancels orders (one resting order per side: a new price outside the requote band replaces the old order), writes the round rows, sends Telegram messages. Has two loops: `run()` for real mode and `_run_demo()` for demo mode. A demo lane runs one engine in a thread of the pair's worker (`run.py`'s `LaneRunner`). |
 | `strategy/algo3.py` | **MM_algo2.** Imbalance of the top levels, microprice centre (leaned by $\beta I$, skewed by inventory), one symmetric half-spread (the smallest that clears the fee bar, plus a tick), outward rounding that never crosses the touch, a final fee-bar check, hysteresis. Pure: no network or file access. |
 | `strategy/common.py` | Order-book arithmetic shared by the algorithms: tick, mid, returns, the fee bar, inventory position. |
 | `strategy/catalog.py` | The list of algorithms (key, display name, class, settings, description). `run.py`, the engine, the admin drop-down and the dashboard's Algorithm tab read it. |
@@ -237,8 +237,10 @@ The parameters that matter for MM_algo2:
 | `skew_perc` | How far the inventory moves the quote centre at the band edges (0.2 %). |
 | `inv_min`, `inv_max`, `order_size` | The inventory band and the base order size. They drive the skew, the order sizes, the cap on buying and the thin-book threshold. |
 | `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction` | The linear size rule ([section 7](#7-how-order-sizes-are-decided)). |
-| `hysteresis_ticks`, `refresh_seconds` | Keep a pair that moved by at most this many ticks for up to this long; the engine also does not re-post an order within that window. |
-| `time_step`, `cancel_after_minutes` | Seconds between rounds; age at which a resting order is cancelled. |
+| `hysteresis_ticks`, `refresh_seconds`, `requote_band_perc` | Keep a pair that moved by at most the requote band (this many ticks, or this fraction of the price, whichever is wider) for up to this long; the engine does not re-post an order within the band and replaces a resting order that the new price has left outside it (one order per side). |
+| `time_step`, `cancel_after_minutes` | Seconds between rounds; age at which a resting order is cancelled (3 minutes since 20 October 2026). |
+| `trend_window_seconds`, `trend_pause_perc` | Trend pause: a fall of the mid by more than the fraction over the window blocks buys (resting buys are cancelled), a rise blocks sells. Off by default (0): it did not help on the recorded market. |
+| `algo1_enabled`, `algo3_enabled` | Demo lanes: run MM_algo1v2 / MM_algo2 on this pair, each in its own lane with its own paper account and results. Ignored by a live worker. |
 | `depth_max` | Book levels read for the recorded bid and ask level. |
 | `buy_locked_cash_limit_*`, `sell_locked_inventory_limit_*` | The exposure guards: maximum share of cash or inventory locked in open orders. |
 | `grid_*`, `one_sided_*`, `cost_basis_reference`, `ev_min`, `adverse_selection_perc`, `fill_*` | Read by MM_algo1v2 only. |
@@ -254,9 +256,10 @@ Values in force on 17 October 2026 (the demo's applied settings and the saved li
 | `inv_min` – `inv_max` | 0 – 0.0037 | 0 – 300 | 0 – 0.0001527 | 0 – 15 |
 | `order_size` | 0.000062 | 5 | 0.00001189 | 1 |
 | `time_step` | 60 s | 10 s | 60 s | 30 s |
-| `cancel_after_minutes` | 10 | 10 | 10 | 10 |
+| `cancel_after_minutes` | 10 (3 since 20 Oct) | 10 (3 since 20 Oct) | 10 | 10 |
 | `algo3_*` | defaults | defaults | defaults | defaults |
 | `skew_perc`, `hysteresis_ticks`, `refresh_seconds` | 0.002, 5, 300 | 0.002, 5, 300 | 0.002, 5, 300 | 0.002, 5, 300 |
+| `requote_band_perc`, `trend_pause_perc` (since 20 Oct) | 0.0003, 0 | 0.0003, 0 | 0.0003, 0 | 0.0003, 0 |
 | Exposure guards | off | off | on, 25% | on, 25% |
 
 A changed live config takes effect only after the worker is stopped and started again.
@@ -287,7 +290,7 @@ currency and of `rls`. If either read fails it exits without trading.
 |---|---|---|
 | A | `GET /v3/orderbook/<pair>`. If it fails, the round is skipped. | `exchange/nobitex.py` |
 | B | Lists the worker's own open and closed orders. For each, takes the newly matched amount since the last round. A buy adds `matched − fee` to inventory and subtracts `matched × price` from cash. A sell subtracts `matched` from inventory and adds `matched × price − fee` to cash. | `update_inventory_and_cash` |
-| C | Cancels the worker's own open orders older than `cancel_after_minutes`. Orders it did not send are never touched. | `_cancel_owned_stale_orders` |
+| C | Cancels the worker's own open orders older than `cancel_after_minutes` (3). Orders it did not send are never touched. Before sending a side, it also cancels its own resting order on that side when the new price lies outside the requote band (one order per side). | `_cancel_owned_stale_orders`, `_cancel_live_order` |
 | D, E | [Section 6](#6-mm_algo2-in-detail). MM_algo2 quotes a pair whenever the book is usable; every pair it returns clears the fee bar by construction. | `strategy/algo3.py` |
 | F, G | [Section 7](#7-how-order-sizes-are-decided). | `run()` |
 | H | One row appended to the CSV (with `Strategy`, `Imbalance`, `Microprice`), one Telegram message, then `sleep(time_step)`. | `run()` |
@@ -359,9 +362,10 @@ code re-checks it on the exact prices anyway (`net_return_below_bar`, which cann
 
 ### Step 6: keep a pair that barely moved
 
-The previous pair is sent again while both prices moved by at most `hysteresis_ticks` (5 ticks, 50 rial), the
-pair is younger than `refresh_seconds` (300), and it still clears the bar. The engine also does not re-post a
-side that already rests within 5 ticks.
+The previous pair is sent again while both prices moved by at most the requote band (`hysteresis_ticks` = 5
+ticks or `requote_band_perc` = 0.03 % of the price, whichever is wider), the pair is younger than
+`refresh_seconds` (300), and it still clears the bar. The engine does not re-post a side that already rests
+within the band, and replaces a resting order that the new price has left outside it.
 
 ### Worked example
 
@@ -418,8 +422,8 @@ sell = 2 × order_size × x
 
 ### Resting orders count as inventory
 
-An order can rest for up to `cancel_after_minutes` and a new pair is sent
-every round, so sizing on wallet inventory alone would send the same size
+An order can rest for up to `cancel_after_minutes` (3 minutes) and a new pair is sent
+whenever the price has left the requote band, so sizing on wallet inventory alone would send the same size
 again and again until the first fill. Each side therefore uses its own
 effective inventory:
 
@@ -453,7 +457,10 @@ Then, for each side separately:
   inventory (sell) locked in open orders above the configured ratio, 25% in
   live mode.
 - Resting-order guard: a side is not re-sent when one of the worker's own orders already rests within
-  `hysteresis_ticks` of the price (`resting_order_kept`).
+  the requote band of the price (`resting_order_kept`); an own order outside the band is cancelled first
+  (`replaced`), so at most one order rests per side.
+- Trend pause (`trend_pause`, off by default): a side blocked by the pause is not sent and its resting order
+  is cancelled.
 
 With the live BTC settings and an empty wallet, MM_algo2's first buy is 0.00002378 BTC (8.83 % of the rial
 wallet), and at most three unfilled buys can rest before the 25 % guard refuses a fourth
@@ -544,7 +551,23 @@ crashes and corner cases:
 
 ---
 
+12. **Fixed on 20 October 2026: orders piled up.** The "resting order kept" rule used 5 ticks (50 rial),
+    nothing on BTC, so a new order was added almost every round while the old ones rested for 10 minutes:
+    up to 11 (BTC) and 26 (USDT) of our orders were open at once and most fills were of old orders the
+    market had run through. The requote band is now a fraction of the price, a resting order outside it is
+    replaced, and orders live 3 minutes. The replay of the recorded market cuts the demo's loss by about two
+    thirds ([`MM_algo2.md` §19](docs/algorithms/MM_algo2.md#19-changes-of-20-october-2026-one-order-per-side-shorter-orders-higher-target-lanes)).
+    What remains is mostly the price falling while coins are held, which the trend pause (also added, off by
+    default) did not cure.
+
 ## 9. History
+
+### 20 October 2026 (this branch)
+
+- Engine, both algorithms: requote band in percent with one order per side, orders live 3 minutes, target
+  0.20 %, trend pause (off). Demo lanes: a pair's worker runs every enabled algorithm at once, each with its
+  own paper account and results; the admin Algorithm page switches lanes on and off; the dashboard has a
+  track per lane, the two lanes side by side, and the single-worker history.
 
 ### MM_algo2 (2026-10-17, this branch)
 

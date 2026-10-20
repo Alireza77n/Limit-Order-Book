@@ -41,6 +41,7 @@ EXPECTED_CONFIG_FIELDS = {
     "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
     "algorithm", "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
     "algo3_min_volume_orders", "algo3_imbalance_clip",
+    "requote_band_perc", "trend_window_seconds", "trend_pause_perc", "algo1_enabled", "algo3_enabled",
 }
 REMOVED_CONFIG_FIELDS = {
     "max_rounds", "demo_level1_fast_fill_enabled",
@@ -1168,13 +1169,17 @@ def test_overview_shows_the_algorithm_of_each_pair_and_the_drop_down(forward_app
     client = forward_app.test_client()
     _login(client)
 
+    write_overrides(overlay_path(forward_app.config["STATE_DIR"], "usdt"), {"algo3_enabled": False},
+                    pair="usdt", profiles=TRADING_PROFILES)
     status = client.get("/admin/").get_json()
-    assert status["algorithms"] == {"demo": {"btc": "algo3", "usdt": "algo1"},
+    # demo: the lanes switched on (both by default); live: the saved algorithm
+    assert status["algorithms"] == {"demo": {"btc": "algo1,algo3", "usdt": "algo1"},
                                     "live": {"btc": "algo1", "usdt": "algo3"}}
     body = _html(client.get("/admin/", headers=HTML))
     assert "Algorithm in force" not in body and ">change<" not in body     # the old card is gone
     assert re.search(r'<form method="get" action="/admin/algorithm"[^>]*data-auto-submit', body)
-    assert 'data-demo-algorithm="btc:algo3"' in body and 'data-live-algorithm="usdt:algo3"' in body
+    assert 'data-demo-algorithm="btc:algo1"' in body and 'data-demo-algorithm="btc:algo3"' in body
+    assert 'data-demo-algorithm="usdt:algo3"' not in body and 'data-live-algorithm="usdt:algo3"' in body
 
 
 def test_live_forward_page_shows_the_algorithm_of_each_pair(forward_app, fake_agent, monkeypatch, tmp_path):
@@ -1228,15 +1233,19 @@ def test_algorithm_names_are_shown_exactly_as_the_branch_names(forward_app, fake
 # ---------- Algorithm page: choose an algorithm, then activate it on the Demo or for live ----------
 
 def _algorithm_setup(forward_app, monkeypatch, tmp_path):
-    """BTC demo on MM_algo2, USDT demo on MM_algo1v2, both in session
-    demo-test-1; live: BTC stopped (MM_algo1v2 saved), USDT running
-    MM_algo1v2 in session 1792069104.17595 with MM_algo2 saved for its next start."""
+    """Demo lanes in session demo-test-1: BTC runs MM_algo2 only (its lane has
+    published its runtime snapshot, so it is running) and has MM_algo1v2
+    switched off; USDT has both lanes on, neither started yet. Live: BTC
+    stopped (MM_algo1v2 saved), USDT running MM_algo1v2 in session
+    1792069104.17595 with MM_algo2 saved for its next start."""
     from demo_config import overlay_path, write_overrides
     from forward_config import save_config
 
     state = Path(forward_app.config["STATE_DIR"])
     (state / "stack_session.json").write_text(json.dumps({"session_id": "demo-test-1"}))
-    write_overrides(overlay_path(state, "btc"), {"algorithm": "algo3"}, pair="btc", profiles=TRADING_PROFILES)
+    write_overrides(overlay_path(state, "btc"), {"algo1_enabled": False, "algo3_enabled": True},
+                    pair="btc", profiles=TRADING_PROFILES)
+    (state / "runtime_config_btc_algo3.json").write_text(json.dumps({"session_id": "demo-test-1", "status": "applied"}))
     save_config({"algorithm": "algo3"}, "usdt", TRADING_PROFILES, forward_app.config["FORWARD_CONFIG_DIR"])
     results = tmp_path / "forward-results"
     results.mkdir()
@@ -1268,6 +1277,7 @@ def test_algorithm_page_starts_with_a_drop_down_of_the_algorithm_names(forward_a
     assert 'href="/admin/algorithm"' in body            # navigation entry
 
 
+
 def test_algorithm_page_shows_the_demo_table_then_the_live_table_with_active_sessions(
     forward_app, monkeypatch, tmp_path,
 ):
@@ -1278,12 +1288,17 @@ def test_algorithm_page_shows_the_demo_table_then_the_live_table_with_active_ses
     body = _html(client.get("/admin/algorithm?algorithm=algo3", headers=HTML))
 
     assert body.index('data-algorithm-table="demo"') < body.index('data-algorithm-table="live"')
-    assert "<code data-demo-session>demo-test-1</code>" in body
+    assert "<code data-demo-session>MM_algo2 · demo-test-1</code>" in body          # the algorithm first
     assert '<code data-live-session="usdt">1792069104.17595</code>' in body
     assert re.search(r'data-live-session="btc">none \(stopped\)', body)
-    # Demo: BTC already runs MM_algo2; USDT can be switched to it
-    assert 'data-demo-active="btc"' in body and 'data-activate="demo:btc"' not in body
-    assert 'data-activate="demo:usdt"' in body
+    # Demo lanes: BTC's MM_algo2 lane has published its snapshot (running); USDT's is on but not started
+    assert 'data-demo-lane="btc:algo3:running"' in body and 'data-demo-lane="usdt:algo3:starting"' in body
+    assert 'data-demo-lane-session="btc:algo3">MM_algo2 · demo-test-1<' in body
+    assert 'data-deactivate="demo:btc"' in body and 'data-deactivate="demo:usdt"' in body
+    assert 'data-demo-algorithm="btc:algo1"' not in body and 'data-demo-algorithm="usdt:algo1"' in body   # lanes on
+    # the other algorithm's page: BTC's MM_algo1v2 lane is off and can be switched on
+    other = _html(client.get("/admin/algorithm?algorithm=algo1", headers=HTML))
+    assert 'data-demo-lane="btc:algo1:off"' in other and 'data-activate="demo:btc"' in other
     # Live: stopped BTC would start with MM_algo1v2; running USDT keeps MM_algo1v2, MM_algo2 is saved for its next start
     assert 'data-activate="live:btc"' in body
     assert 'data-live-active="usdt"' in body and 'data-running-algorithm="usdt:algo1"' in body
@@ -1300,12 +1315,15 @@ def test_algorithm_page_json_reports_the_same_state(forward_app, monkeypatch, tm
     state = client.get("/admin/algorithm?algorithm=algo3").get_json()
 
     assert state["algorithm"] == "algo3" and state["demo_session_id"] == "demo-test-1"
-    assert [(row["pair"], row["algorithm"]) for row in state["demo"]] == [("btc", "algo3"), ("usdt", "algo1")]
+    btc_demo, usdt_demo = state["demo"]
+    assert (btc_demo["pair"], btc_demo["algorithm"], btc_demo["enabled_labels"]) == ("btc", "algo3", ["MM_algo2"])
+    assert btc_demo["lanes"]["algo3"] == {"enabled": True, "state": "running", "session_label": "MM_algo2 · demo-test-1"}
+    assert btc_demo["lanes"]["algo1"]["state"] == "off"
+    assert usdt_demo["algorithm"] == "algo1,algo3" and usdt_demo["lanes"]["algo1"]["state"] == "starting"
     btc, usdt = state["live"]
     assert (usdt["running"], usdt["running_algorithm"], usdt["next_algorithm"], usdt["session_id"]) == (
         True, "algo1", "algo3", "1792069104.17595")
     assert (btc["running"], btc["next_algorithm"], btc["session_id"]) == (False, "algo1", None)
-
 
 def test_algorithm_page_rejects_an_unknown_algorithm(forward_app):
     client = forward_app.test_client()
@@ -1314,27 +1332,48 @@ def test_algorithm_page_rejects_an_unknown_algorithm(forward_app):
     assert client.get("/admin/algorithm?algorithm=nope").status_code == 400
 
 
-def test_activating_on_the_demo_saves_the_configuration_with_the_new_algorithm(
+
+def test_activating_on_the_demo_switches_the_lane_on_and_keeps_every_other_setting(
     forward_app, fake_agent, monkeypatch, tmp_path,
 ):
+    _algorithm_setup(forward_app, monkeypatch, tmp_path)
+    client = forward_app.test_client()
+    token = _login(client)
+    before = load_desired_config("btc", forward_app.config["STATE_DIR"], TRADING_PROFILES)
+    assert before["algo1_enabled"] is False
+
+    response = client.post("/admin/algorithm/activate", headers=HTML, data={
+        "algorithm": "algo1", "target": "demo", "pair": "btc", "csrf_token": token})
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/admin/algorithm?algorithm=algo1")
+    [command] = _commands_written(forward_app)
+    assert (command["action"], command["pair"]) == ("apply_config", "btc")
+    assert command["payload"]["overrides"] == dict(before, algo1_enabled=True)   # the other lane, and all else, unchanged
+    assert _forward_commands(forward_app) == []
+    page = _html(client.get(response.headers["Location"], headers=HTML))
+    assert ("MM_algo1v2 lane switched on for the BTCIRT demo: the worker starts it within seconds in session "
+            "MM_algo1v2 · demo-test-1, with its own paper account and results.") in page
+
+
+def test_deactivating_a_demo_lane_switches_only_that_lane_off(forward_app, fake_agent, monkeypatch, tmp_path):
     _algorithm_setup(forward_app, monkeypatch, tmp_path)
     client = forward_app.test_client()
     token = _login(client)
     before = load_desired_config("usdt", forward_app.config["STATE_DIR"], TRADING_PROFILES)
 
     response = client.post("/admin/algorithm/activate", headers=HTML, data={
-        "algorithm": "algo3", "target": "demo", "pair": "usdt", "csrf_token": token})
+        "algorithm": "algo3", "target": "demo", "pair": "usdt", "action": "deactivate", "csrf_token": token})
 
     assert response.status_code == 302
-    assert response.headers["Location"].endswith("/admin/algorithm?algorithm=algo3")
     [command] = _commands_written(forward_app)
-    assert (command["action"], command["pair"]) == ("apply_config", "usdt")
-    assert command["payload"]["overrides"] == dict(before, algorithm="algo3")     # every other setting unchanged
-    assert _forward_commands(forward_app) == []
+    assert command["payload"]["overrides"] == dict(before, algo3_enabled=False)
     page = _html(client.get(response.headers["Location"], headers=HTML))
-    assert ("MM_algo2 activated on the USDTIRT demo: the worker switches to it at its next round, "
-            "inside session demo-test-1.") in page
-
+    assert "MM_algo2 lane switched off for the USDTIRT demo" in page
+    # a live target cannot be "deactivated": the worker keeps one algorithm
+    refused = client.post("/admin/algorithm/activate", headers=HTML, data={
+        "algorithm": "algo3", "target": "live", "pair": "usdt", "action": "deactivate", "csrf_token": token})
+    assert refused.status_code == 400 and len(_commands_written(forward_app)) == 1
 
 def test_activating_for_live_saves_the_live_configuration_and_starts_nothing(
     forward_app, fake_agent, monkeypatch, tmp_path,
@@ -1439,7 +1478,7 @@ def test_the_docker_admin_offers_demo_activation_although_it_lands_on_the_live_p
 
     assert client.get("/admin/", headers=HTML).status_code == 302       # lands on the live page
     assert "This panel does not manage the Demo stack." not in body
-    assert 'data-activate="demo:usdt"' in body
+    assert 'data-deactivate="demo:usdt"' in body and 'data-demo-lane="usdt:algo3:starting"' in body
 
 
 def test_a_panel_without_the_demo_control_queue_does_not_offer_demo_activation(forward_app, fake_agent, tmp_path):

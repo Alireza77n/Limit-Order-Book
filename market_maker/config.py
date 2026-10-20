@@ -17,7 +17,10 @@ if os.environ.get("LOB_DISABLE_DOTENV") != "1":
 class MMConfig:
     # Trading / market params
     commission_perc: float = 0.0025
-    cancel_after_minutes: float = 10.0
+    # Age at which a resting order of ours is cancelled. 3 minutes since 20
+    # October 2026 (it was 10): on the demo, most fills were of orders that
+    # had rested long enough for the market to run through them.
+    cancel_after_minutes: float = 3.0
     # Minimum expected round-trip NET return, as a fraction of the capital
     # deployed at the submitted buy price. Algorithm 1 only quotes a
     # (bid, ask) pair when its fee-adjusted round-trip return
@@ -39,6 +42,29 @@ class MMConfig:
     # or "algo3". Hot in Demo (the engine swaps the strategy at the next
     # round boundary); a live worker reads it when it is started.
     algorithm: str = "algo1"
+    # Demo lanes (run.py's LaneRunner): the demo worker of a pair runs every
+    # enabled algorithm at the same time, each in its own lane with its own
+    # paper account and result files. Ignored by a live worker.
+    algo1_enabled: bool = True
+    algo3_enabled: bool = True
+    # The lane this configuration belongs to (the algorithm key), set by
+    # run.py's make_cfg(..., lane=...) for a demo lane; None otherwise.
+    lane: Optional[str] = None
+    # Requote band: a resting order of ours is kept while the new price is
+    # within max(hysteresis_ticks x tick, requote_band_perc x price) of it;
+    # a new price outside the band cancels it and replaces it, so at most one
+    # order rests per side (engine._replace_outside_band). Before 20 October
+    # 2026 the band was ticks only, 50 rial, which on BTC is nothing: a new
+    # order was added almost every round and up to 11 of ours rested at once.
+    requote_band_perc: float = 0.0003
+    # Trend pause: when the mid fell by more than trend_pause_perc over the
+    # last trend_window_seconds, no buy is placed and resting buys are
+    # cancelled; when it rose by more than that, the same for sells.
+    # trend_window_seconds = 0 or trend_pause_perc = 0 switches it off. Off by
+    # default: replayed on the demo's market of 11-17 October 2026 it did not
+    # improve the result (docs/algorithms/MM_algo2.md section 19).
+    trend_window_seconds: float = 600.0
+    trend_pause_perc: float = 0.0
     depth_max: int = 15
     inv_max: float = 0.000365215
     inv_min: float = 0.0
@@ -221,8 +247,8 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         # Matches commission_perc, i.e. today's actual bootstrap default
         # (engine.py falls back to exp_ret_min=commission_perc when unset) --
         # adding it here makes it Admin-editable without changing behavior.
-        exp_ret_min=0.0010,
-        cancel_after_minutes=10,
+        exp_ret_min=0.0020,
+        cancel_after_minutes=3,
         algorithm_id="1btc",
         depth_max=10,
         inv_max=0.000472,
@@ -267,6 +293,9 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         adverse_selection_perc=0.0,
         hysteresis_ticks=5,
         refresh_seconds=300.0,
+        requote_band_perc=0.0003,
+        trend_window_seconds=600.0,
+        trend_pause_perc=0.0,
         fill_table_enabled=True,
         fill_table_max_age_hours=48.0,
         fill_table_min_samples=50,
@@ -275,6 +304,8 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         fill_queue_volume_ref=0.0,
         # Which algorithm runs (admin-selectable): "algo1" or "algo3".
         algorithm="algo1",
+        algo1_enabled=True,
+        algo3_enabled=True,
         # Algorithm 3 (strategy/algo3.py); beta stays 0 until it is estimated.
         algo3_depth_k=3,
         algo3_decay_rho=0.5,
@@ -301,8 +332,8 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         # reports/live-session-audit-2026-08-10.md); lower this from Admin
         # if more frequent USDT quoting is wanted. Left unchanged here so
         # this commit does not itself alter trading behavior.
-        exp_ret_min=0.0010,
-        cancel_after_minutes=10,
+        exp_ret_min=0.0020,
+        cancel_after_minutes=3,
         algorithm_id="1usdt",
         depth_max=10,
         inv_max=50,
@@ -346,6 +377,9 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         adverse_selection_perc=0.0,
         hysteresis_ticks=5,
         refresh_seconds=300.0,
+        requote_band_perc=0.0003,
+        trend_window_seconds=600.0,
+        trend_pause_perc=0.0,
         fill_table_enabled=True,
         fill_table_max_age_hours=48.0,
         fill_table_min_samples=50,
@@ -354,6 +388,8 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         fill_queue_volume_ref=0.0,
         # Which algorithm runs (admin-selectable): "algo1" or "algo3".
         algorithm="algo1",
+        algo1_enabled=True,
+        algo3_enabled=True,
         # Algorithm 3 (strategy/algo3.py); beta stays 0 until it is estimated.
         algo3_depth_k=3,
         algo3_decay_rho=0.5,

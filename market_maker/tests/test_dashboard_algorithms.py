@@ -203,7 +203,7 @@ def test_an_algorithm_that_has_not_run_yet_says_how_to_start_it(tmp_path, monkey
     monkeypatch.setattr(dashboard, "DEMO_STATE_DIR", str(tmp_path / "state"))
     text = _text_of(dashboard.render_tab_content("algorithm", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
     assert "No rounds of MM_algo2 in this view yet" in text
-    assert "admin panel → Algorithm, choose MM_algo2 and activate it for the USDT demo" in text
+    assert "admin panel → Algorithm, choose MM_algo2 and switch on its USDT demo lane" in text
     assert "No rounds of MM_algo2" in _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
 
 
@@ -291,11 +291,12 @@ def test_the_empty_state_says_where_the_algorithm_has_run(tmp_path, monkeypatch)
     })
     monkeypatch.setattr(dashboard, "DEMO_STATE_DIR", str(tmp_path / "state"))
 
+    label = dashboard.TRACKS["btc_demo"]["label"]
     assert dashboard.where_algorithm_ran("algo3") == [
-        {"track": "btc_demo", "label": "BTC — Demo (paper trading)", "session_id": "demo-2", "rounds": 1},
-        {"track": "btc_demo", "label": "BTC — Demo (paper trading)", "session_id": "demo-1", "rounds": 2}]
+        {"track": "btc_demo", "label": label, "session_id": "demo-2", "rounds": 1},
+        {"track": "btc_demo", "label": label, "session_id": "demo-1", "rounds": 2}]
     text = _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
-    assert ("MM_algo2 has run on BTC — Demo (paper trading), sessions demo-2 (1 round), demo-1 (2 rounds): "
+    assert (f"MM_algo2 has run on {label}, sessions demo-2 (1 round), demo-1 (2 rounds): "
             "pick that track and session above to see its rounds.") in text
     monkeypatch.setattr(dashboard, "TRACKS", {"usdt_demo": dict(dashboard.TRACKS["usdt_demo"], path=str(usdt))})
     text = _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))

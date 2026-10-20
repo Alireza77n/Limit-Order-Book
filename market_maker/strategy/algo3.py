@@ -246,17 +246,18 @@ class Algo3Strategy(QuoteArithmetic, Strategy):
 
     # ---------- Hysteresis ----------
     def _apply_hysteresis(self, bid: float, ask: float) -> Tuple[float, float, bool]:
-        """Keep the resting pair while both new prices are within
-        hysteresis_ticks of it and it is younger than refresh_seconds."""
-        ticks = max(0, int(getattr(self.cfg, "hysteresis_ticks", 0) or 0))
+        """Keep the resting pair while both new prices are within the requote
+        band of it (strategy/common.py requote_band: hysteresis_ticks ticks
+        or requote_band_perc of the price, whichever is wider) and it is
+        younger than refresh_seconds."""
         refresh = float(getattr(self.cfg, "refresh_seconds", 0.0) or 0.0)
-        epsilon = self.tick_size()
         now = float(self.clock())
         previous = self._resting
         if (
-            previous is not None and ticks > 0
-            and abs(bid - previous[0]) <= ticks * epsilon + 1e-9
-            and abs(ask - previous[1]) <= ticks * epsilon + 1e-9
+            previous is not None
+            and self.requote_band(previous[0]) > 0
+            and abs(bid - previous[0]) <= self.requote_band(previous[0]) + 1e-9
+            and abs(ask - previous[1]) <= self.requote_band(previous[1]) + 1e-9
             and now - previous[2] < refresh
         ):
             net = self.net_return(previous[0], previous[1])

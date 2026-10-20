@@ -48,6 +48,7 @@ from demo_config import (
     load_desired_config,
     overlay_path,
     read_runtime_snapshot,
+    runtime_snapshot_path,
     validate_overrides,
 )
 from forward_config import (
@@ -59,7 +60,7 @@ from forward_config import (
 from config import TRADING_PROFILES, demo_csv_path
 from dashboard import activity_records, filter_session, load_track
 from result_store import DemoResultStore
-from strategy.catalog import ALGORITHMS, DEFAULT_ALGORITHM, SELECTABLE_ALGORITHMS
+from strategy.catalog import ALGORITHMS, DEFAULT_ALGORITHM, SELECTABLE_ALGORITHMS, algorithm_label
 from validation.validation_engine import create_validation_engine
 from validation.reports import generate_validation_report, format_metric_card
 
@@ -403,11 +404,19 @@ def _ledger_account(app: Flask, pair: str):
     session's numbers as if they were current. Scoping to the exact
     session file (or nothing, if that pair's worker hasn't written one for
     this session yet) keeps this page honest about what it's showing."""
+    return _lane_ledger_account(app, pair, None)
+
+
+def _lane_ledger_account(app: Flask, pair: str, lane: Optional[str]):
+    """The active session's paper ledger account of one lane of `pair`
+    (paper_<session>_<pair>_<lane>.json), or of the single-worker ledger
+    when `lane` is None."""
     session_id = _session_id(app)
     if not session_id:
         return None
     safe_session = str(session_id).replace("/", "_")
-    path = Path(app.config["STATE_DIR"]) / f"paper_{safe_session}_{PAIR_LOCK_SUFFIX[pair]}.json"
+    suffix = f"_{lane}" if lane else ""
+    path = Path(app.config["STATE_DIR"]) / f"paper_{safe_session}_{PAIR_LOCK_SUFFIX[pair]}{suffix}.json"
     if not path.exists():
         return None
     try:
@@ -521,6 +530,7 @@ def _display_rows(records, *, side=None, include_decisions=False):
             rows.append({
                 "timestamp": record.get("Timestamp"),
                 "round": record.get("Round"),
+                "algorithm": algorithm_label(record.get("Strategy") or DEFAULT_ALGORITHM),
                 "side": prefix.lower(),
                 "is_order": is_order,
                 "status": status,
@@ -539,6 +549,7 @@ def _display_rows(records, *, side=None, include_decisions=False):
             rows.append({
                 "timestamp": record.get("Timestamp"),
                 "round": record.get("Round"),
+                "algorithm": algorithm_label(record.get("Strategy") or DEFAULT_ALGORITHM),
                 "side": None,
                 "is_order": False,
                 "status": None,
@@ -696,19 +707,38 @@ def _algorithm_labels() -> Dict[str, str]:
     return {key: info.label for key, info in ALGORITHMS.items()}
 
 
+def _demo_lanes_enabled(app: Flask, pair: str) -> Optional[Dict[str, bool]]:
+    """Which algorithms the pair's Demo overlay switches on (its lanes), or
+    None when the overlay cannot be read."""
+    try:
+        desired = load_desired_config(pair, app.config["STATE_DIR"], TRADING_PROFILES)
+    except (OverlayLoadError, OverlayValidationError, KeyError, OSError):
+        return None
+    return {key: bool(desired.get(f"{key}_enabled", False)) for key in SELECTABLE_ALGORITHMS}
+
+
+def _lane_has_run(app: Flask, pair: str, lane: str, session_id: Optional[str]) -> bool:
+    """A lane that has published its runtime snapshot for the current session
+    has started (the snapshot is written at its first round boundary)."""
+    if not session_id:
+        return False
+    try:
+        snapshot = read_runtime_snapshot(app.config["STATE_DIR"], pair, lane)
+    except OverlayLoadError:
+        return False
+    return bool(snapshot) and snapshot.get("session_id") == str(session_id)
+
+
 def _algorithms_in_force(app: Flask) -> Dict[str, Dict[str, Optional[str]]]:
-    """The algorithm each pair's Demo overlay and live configuration name
-    (None when that configuration cannot be read). The live value is what a
-    worker gets when it is started; a running live worker keeps the
-    algorithm it started with."""
+    """Per pair: the Demo lanes switched on (a comma-separated list of
+    algorithm keys, "" when none, None when the overlay cannot be read) and
+    the live configuration's algorithm (what a live worker gets when it is
+    started; a running one keeps the algorithm it started with)."""
     demo: Dict[str, Optional[str]] = {}
     live: Dict[str, Optional[str]] = {}
     for pair in PAIRS:
-        try:
-            desired = load_desired_config(pair, app.config["STATE_DIR"], TRADING_PROFILES)
-            demo[pair] = str(desired.get("algorithm") or DEFAULT_ALGORITHM)
-        except (OverlayLoadError, OverlayValidationError, KeyError, OSError):
-            demo[pair] = None
+        lanes = _demo_lanes_enabled(app, pair)
+        demo[pair] = None if lanes is None else ",".join(key for key, on in lanes.items() if on)
         try:
             desired = forward_desired_config(pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"])
             live[pair] = str(desired.get("algorithm") or DEFAULT_ALGORITHM)
@@ -759,18 +789,39 @@ def _algorithm_choices() -> list:
 
 def _algorithm_state(app: Flask) -> dict:
     """Where each algorithm runs, for the Algorithm page: per pair, the Demo
-    worker (its saved configuration names the algorithm it runs from its
-    next round; every Demo pair shares one session) and the live worker
-    (the algorithm of its newest round while it runs, the algorithm saved
-    for its next start, and the session of its newest round)."""
+    worker's lanes (one per algorithm, switched on or off in the pair's
+    configuration; every lane and pair shares the one Demo session, each
+    lane with its own paper account) and the live worker (the algorithm of
+    its newest round while it runs, the algorithm saved for its next start,
+    and the session of its newest round)."""
     in_force = _algorithms_in_force(app)
     demo_session = _session_id(app)
     demo, live = [], []
     for pair in PAIRS:
         symbol = TRADING_PROFILES[pair]["pair"]
+        worker_running = _worker_running(app, pair)
+        enabled = _demo_lanes_enabled(app, pair)
+        lanes = {}
+        for key in SELECTABLE_ALGORITHMS:
+            on = None if enabled is None else enabled[key]
+            if on is None:
+                state = "unknown"
+            elif not on:
+                state = "off"
+            elif not worker_running:
+                state = "worker_stopped"
+            elif _lane_has_run(app, pair, key, demo_session):
+                state = "running"
+            else:
+                state = "starting"
+            lanes[key] = {
+                "enabled": on, "state": state,
+                "session_label": f"{algorithm_label(key)} · {demo_session}" if demo_session else None,
+            }
         demo.append({
-            "pair": pair, "symbol": symbol, "running": _worker_running(app, pair),
-            "algorithm": in_force["demo"][pair], "session_id": demo_session,
+            "pair": pair, "symbol": symbol, "running": worker_running,
+            "algorithm": in_force["demo"][pair], "session_id": demo_session, "lanes": lanes,
+            "enabled_labels": [algorithm_label(k) for k, lane in lanes.items() if lane["enabled"]],
         })
         running = _forward_worker_running(app, pair)
         newest = _live_newest_row(app, pair) if running else None
@@ -919,20 +970,35 @@ def _list_sessions(app: Flask):
     active = _session_id(app)
     by_session: Dict[str, Dict[str, Any]] = {}
     for pair in PAIRS:
-        csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
-        for row in _session_rows(Path(app.config["RESULTS_DIR"]) / csv_name):
-            session_id = row["session_id"]
-            if not session_id:
-                continue
-            entry = by_session.setdefault(session_id, {
-                "session_id": session_id, "is_active": session_id == active, "pairs": {},
-            })
-            entry["pairs"][pair] = {
-                "rounds": row["rounds"],
-                "first_timestamp": row.get("first_timestamp"),
-                "last_timestamp": row.get("last_timestamp"),
-            }
+        for csv_path in _demo_store_paths(app, pair):
+            for row in _session_rows(csv_path):
+                session_id = row["session_id"]
+                if not session_id:
+                    continue
+                entry = by_session.setdefault(session_id, {
+                    "session_id": session_id, "is_active": session_id == active, "pairs": {}, "algorithms": [],
+                })
+                counts = entry["pairs"].setdefault(pair, {"rounds": 0, "first_timestamp": None, "last_timestamp": None})
+                counts["rounds"] += int(row["rounds"])
+                for key in ("first_timestamp", "last_timestamp"):
+                    value = row.get(key)
+                    if value and (counts[key] is None or (value < counts[key] if key == "first_timestamp" else value > counts[key])):
+                        counts[key] = value
+                for key in row.get("algorithms") or []:
+                    if key not in entry["algorithms"]:
+                        entry["algorithms"].append(key)
+    for entry in by_session.values():
+        entry["label"] = " → ".join(algorithm_label(k) for k in entry["algorithms"]) + f" · {entry['session_id']}" \
+            if entry["algorithms"] else entry["session_id"]
     return sorted(by_session.values(), key=lambda entry: entry["session_id"], reverse=True)
+
+
+def _demo_store_paths(app: Flask, pair: str) -> list:
+    """The pair's demo result files in this app's RESULTS_DIR: the single-
+    worker history (<pair>_track_demo.csv) and every lane (<pair>_track_demo_<lane>.csv)."""
+    results_dir = Path(app.config["RESULTS_DIR"])
+    stem = os.path.splitext(os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"])))[0]
+    return [results_dir / f"{stem}.csv"] + [results_dir / f"{stem}_{lane}.csv" for lane in SELECTABLE_ALGORITHMS]
 
 
 def _live_session_started_at(session_id: str) -> Optional[str]:
@@ -996,15 +1062,17 @@ def _algorithm_html_response(app: Flask, selected: Optional[str], status: int = 
     ), status
 
 
-def _activate_algorithm(app: Flask, algorithm: str, target: str, pair: str) -> dict:
-    """Save `algorithm` in one configuration through the same path as the
-    config pages: the Demo overlay of `pair` (the worker switches at its
-    next round) or its live configuration (used when the live worker is
-    next started; a running one keeps its algorithm). Every other setting
-    is resubmitted unchanged. Raises what the config pages' saves raise."""
+def _activate_algorithm(app: Flask, algorithm: str, target: str, pair: str, enabled: bool = True) -> dict:
+    """Save one change through the same path as the config pages. Demo: switch
+    the algorithm's lane on or off in the pair's overlay (`<algorithm>_enabled`;
+    the worker starts or stops the lane at its next check, within seconds).
+    Live: save `algorithm` in the pair's live configuration (used when the
+    live worker is next started; a running one keeps its algorithm). Every
+    other setting is resubmitted unchanged. Raises what the config pages'
+    saves raise."""
     if target == "demo":
         desired = load_desired_config(pair, app.config["STATE_DIR"], TRADING_PROFILES)
-        desired["algorithm"] = algorithm
+        desired[f"{algorithm}_enabled"] = bool(enabled)
         validated = validate_overrides(desired, pair=pair, profiles=TRADING_PROFILES)
         return enqueue_and_wait(app, "apply_config", pair, payload={"overrides": validated})
     desired = forward_desired_config(pair, TRADING_PROFILES, app.config["FORWARD_CONFIG_DIR"])
@@ -1013,13 +1081,17 @@ def _activate_algorithm(app: Flask, algorithm: str, target: str, pair: str) -> d
     return enqueue_forward(app, "apply_forward_config", pair, payload={"overrides": validated})
 
 
-def _activation_message(app: Flask, algorithm: str, target: str, pair: str) -> str:
+def _activation_message(app: Flask, algorithm: str, target: str, pair: str, enabled: bool = True) -> str:
     label, symbol = ALGORITHMS[algorithm].label, TRADING_PROFILES[pair]["pair"]
     if target == "demo":
         session_id = _session_id(app)
-        where = f", inside session {session_id}" if session_id else ""
-        when = "switches to it at its next round" if _worker_running(app, pair) else "runs it when it is started"
-        return f"{label} activated on the {symbol} demo: the worker {when}{where}."
+        where = f" in session {label} · {session_id}" if session_id else ""
+        if not enabled:
+            return (f"{label} lane switched off for the {symbol} demo: the worker stops it within seconds "
+                    "and cancels its open paper orders; its results stay on the dashboard.")
+        when = "starts it within seconds" if _worker_running(app, pair) else "starts it when the worker is started"
+        return (f"{label} lane switched on for the {symbol} demo: the worker {when}{where}, "
+                "with its own paper account and results.")
     message = f"{label} saved for the {symbol} live worker: it runs it from its next start."
     running = _live_running_algorithm(app, pair) if _forward_worker_running(app, pair) else None
     if running and running != algorithm:
@@ -1076,11 +1148,15 @@ def _register_routes(app: Flask) -> None:
         algorithm = request.form.get("algorithm")
         target = request.form.get("target")
         pair = request.form.get("pair")
+        action = request.form.get("action") or "activate"
+        enabled = action == "activate"
         problem = None
         if algorithm not in SELECTABLE_ALGORITHMS:
             problem = "Unknown algorithm."
         elif target not in ("demo", "live"):
             problem = "Invalid target (expected demo or live)."
+        elif action not in ("activate", "deactivate") or (target == "live" and not enabled):
+            problem = "Invalid action (expected activate, or deactivate for a demo lane)."
         elif pair not in PAIRS:
             problem = "Invalid pair (expected btc or usdt)."
         elif target == "demo" and not _demo_managed(app):
@@ -1090,7 +1166,7 @@ def _register_routes(app: Flask) -> None:
                 return _error_page(400, problem)
             return (problem, 400)
         try:
-            result = _activate_algorithm(app, algorithm, target, pair)
+            result = _activate_algorithm(app, algorithm, target, pair, enabled)
         except (OperationInProgress, ResultTimeout) as exc:
             status, message = _control_error(exc)
             result = None
@@ -1101,7 +1177,7 @@ def _register_routes(app: Flask) -> None:
         if result is not None and not result.get("ok"):
             status, message = 502, _command_failure_message(result)
         elif result is not None:
-            message = _activation_message(app, algorithm, target, pair)
+            message = _activation_message(app, algorithm, target, pair, enabled)
             if _wants_html():
                 flash(message, "success")
                 return redirect(url_for("admin_algorithm_page", algorithm=algorithm))
@@ -1648,9 +1724,8 @@ def _register_routes(app: Flask) -> None:
         # Join against this app's own RESULTS_DIR (not the global profile
         # path) so a ro-mounted runtime/results in production, or a tmp
         # dir in tests, is what actually gets read.
-        csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
-        csv_path = os.path.join(app.config["RESULTS_DIR"], csv_name)
-        df = load_track(csv_path)  # dashboard.py's own pure loader -- not re-implemented here
+        store_paths = [str(path) for path in _demo_store_paths(app, pair)]
+        df = load_track(tuple(store_paths))  # dashboard.py's own pure loader -- every store of the pair
         # Scope to the running session. The CSV accumulates every session ever
         # run and round numbers restart at 1 in each, so without this the table
         # listed three different "Round 8" rows from three sessions -- and
@@ -1688,6 +1763,10 @@ def _register_routes(app: Flask) -> None:
     @login_required
     def admin_balances():
         balances = {pair: _ledger_account(app, pair) for pair in PAIRS}
+        lane_balances = {
+            pair: {lane: _lane_ledger_account(app, pair, lane) for lane in SELECTABLE_ALGORITHMS}
+            for pair in PAIRS
+        }
         if _wants_html():
             # Browsers get the configured starting point instead of an empty
             # state when a pair has no ledger yet this session (fresh session,
@@ -1701,12 +1780,13 @@ def _register_routes(app: Flask) -> None:
             }
             return render_template(
                 "admin/balances.html", balances=display_balances, is_starting=is_starting,
+                lane_balances=lane_balances, algorithm_labels=_algorithm_labels(),
                 fee_scopes=_fee_scopes_summary(app),
                 starting_cash_btc=TRADING_PROFILES["btc"]["cash_initial"],
                 starting_cash_usdt=TRADING_PROFILES["usdt"]["cash_initial"],
                 csrf_token=get_csrf_token(), session_id=_session_id(app),
             )
-        return jsonify(balances)
+        return jsonify(dict(balances, lanes=lane_balances))
 
     @app.route("/admin/logs")
     @login_required

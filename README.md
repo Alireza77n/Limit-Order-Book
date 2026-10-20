@@ -237,6 +237,7 @@ caps and sends the orders.
 | $G = (1+r_{\min})/(1-f)^2 - 1$ | gross bar | — |
 | $h$ | half-spread, a fraction of the centre | `algo3_half_spread` (0 = automatic) |
 | $n$, $T$ | hysteresis ticks and refresh time | `hysteresis_ticks` (5), `refresh_seconds` (300) |
+| $\omega$ | requote band, as a fraction of price | `requote_band_perc` (0.0003 = 0.03 %) |
 
 ## Step 1: the book signal
 
@@ -316,11 +317,14 @@ unprofitable.
 
 ## Step 6: keeping a pair that barely moved
 
-The previous pair is sent again while both new prices are within 5 ticks (50 rial) of it, the pair is younger
-than 300 s, and it still clears the bar. Its age runs from its first issue, so after 300 s a new pair is
-always issued. On USDT, 50 rial is about 0.0019 % of the price. On BTC it is $2.3 \times 10^{-10}$ of the
-price, so a BTC pair is kept only when the book has not moved at all. The engine separately skips sending an
-order when one of its own orders already rests within 5 ticks of the price.
+The previous pair is sent again while both new prices are within the **requote band** of it, the pair is
+younger than 300 s, and it still clears the bar. The band is the wider of 5 ticks (50 rial) and 0.03 % of
+the price (`requote_band_perc`): about 790 rial on USDT and 64 million rial on BTC. Its age runs from its
+first issue, so after 300 s a new pair is always issued. The engine uses the same band: it skips sending an
+order when one of its own already rests within the band of the price, and it cancels a resting order of ours
+that the new price has left outside the band, so at most one order rests per side (since 20 October 2026;
+before, the band was 50 rial on both pairs and orders piled up for 10 minutes — see
+[`MM_algo2.md` §19](docs/algorithms/MM_algo2.md#19-changes-of-20-october-2026-one-order-per-side-shorter-orders-higher-target-lanes)).
 
 ## MM_algo2 summary
 
@@ -470,11 +474,12 @@ same in both): `tick_size()`, `mid_price()`, `inventory_position()`, `gross_retu
 ## Stage 7 — engine-side checks
 
 The engine sizes the two orders by the inventory band: with no open orders, buy $= 2S(1-x)$ and sell $= 2Sx$.
-Resting orders count as if already filled. It then skips a side when one of its own orders already rests
-within 5 ticks of the price, when the size is below $0.1S$ or not affordable, when the buy would take the
-inventory above `inv_max`, and, in live, when the 25 % exposure guards would be exceeded. MM_algo2 always
-returns both prices; at the band edges it is the sizing that leaves one side out. Orders are cancelled after
-10 minutes. Details: [`PROJECT_GUIDE.md` §7](PROJECT_GUIDE.md#7-how-order-sizes-are-decided) and
+Resting orders count as if already filled. It then cancels a resting order of ours that the new price has
+left outside the requote band (one order per side), skips a side when one of its own orders already rests
+within the band of the price, when the trend pause blocks it (off by default), when the size is below $0.1S$
+or not affordable, when the buy would take the inventory above `inv_max`, and, in live, when the 25 %
+exposure guards would be exceeded. MM_algo2 always returns both prices; at the band edges it is the sizing
+that leaves one side out. Orders are cancelled after 3 minutes. Details: [`PROJECT_GUIDE.md` §7](PROJECT_GUIDE.md#7-how-order-sizes-are-decided) and
 [`docs/algorithms/MM_algo2.md` §6](docs/algorithms/MM_algo2.md#6-what-the-engine-does-with-the-quote).
 
 ---
@@ -500,7 +505,12 @@ tables follow, each with its active session ID next to it:
   confirmation), and a running worker keeps the algorithm it started with until it is stopped and started
   again. Every start is a new live session.
 * The same `algorithm` setting is the first field of *Config BTC/USDT* and *Live Config BTC/USDT*, next to
-  MM_algo2's own settings (`algo3_*`).
+  MM_algo2's own settings (`algo3_*`). **Since 20 October 2026 the demo runs every algorithm at once:** a
+  pair's demo worker runs each enabled algorithm (`algo1_enabled`, `algo3_enabled`) in its own lane, with its
+  own paper account and result files (`<pair>_track_demo_<lane>.*`); the Demo table of the Algorithm page
+  shows each lane's state (Running / Starting / Off) with its session as `MM_algo2 · <session id>`, and
+  *Activate* / *Switch off* start or stop one lane without touching the others. The live worker keeps one
+  algorithm per pair: two on one real wallet would trade against each other.
 
 **On the results dashboard** (`http://37.32.31.162/`). The first tab is **Algorithm**: **MM_algo1v2**,
 **MM_algo2**, or **All algorithms — side by side**.
@@ -688,7 +698,8 @@ MM_algo2:
 * **Its orders usually wait behind the best prices**, so fills are fewer than for a quote at the touch, and
   far fewer at the live fee.
 * **One side filling is not priced.** The skew and the sizing slow an accumulation; the band caps it.
-* **The hysteresis window is in ticks:** meaningful for USDT, almost nothing for BTC.
+* **The requote band is one fraction of the price for both pairs** (0.03 %): a narrower band replaces orders
+  more often, a wider one leaves a staler order; it replaced the 5-tick window on 20 October 2026.
 * **Demo results so far are hours, not days**: run MM_algo2 in demo for at least five days and check the
   validation gate before real money ([`MM_algo2.md` §17](docs/algorithms/MM_algo2.md#17-the-demo-to-real-gate)).
 

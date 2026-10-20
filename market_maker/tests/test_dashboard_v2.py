@@ -182,7 +182,7 @@ def test_deep_links_select_tab_track_and_session(monkeypatch):
     assert dashboard.refresh_session_options("btc_real", 0, None, "?session=s2")[1] == "s2"
     assert dashboard.refresh_session_options("btc_real", 0, None, "?session=all")[1] == "all"
     assert dashboard.refresh_session_options("btc_real", 0, None, "?session=missing")[1] == "all"
-    assert dashboard.refresh_session_options("btc_real", 1, "s1", "?session=s2")[1] == "s1"   # a made choice wins
+    assert dashboard.refresh_session_options("btc_real", 1, "s1", "?session=s2")[1] is no_update   # a made choice wins
 
 
 # ---------- decisions ----------

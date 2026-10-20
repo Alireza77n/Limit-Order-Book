@@ -87,19 +87,23 @@ active session and while the live workers run.
 
 ## Demo configuration synchronization
 
-> **Current field list:** `demo_config.FIELD_DEFINITIONS` is the source of truth (41 fields per pair in
-> the `MM_algo2` code; the table below is the original nine-field release). The first field on both config
-> pages is **`algorithm`**, a drop-down offering **MM_algo2** (this branch's algorithm, value `algo3`) and
-> **MM_algo1v2** (Algorithm 1 version 2, value `algo1`); each algorithm is shown under the git branch it was
-> built on. It is hot on the Demo page (the worker builds the new strategy at its next round, keeping its
-> session and ledger) and read at start on the Live Config page (the forward agent starts
-> `run.py --algorithm <value>`). The **Algorithm** page (`/admin/algorithm`, second menu item) is the simpler
-> way to switch: a drop-down of the algorithm names, then a Demo table (per pair: worker, algorithm now,
-> *Activate*; the active demo session next to it) and a Live table (per pair: worker, algorithm of the running
-> worker, algorithm saved for its next start, *Activate*; each live worker's active session next to it).
-> *Activate* goes through the same validation and control-queue actions as the config pages (`apply_config`,
-> `apply_forward_config`) and never starts or stops a live worker; the page also offers *Start a new demo
-> session*. The Overview and Live Forward pages carry the same drop-down, and Overview shows what each pair
+> **Current field list:** `demo_config.FIELD_DEFINITIONS` is the source of truth (46 fields per pair in
+> the `MM_algo2` code, 43 hot; the table below is the original nine-field release). The first field on both
+> config pages is **`algorithm`**, a drop-down offering **MM_algo2** (this branch's algorithm, value `algo3`)
+> and **MM_algo1v2** (Algorithm 1 version 2, value `algo1`); it is read at start by a live worker (the forward
+> agent starts `run.py --algorithm <value>`) and ignored by the demo worker, which since 20 October 2026 runs
+> every algorithm switched on by **`algo1_enabled`** / **`algo3_enabled`** at the same time, each in its own
+> *lane* with its own paper account, result files and runtime snapshot (`runtime_config_<pair>_<lane>.json`).
+> The **Algorithm** page (`/admin/algorithm`, second menu item) is the simpler way to switch: a drop-down of
+> the algorithm names, then a Demo table (per pair: worker, the chosen algorithm's lane state — Running,
+> Starting, Off, On with the worker stopped — its session as `MM_algo2 · <session id>`, the other lanes on,
+> and *Activate* / *Switch off*, which flip the lane's flag through `apply_config`; the worker starts or stops
+> the lane within seconds and the other lanes are untouched) and a Live table (per pair: worker, algorithm of
+> the running worker, algorithm saved for its next start, *Activate*; each live worker's active session next
+> to it). *Activate* goes through the same validation and control-queue actions as the config pages
+> (`apply_config`, `apply_forward_config`) and never starts or stops a live worker; the page also offers
+> *Start a new demo session*. The Sessions page labels a session with the algorithms it ran, the Balances
+> page shows one paper account per lane, and the Orders page carries the algorithm of each order. The Overview and Live Forward pages carry the same drop-down, and Overview shows what each pair
 > runs. The Docker stack's admin sets `LOB_FORWARD_ONLY_ADMIN=1`, which only makes it land on the Live Forward
 > page; it still manages the Demo. Only a panel without the Demo control queue shows no Demo table. MM_algo2's own
 > settings (`algo3_*`) are described in `docs/algorithms/MM_algo2.md` §15.
@@ -124,8 +128,8 @@ current field requires a worker or stack restart.
 The resolved desired values are pair-isolated in
 `demo_config_btc.json`/`demo_config_usdt.json`; writes are atomic and the
 prior overlay is retained as `.previous`. Workers own
-`runtime_config_<pair>.json`, which records the stack session, applied
-values, pending new-session values, desired digest, timestamp, and error.
+`runtime_config_<pair>.json` (a demo lane: `runtime_config_<pair>_<lane>.json`), which records the stack
+session, applied values, pending new-session values, desired digest, timestamp, and error.
 After the Demo worker owns its exclusive lease, it persists the initial
 paper-ledger seed through a public ledger API before config reload/run. The
 versioned paper state records this immutable `session_seed`; runtime status

@@ -47,6 +47,7 @@ The only exception is the design note's example in section 10, which is pinned b
 16. [Choosing MM_algo2 and reading its results](#16-choosing-mm_algo2-and-reading-its-results)
 17. [The demo-to-real gate](#17-the-demo-to-real-gate)
 18. [Limitations and failure modes](#18-limitations-and-failure-modes)
+19. [Changes of 20 October 2026: one order per side, shorter orders, higher target, lanes](#19-changes-of-20-october-2026-one-order-per-side-shorter-orders-higher-target-lanes)
 
 ---
 
@@ -318,7 +319,10 @@ is 0 as well. The levels play no part in the decision.
 MM_algo2 remembers the last pair it issued, $(B^\circ, A^\circ)$, and when it issued it. A new pair
 $(B, A)$ is replaced by $(B^\circ, A^\circ)$ when all four hold:
 
-* $\lvert B - B^\circ\rvert \le n\epsilon$ and $\lvert A - A^\circ\rvert \le n\epsilon$ (5 ticks = 50 rial);
+* $\lvert B - B^\circ\rvert \le w(B^\circ)$ and $\lvert A - A^\circ\rvert \le w(A^\circ)$, where the **requote
+  band** $w(p) = \max(n\epsilon,\ \omega p)$ is the wider of $n$ = `hysteresis_ticks` (5) ticks and
+  $\omega$ = `requote_band_perc` (0.0003, i.e. 0.03 %) of the price (`strategy/common.py`,
+  `requote_band`);
 * $(B^\circ, A^\circ)$ was issued less than $T$ = 300 s ago. The age runs from the first issue: keeping a
   pair does not restart its clock, so after 300 s a new pair is always issued;
 * $(B^\circ, A^\circ)$ still clears the fee bar.
@@ -326,13 +330,15 @@ $(B, A)$ is replaced by $(B^\circ, A^\circ)$ when all four hold:
 The quote then says `microprice_pair_kept` instead of `microprice_pair`. A round with no quote forgets the
 remembered pair, and so does a newly built strategy: a demo switch of algorithm, or a worker restart.
 
-The window is measured in ticks, so its weight depends on the price. For USDT, 50 rial is about 0.0019 %
-of the price. For BTC it is $2.3 \times 10^{-10}$ of the price, so a BTC pair is kept only when the book has
-not moved at all. In the real round of section 9, the new BTC prices differed from the remembered pair by
-about 1,040,000 rial, and the pair was replaced.
+Until 20 October 2026 the band was the ticks alone, 50 rial: about 0.0019 % of the USDT price and
+$2.3 \times 10^{-10}$ of the BTC price, so a BTC pair was kept only when the book had not moved at all (in
+the real round of section 9 the new prices differed from the remembered pair by about 1,040,000 rial). With
+$\omega$ = 0.03 % the band is about 790 rial on USDT (79 ticks) and about 64,000,000 rial on BTC, the same
+fraction of the price on both pairs.
 
-The engine has a second guard of the same width (section 6): it does not send an order when one of its own
-orders already rests within 5 ticks of the price.
+The engine uses the same band twice (section 6): it does not send an order when one of its own orders
+already rests within the band of the price, and it cancels a resting order of ours that the new price has
+left outside the band, so that at most one order rests per side.
 
 ---
 
@@ -357,7 +363,8 @@ up to $2S$; the buy is 0 at a full band and the sell is 0 at an empty one.
 
 | Order | Sell side | Buy side | Reason |
 |---|---|---|---|
-| 1 | an own sell already rests within 5 ticks of $A$ | an own buy rests within 5 ticks of $B$ | `resting_order_kept` |
+| 1 | an own sell already rests within the requote band $w(A)$ of $A$ | an own buy rests within $w(B)$ of $B$ | `resting_order_kept` |
+| 1b | the trend pause (below) blocks sells this round | it blocks buys this round | `trend_pause` |
 | 2 | live only: locked coins + this sell > 25 % of the coins | target $< 0.1S$ | `locked_inventory_limit` / `inventory_sizing` |
 | 3 | size $= \min(\text{target},\ \text{free coins} - q_{\min}) < 0.1S$ | $\min(\text{target},\ \text{free cash}/B) < 0.1S$ | `inventory_sizing`, `inventory_locked_in_open_orders`, `insufficient_inventory` / `insufficient_cash` |
 | 4 | — | open buys + coins + this buy $> q_{\max}$ | — / `inventory_cap` |
@@ -370,8 +377,22 @@ off in demo. A live worker records only "not sent", without the reason.
 "one-sided quote" skip never happens for it. At the band edges it is the sizing rule, not the strategy,
 that leaves one side out: at $x = 0$ the sell target is 0, and at $x = 1$ the buy target is 0.
 
-**Orders live 10 minutes.** Every resting order older than `cancel_after_minutes` (10) is cancelled at
-the start of a round; in demo, "older" means strictly more than 600 s.
+**One order per side (since 20 October 2026).** Before the caps, the engine cancels every resting order
+of ours on a side whose price lies outside the requote band of the new price for that side (`replaced` in
+the order's record); an order within the band is kept and the new one is not sent (cap 1). So a side has at
+most one resting order, which follows the quote in steps of at least the band. Until 20 October a new order
+was added whenever the price had moved by more than 5 ticks, while the old ones rested for 10 minutes: on the
+demo up to 11 (BTC) and 26 (USDT) of our orders were open at once, and most fills were of old orders that
+the market had run through (section 19).
+
+**Orders live 3 minutes.** Every resting order older than `cancel_after_minutes` (3, until 20 October 10) is
+cancelled at the start of a round; in demo, "older" means strictly more than 180 s.
+
+**Trend pause (off by default).** With `trend_pause_perc` $> 0$ and `trend_window_seconds` $> 0$, the
+engine keeps the mid of the last window; once the samples cover at least half the window, a fall of the mid
+by more than `trend_pause_perc` over the window blocks buys this round (no buy is sent, resting buys are
+cancelled with `trend_pause`), and a rise by as much blocks sells. Replayed on the demo's market of 11–17
+October it did not improve the result (section 19), so both profiles ship it off (`trend_pause_perc` = 0).
 
 ---
 
@@ -408,8 +429,10 @@ before this column existed count as MM_algo1v2.
 ### 7.3 The diagnostics document
 
 While `algo1_diagnostics_enabled` is on (it is, on the server), every round appends the strategy's whole
-evaluation to `<pair>irt_algo1_diagnostics.jsonl` in the results folder. That file name is historical and is
-shared by both algorithms; each document says which one wrote it (`"algorithm": "algo3"`). The file is
+evaluation to a JSONL file in the results folder: a demo lane writes `<pair>_track_demo_<lane>_diagnostics.jsonl`
+next to its own results (`btc_track_demo_algo3_diagnostics.jsonl` for MM_algo2 on BTC); a live worker and
+the single-worker demo of before 20 October write `<pair>irt_algo1_diagnostics.jsonl`, a historical name
+shared by both algorithms. Each document says which algorithm wrote it (`"algorithm": "algo3"`). The file is
 cut back to its newest rounds when it grows past twice `algo1_diagnostics_keep_rounds`. The dashboard's
 Quote decision tab reads it. MM_algo2's document holds:
 
@@ -745,7 +768,8 @@ sell of 0.133 USDT in the first round.
 All MM_algo2 settings are fields of both trading profiles in `config.py`. They are editable in the admin
 panel on *Config BTC/USDT* (demo: applied at the next round, except `commission_perc`, `cash_initial` and
 `demo_inv_initial`, which wait for the next demo session) and *Live Config BTC/USDT* (live: read when the
-worker is started). The algorithm itself is easiest to switch on the admin **Algorithm** page (section 16).
+worker is started). Which algorithms run is set on the admin **Algorithm** page (section 16): on the demo,
+every algorithm switched on runs at the same time in its own lane.
 
 | Setting | Admin label | Type, range | Default | Meaning |
 |---|---|---|---:|---|
@@ -760,6 +784,10 @@ worker is started). The algorithm itself is easiest to switch on the admin **Alg
 | `commission_perc`, `exp_ret_min` | Commission Perc, Exp Ret Min | | | $f$, $r_{\min}$: the fee bar (live forces $f \ge 0.25\%$) |
 | `inv_min`, `inv_max`, `order_size` | | | | the band and $S$ (sizing, the thin-book threshold) |
 | `hysteresis_ticks`, `refresh_seconds` | | | 5, 300 | $n$, $T$ (section 5.7; also the engine's resting-order guard) |
+| `requote_band_perc` | Requote Band Perc | 0–0.1 | 0.0003 | $\omega$: the requote band $w(p) = \max(n\epsilon, \omega p)$ (sections 5.7 and 6); a resting order outside it is replaced |
+| `cancel_after_minutes` | | ≥ 0 | 3 | the life of a resting order (section 6; 10 until 20 October 2026) |
+| `trend_window_seconds`, `trend_pause_perc` | | ≥ 0; 0–0.5 | 600, 0 (off) | the trend pause (section 6): a fall of the mid by more than the fraction over the window blocks buys, a rise blocks sells |
+| `algo1_enabled`, `algo3_enabled` | | | on, on | demo lanes: run MM_algo1v2 / MM_algo2 on this pair, each in its own lane (section 16); a live worker ignores them |
 | `depth_max` | | | 10 | levels read for the recorded bid and ask level |
 
 The other MM_algo1v2 settings (`grid_*`, `one_sided_*`, `ev_min`, `adverse_selection_perc`, `fill_*`,
@@ -771,17 +799,27 @@ The other MM_algo1v2 settings (`grid_*`, `one_sided_*`, `ev_min`, `adverse_selec
 
 * **Admin panel** (`https://37.32.31.162/admin/`): open **Algorithm** and choose "MM_algo2 — …" in the
   drop-down. Two tables follow, each with its active session ID.
-  * **Demo:** *Activate* on a pair, and the worker switches at its next round. It keeps the same session,
-    ledger and inventory, and the new strategy starts with no memory, so on the dashboard that session lists
-    both algorithms. *Start a new demo session* (same page, or *Workers → New Session*) starts a clean session
-    instead, which builds a fresh ledger from `cash_initial` and `demo_inv_initial`.
-  * **Live:** *Activate* saves the value in the pair's live configuration, and it is used when the worker is
+  * **Demo (lanes, since 20 October 2026):** a pair's demo worker runs every algorithm switched on at the
+    same time, each in its own *lane* with its own paper account (`paper_<session>_<pair>irt_<lane>.json`)
+    and its own results (`<pair>_track_demo_<lane>.csv` / `.sqlite3`). The table shows, per pair, the state
+    of the MM_algo2 lane (Running, Starting, Off, or On with the worker stopped), its session as
+    `MM_algo2 · <session id>`, the other lanes that are on, and *Activate* / *Switch off*, which flip
+    `algo3_enabled` in the pair's configuration (`apply_config`, like the Config page): the worker starts or
+    stops the lane within seconds and the other lanes are untouched. A lane that is switched off cancels its
+    open paper orders; its results stay. All lanes and both pairs share the one demo session; *Start a new
+    demo session* gives every lane a fresh paper account from `cash_initial` and `demo_inv_initial`.
+  * **Live:** *Activate* saves `algorithm` in the pair's live configuration, and it is used when the worker is
     next started: the forward agent starts `run.py --algorithm <saved value>`. Nothing is started there; a
-    running live worker keeps the algorithm it started with.
-  * The same setting is the first field (**Algorithm**) of *Config BTC/USDT* and *Live Config BTC/USDT*.
-* **Command line:** `python run.py --profile btc --mode demo --algorithm algo3` overrides the setting.
-* **Results dashboard** (`http://37.32.31.162/`): the first tab, **Algorithm**, lists **MM_algo1v2**,
-  **MM_algo2** and **All algorithms — side by side**.
+    running live worker keeps the algorithm it started with. A live worker runs one algorithm: two on one
+    real wallet would trade against each other.
+  * On *Config BTC/USDT* the lanes are the fields `algo1_enabled` and `algo3_enabled`; the **Algorithm** field
+    there is read by live workers only.
+* **Command line:** `python run.py --profile btc --mode demo` runs the lanes the configuration enables;
+  `--algorithm algo3` runs MM_algo2 alone in the single-worker files (`btc_track_demo.csv`).
+* **Results dashboard** (`http://37.32.31.162/`): per pair the tracks are *Live Forward Test*, *Demo
+  MM_algo1v2*, *Demo MM_algo2* (one per lane), *Demo, MM_algo1v2 and MM_algo2 side by side* (both lanes
+  together) and *Demo history* (the single worker until 20 October). The first tab, **Algorithm**, lists
+  **MM_algo1v2**, **MM_algo2** and **All algorithms — side by side**.
   * Choosing MM_algo2 shows its description, the settings in force, its headline numbers and two charts of
     its own (the imbalance over time, and where the centre sat relative to the mid). Every other tab then
     shows MM_algo2's rounds only.
@@ -822,9 +860,71 @@ days; then every measurable condition must pass. The tab computes them on the ch
 | The half-spread is the fee bar, not a choice | Every completed round trip earns about $r_{\min}$ (0.01 %) and nothing more. Nothing in the rule weighs the chance of a fill, or the cost of only one side filling. |
 | Quotes usually sit behind the touch (section 11) | Fewer fills than a quote at the best price. At the live fee ($2h \approx 0.51\%$) the orders wait far from the market. |
 | One side filling is not priced | When only the buy fills and the price keeps falling, the coins lose value: the inventory skew and the sizing only slow the accumulation; the band and `inv_max` cap it. |
-| The hysteresis window is in ticks | 5 ticks are meaningful for USDT and nearly nothing for BTC (section 5.7). |
+| The requote band is one fraction for both pairs | 0.03 % of the price is 79 ticks on USDT and about 64 million rial on BTC (section 5.7); a narrower band means more replacing, a wider one a staler order. |
 | Spoofing (large volume placed and pulled) | Limited by the clip $I_{\max}$ and by $\rho < 1$; harmless while $\beta = 0$, because only level 0 moves the microprice. |
 | A one-sided book over a long period | A lasting imbalance would make one side fill repeatedly once $\beta > 0$; the skew, the sizing and the band bound the position. |
-| No order book (for example HTTP 403) | No round is recorded; resting orders are cancelled by the 10-minute rule. |
+| No order book (for example HTTP 403) | No round is recorded; resting orders are cancelled by the 3-minute rule. |
 | Live BTC amounts are sent as `str(amount)`, e.g. `2.378e-05` | Not checked against Nobitex by the test suite; MM_algo2 sends such orders from its first live BTC round (section 13). |
-| The diagnostics file keeps the name `…_algo1_diagnostics.jsonl` | Historical name, shared by both algorithms; each document carries `algorithm`. |
+| The live diagnostics file keeps the name `…_algo1_diagnostics.jsonl` | Historical name, shared by both algorithms; a demo lane writes its own file (section 7.3); each document carries `algorithm`. |
+| A fall of the price over hours is not caught by anything | The inventory skew (0.2 % at the band edges) and the sizing slow the accumulation of coins but do not stop it; the trend pause of section 6 did not help on the recorded market (section 19). |
+
+---
+
+## 19. Changes of 20 October 2026: one order per side, shorter orders, higher target, lanes
+
+The demo of 15–17 October (fee 0.08 %, target 0.01 %) lost 20 million rial on 1 billion per pair. The
+analysis in `Report_investor/demo_analysis/` (every number from the recorded rounds and the paper ledgers)
+found three causes, and the engine rules below answer the first two. The third, the price falling while coins
+are held, is the inventory risk of any symmetric quoter; see section 18.
+
+**What the ledgers showed.**
+
+* Every one of the 958 demo fills was a `price_touch`: the demo fills an order only when the opposite best
+  price reaches it, so each fill came at a moment the market had run through our price. The planned edge of
+  a BTC order was +0.16 % against the mid; the realised edge at the fill was −0.08 %.
+* The engine's "resting order kept" rule used 5 ticks (50 rial), nothing on BTC. A new order was added almost
+  every round while the old ones rested for 10 minutes: on average 7 buys and 6 sells of ours were open at
+  once on BTC (up to 11), 12 and 8 on USDT (up to 26). 62 % of the BTC fills and 88 % of the USDT fills were
+  of orders at least seven rounds old; the fills of fresh orders (first round) had a positive edge.
+* Of the round trips, 60–74 % sold below the price paid, because the sell follows the market, not the cost.
+
+**The rules, and what the replay says.** `demo_analysis/simulator.py` replays each algorithm's own code on
+the recorded market (fills by the demo's touch rule; it reproduces the demo's result within 2–8 %). Fee
+0.08 %, 1 billion rial per pair; BTC MM_algo2 over 53.8 h, USDT MM_algo2 over 28.1 h of the 15–17 October
+market (`results/t18_new_rules.csv`, `t19_trend_variants.csv`):
+
+| Rule | BTC MM_algo2: result, fills, time at the best price | USDT MM_algo2 |
+|---|---|---|
+| demo settings (target 0.01 %, 10-minute orders, stacking) | −1.90 %, 1,015 fills, 81 % | −2.15 %, 1,806 fills, 57 % |
+| requote band 0.03 % with replacement (one order per side) | **−0.69 %**, 183 fills, 50 % | **−0.72 %**, 132 fills, 7 % |
+| + orders live 3 minutes | −0.69 %, 182, 50 % | −0.71 %, 128, 7 % |
+| + target 0.20 % | −0.56 %, 39, 9 % | −0.48 %, 31, 1 % |
+| + trend pause 0.3 % over 10 min, both sides | −0.62 %, 37, 11 % | −0.47 %, 30, 1 % |
+| the same, fee 0 and fills also at trades through our price | **+0.04 %**, 730, 38 % | −0.46 %, 322, 2 % |
+
+* **Requote band in percent, with replacement** (`requote_band_perc` = 0.0003; sections 5.7 and 6) is the
+  change that matters: it removes the stacking and cuts the loss by about two thirds. The trading loss
+  (fills against the mid) falls from −19.9 M to −3.5 M rial on BTC; what remains is mostly the coins losing
+  value in a falling market (BTC fell 1.9 % over the six days of the replay, USDT 1.5 % over 15–17 October).
+* **Orders live 3 minutes** (`cancel_after_minutes` = 3): little effect once replacement is on; kept because
+  an order that no longer follows the quote should not rest for ten minutes.
+* **Target 0.20 %** (`exp_ret_min` = 0.002, the operator's requirement until real fills are measured): it
+  widens MM_algo2's half-spread to 0.18 %, above the BTC market spread (0.125 %) and far above USDT's
+  (0.05 %), so the quotes sit at the best price 9 % (BTC) and 1 % (USDT) of the time instead of 50 % and
+  7 %. Less loss, far less liquidity: the trade-off to revisit once fills are measured on a real account.
+* **Trend pause** (`trend_window_seconds`, `trend_pause_perc`): tested at 0.2 % / 5 min, 0.3 % / 10 min and
+  0.5 % / 15 min, on buys only and on both sides. None improved the replay (BTC −0.56 % → −0.57 % to −0.64 %;
+  USDT unchanged). The falls that cost money last hours, not minutes. Shipped off, available on the Config
+  pages.
+* **Both algorithms** share these engine rules; MM_algo1v2's own hysteresis uses the same band.
+* Under the demo's touch rule MM_algo1v2 barely trades with replacement on (its candidates jump between book
+  levels, so an order rarely survives long enough to be run through), which says more about the demo's fill
+  model than about the algorithm: the demo never sees a taker trading into a resting order. A real account,
+  or trades from the exchange, is needed to measure fills.
+
+**Lanes.** The same day the demo worker gained lanes (section 16): one engine per enabled algorithm, in a
+thread of the pair's worker, with its own paper account, result files and runtime snapshot
+(`runtime_config_<pair>_<lane>.json`), so both algorithms run on the same market at the same time and can
+be compared on the dashboard without switching. The server has 2 GB of memory, which is why they are
+threads of one process per pair rather than more containers.
+

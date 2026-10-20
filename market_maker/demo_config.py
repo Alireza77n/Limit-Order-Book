@@ -55,7 +55,9 @@ class RuntimeReloadResult:
 
 FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     # ---- Which algorithm runs (strategy/catalog.py); first, so the config pages show it on top ----
-    "algorithm": FieldDefinition(str, None, None, ApplicationMode.HOT, "Quoting algorithm. algo1: distance grid, fill probabilities and expected value. algo3: order-book imbalance, microprice and a fixed spread. A Demo worker switches at its next round; a live worker reads it when it is started.", choices=ALGORITHM_CHOICES),
+    "algorithm": FieldDefinition(str, None, None, ApplicationMode.HOT, "Live worker: the quoting algorithm it runs, read when it is started. algo1: distance grid, fill probabilities and expected value. algo3: order-book imbalance, microprice and a fixed spread. The Demo worker ignores it: it runs every algorithm enabled below, each in its own lane.", choices=ALGORITHM_CHOICES),
+    "algo1_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Demo only: run MM_algo1v2 (algo1) on this pair in its own lane, with its own paper account and result files. The lane starts or stops at the worker's next check."),
+    "algo3_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Demo only: run MM_algo2 (algo3) on this pair in its own lane, with its own paper account and result files. The lane starts or stops at the worker's next check."),
     "order_size": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Base amount per order. With inventory sizing on, each side is scaled around this amount (0 to 2x at strength 1)."),
     "inventory_sizing_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Scale buy and sell sizes linearly with inventory: buy more when inventory is low, sell more when it is high. Off sends a fixed order_size on both sides."),
     "inventory_sizing_strength": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Slope k of the linear rule. 0 keeps a fixed order_size; 1 makes the buy reach zero at inv_max and the sell reach zero at inv_min."),
@@ -83,8 +85,11 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "cost_basis_reference": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Judge a lone SELL against the average price we paid for the inventory (when known) instead of the current quote centre."),
     "ev_min": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Expected-value floor per order lifetime (fraction of capital); pairs below it are not quoted even if they clear the profit bar."),
     "adverse_selection_perc": FieldDefinition(float, 0, 0.1, ApplicationMode.HOT, "Average loss charged in the expected value when only one leg fills, as a fraction of price (measured from the price move after fills; 0 at first)."),
-    "hysteresis_ticks": FieldDefinition(int, 0, 10000, ApplicationMode.HOT, "Keep a resting order while the new price is within this many ticks of it and it is younger than refresh_seconds. 0 = re-quote every round."),
+    "hysteresis_ticks": FieldDefinition(int, 0, 10000, ApplicationMode.HOT, "Keep a resting order while the new price is within this many ticks of it (or within requote_band_perc, whichever band is wider) and it is younger than refresh_seconds. 0 = ticks play no part."),
     "refresh_seconds": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Age after which a resting order is re-quoted even when its price barely moved."),
+    "requote_band_perc": FieldDefinition(float, 0, 0.1, ApplicationMode.HOT, "Requote band as a fraction of price (0.0003 = 0.03%). A resting order of ours is kept while the new price is within the band; a new price outside it cancels the resting order and replaces it, so at most one order rests per side. 0 = ticks only."),
+    "trend_window_seconds": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Trend pause window: the mid's move is measured over this many seconds. 0 = no trend pause."),
+    "trend_pause_perc": FieldDefinition(float, 0, 0.5, ApplicationMode.HOT, "Trend pause: when the mid fell by more than this fraction over the window, no buy is placed and resting buys are cancelled; when it rose by more than this, the same for sells. 0 = no trend pause."),
     "fill_table_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Use the measured fill-probability table (fill_table_<pair>.json) when it is fresh; off = formula only."),
     "fill_table_max_age_hours": FieldDefinition(float, 0, None, ApplicationMode.HOT, "A fill table older than this is ignored and the formula is used."),
     "fill_table_min_samples": FieldDefinition(int, 0, None, ApplicationMode.HOT, "Table buckets with fewer observations than this fall back to the formula."),
@@ -212,7 +217,11 @@ def overlay_path(state_dir: PathLike, pair: str) -> Path:
     return Path(state_dir) / f"demo_config_{pair}.json"
 
 
-def runtime_snapshot_path(state_dir: PathLike, pair: str) -> Path:
+def runtime_snapshot_path(state_dir: PathLike, pair: str, lane: Optional[str] = None) -> Path:
+    """The worker's published runtime truth; a demo lane (one algorithm of a
+    pair's worker) publishes its own file, runtime_config_<pair>_<lane>.json."""
+    if lane:
+        return Path(state_dir) / f"runtime_config_{pair}_{lane}.json"
     return Path(state_dir) / f"runtime_config_{pair}.json"
 
 
@@ -497,9 +506,11 @@ def _restore_file(path: Path, existed: bool, content: Optional[bytes]) -> None:
         path.unlink()
 
 
-def read_runtime_snapshot(state_dir: PathLike, pair: str) -> Optional[Dict[str, Any]]:
+def read_runtime_snapshot(
+    state_dir: PathLike, pair: str, lane: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
     """Read a worker-owned runtime snapshot, or ``None`` when absent."""
-    path = runtime_snapshot_path(state_dir, pair)
+    path = runtime_snapshot_path(state_dir, pair, lane)
     if not path.exists():
         return None
     try:
@@ -514,14 +525,14 @@ def read_runtime_snapshot(state_dir: PathLike, pair: str) -> Optional[Dict[str, 
 
 
 def write_runtime_snapshot(
-    state_dir: PathLike, pair: str, document: Dict[str, Any]
+    state_dir: PathLike, pair: str, document: Dict[str, Any], lane: Optional[str] = None
 ) -> Dict[str, Any]:
     """Atomically publish a worker-owned runtime snapshot."""
     if not isinstance(document, dict):
         raise OverlayValidationError("runtime snapshot must be a dict")
     if document.get("pair") != pair:
         raise OverlayValidationError("runtime snapshot pair does not match target pair")
-    _atomic_write(runtime_snapshot_path(state_dir, pair), document)
+    _atomic_write(runtime_snapshot_path(state_dir, pair, lane), document)
     return document
 
 
@@ -603,12 +614,18 @@ class RuntimeConfigSynchronizer:
         pair: str,
         state_dir: PathLike,
         profiles: Mapping[str, Mapping[str, Any]],
+        lane: Optional[str] = None,
     ) -> None:
+        """``lane``: the algorithm key of a demo lane. A lane publishes its
+        snapshot to runtime_config_<pair>_<lane>.json and keeps its own
+        ``algorithm`` (the overlay's ``algorithm`` field is reported as
+        applied but never changes the lane's strategy)."""
         self.cfg = cfg
         self.ledger = ledger
         self.pair = pair
         self.state_dir = Path(state_dir)
         self.profiles = profiles
+        self.lane = lane
         self._desired_digest: Optional[str] = None
         self._session_values = {
             "demo_inv_initial": float(ledger.initial_inventory),
@@ -622,6 +639,8 @@ class RuntimeConfigSynchronizer:
         for field, definition in schema.items():
             if definition.mode is ApplicationMode.NEW_SESSION:
                 applied[field] = self._session_values[field]
+            elif field == "algorithm" and self.lane and field in desired:
+                applied[field] = desired[field]      # a lane's algorithm is pinned; the field is live-only
             else:
                 applied[field] = getattr(self.cfg, field)
         return applied
@@ -658,7 +677,7 @@ class RuntimeConfigSynchronizer:
         self._desired_digest = None
         message = f"{type(error).__name__}: {error}"
         try:
-            previous = read_runtime_snapshot(self.state_dir, self.pair)
+            previous = read_runtime_snapshot(self.state_dir, self.pair, self.lane)
         except OverlayLoadError:
             previous = None
         if previous is None or previous.get("session_id") != str(self.cfg.session):
@@ -680,7 +699,7 @@ class RuntimeConfigSynchronizer:
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
         try:
-            write_runtime_snapshot(self.state_dir, self.pair, snapshot)
+            write_runtime_snapshot(self.state_dir, self.pair, snapshot, self.lane)
         except (OSError, OverlayValidationError) as write_error:
             message = f"{message}; snapshot publish failed: {write_error}"
         return RuntimeReloadResult(ok=False, error=message, snapshot=snapshot)
@@ -694,7 +713,7 @@ class RuntimeConfigSynchronizer:
 
         if digest == self._desired_digest:
             try:
-                current_snapshot = read_runtime_snapshot(self.state_dir, self.pair)
+                current_snapshot = read_runtime_snapshot(self.state_dir, self.pair, self.lane)
             except OverlayLoadError:
                 current_snapshot = None
             if current_snapshot is not None and current_snapshot.get("status") == "applied":
@@ -705,6 +724,7 @@ class RuntimeConfigSynchronizer:
             field: desired[field]
             for field, definition in schema.items()
             if definition.mode is ApplicationMode.HOT
+            and not (field == "algorithm" and self.lane)      # a lane's algorithm is pinned
         }
         changed_fields = tuple(
             field for field, value in hot_values.items()
@@ -764,7 +784,7 @@ class RuntimeConfigSynchronizer:
             error=None,
         )
         try:
-            write_runtime_snapshot(self.state_dir, self.pair, snapshot)
+            write_runtime_snapshot(self.state_dir, self.pair, snapshot, self.lane)
         except (OSError, OverlayValidationError) as error:
             for field, value in previous_hot_values.items():
                 setattr(self.cfg, field, value)

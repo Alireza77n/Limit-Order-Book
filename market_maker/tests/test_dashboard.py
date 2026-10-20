@@ -295,8 +295,11 @@ def test_validation_tab_renders_inventory_chart_from_snapshot_timestamp():
 # dropdown's options AND value. It fires on every 20s auto-refresh tick as
 # well as on a track change -- it used to unconditionally reset the value to
 # "all" every time it fired, which reset an operator's manual session
-# selection every ~20 seconds. These pin the fixed behavior directly against
-# the callback function (Dash's @app.callback returns the plain function, so
+# selection every ~20 seconds; later it echoed the value it was called with,
+# which still undid a selection made while a tick's request was pending (the
+# response wrote the earlier value back). Now it leaves an existing choice
+# alone (no_update). These pin the fixed behavior directly against the
+# callback function (Dash's @app.callback returns the plain function, so
 # it's callable/testable exactly like any other function -- no Dash server
 # needed).
 
@@ -325,7 +328,22 @@ def test_session_selector_preserves_manual_selection_across_ticks(monkeypatch):
 
     for tick in range(1, 6):
         options, value = dashboard.refresh_session_options("btc_real", tick, "s1")
-        assert value == "s1", f"selection reset on tick {tick}"
+        assert value is dashboard.no_update, f"selection written back on tick {tick}"
+
+
+def test_session_selector_does_not_echo_the_value_a_pending_tick_was_called_with(monkeypatch):
+    """The 20 October 2026 report: the picker "jumped back to All sessions"
+    right after a session was chosen. The tick's request had been made with
+    "all" as State and its response landed after the choice; echoing "all"
+    undid it. The callback must not write a value that is still valid."""
+    import dashboard
+
+    monkeypatch.setattr(dashboard, "load_track", lambda path: _sessions_df("s1", "s2"))
+
+    options, value = dashboard.refresh_session_options("btc_real", 4, "all")
+
+    assert value is dashboard.no_update
+    assert {o["value"] for o in options} == {"all", "s1", "s2"}      # the entries are still refreshed
 
 
 def test_session_selector_falls_back_to_all_when_selected_session_vanishes(monkeypatch):
@@ -346,7 +364,7 @@ def test_session_selector_keeps_all_selection_across_ticks(monkeypatch):
 
     options, value = dashboard.refresh_session_options("btc_real", 3, "all")
 
-    assert value == "all"
+    assert value is dashboard.no_update
 
 
 def test_session_selector_options_reflect_new_data_even_when_value_preserved(monkeypatch):
@@ -358,7 +376,7 @@ def test_session_selector_options_reflect_new_data_even_when_value_preserved(mon
 
     options, value = dashboard.refresh_session_options("btc_real", 7, "s1")
 
-    assert value == "s1"
+    assert value is dashboard.no_update
     values = [o["value"] for o in options]
     assert "s3-new" in values
 

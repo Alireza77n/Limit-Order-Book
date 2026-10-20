@@ -42,6 +42,8 @@ EXPECTED = {
     "algorithm": "hot",
     "algo3_depth_k": "hot", "algo3_decay_rho": "hot", "algo3_beta": "hot", "algo3_half_spread": "hot",
     "algo3_min_volume_orders": "hot", "algo3_imbalance_clip": "hot",
+    "requote_band_perc": "hot", "trend_window_seconds": "hot", "trend_pause_perc": "hot",
+    "algo1_enabled": "hot", "algo3_enabled": "hot",
 }
 
 HIDDEN_SAFE_DEFAULT_FIELDS = {

@@ -68,22 +68,48 @@ from validation.reports import generate_validation_report, format_metric_card
 # config.TRADING_PROFILES -- the same dict run.py builds MMConfig from --
 # so the dashboard always agrees with run.py about where results live.
 FORWARD_RESULTS_DIR = os.environ.get("LOB_FORWARD_RESULTS_DIR", RESULTS_DIR)
-TRACKS = {
-    "btc_real": {
-        "label": "BTC — Live Forward Test",
-        "path": os.path.join(FORWARD_RESULTS_DIR, "btc_track.csv"),
-        "status": "real",
-    },
-    "btc_demo": {"label": "BTC — Demo (paper trading)",
-                 "path": demo_csv_path(TRADING_PROFILES["btc"]["output_csv"]), "status": "demo"},
-    "usdt_real": {
-        "label": "USDT — Live Forward Test",
-        "path": os.path.join(FORWARD_RESULTS_DIR, "usdt_track.csv"),
-        "status": "real",
-    },
-    "usdt_demo": {"label": "USDT — Demo (paper trading)",
-                  "path": demo_csv_path(TRADING_PROFILES["usdt"]["output_csv"]), "status": "demo"},
-}
+
+
+def _lane_csv_path(pair: str, lane: str) -> str:
+    """A demo lane's result file, as run.py's apply_lane_paths names it:
+    <pair>_track_demo_<lane>.csv (the SQLite store sits next to it)."""
+    stem, extension = os.path.splitext(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
+    return f"{stem}_{lane}{extension}"
+
+
+def _build_tracks() -> Dict[str, Dict[str, Any]]:
+    """Every track this project can produce, per pair: the live forward test,
+    one demo track per algorithm (the lanes the demo worker runs at the same
+    time, each with its own paper account), the two lanes side by side, and
+    the history of the single-algorithm demo worker (until 20 October 2026)."""
+    tracks: Dict[str, Dict[str, Any]] = {}
+    for pair in ("btc", "usdt"):
+        name = pair.upper()
+        tracks[f"{pair}_real"] = {
+            "label": f"{name} — Live Forward Test",
+            "path": os.path.join(FORWARD_RESULTS_DIR, f"{pair}_track.csv"),
+            "status": "real", "lane": None,
+        }
+        lane_paths = []
+        for lane in SELECTABLE_ALGORITHMS:
+            path = _lane_csv_path(pair, lane)
+            lane_paths.append(path)
+            tracks[f"{pair}_demo_{lane}"] = {
+                "label": f"{name} — Demo {algorithm_label(lane)}",
+                "path": path, "status": "demo", "lane": lane,
+            }
+        tracks[f"{pair}_demo_lanes"] = {
+            "label": f"{name} — Demo, {' and '.join(algorithm_label(k) for k in SELECTABLE_ALGORITHMS)} side by side",
+            "path": tuple(lane_paths), "status": "demo", "lane": None,
+        }
+        tracks[f"{pair}_demo"] = {
+            "label": f"{name} — Demo history (one worker, until 20 Oct 2026)",
+            "path": demo_csv_path(TRADING_PROFILES[pair]["output_csv"]), "status": "demo", "lane": None,
+        }
+    return tracks
+
+
+TRACKS = _build_tracks()
 
 # Production can deliberately expose only the isolated live-forward result
 # streams.  Keeping this as an environment switch preserves the paper-mode
@@ -177,16 +203,26 @@ _TRACK_CACHE_LOCK = threading.Lock()
 _TRACK_LOAD_LOCKS: Dict[str, threading.Lock] = {}
 
 
-def _track_signature(path: Path) -> tuple:
+def _track_paths(path) -> List[str]:
+    """A track's result files: one path, or several for a combined track."""
+    if isinstance(path, (tuple, list)):
+        return [str(item) for item in path]
+    return [str(path)]
+
+
+def _track_signature(path) -> tuple:
     """What must change for a track to be re-read: the SQLite file, its
-    write-ahead log (appends land there first) and the CSV fallback."""
+    write-ahead log (appends land there first) and the CSV fallback, of
+    every file of the track."""
     parts = []
-    for candidate in (path.with_suffix(".sqlite3"), path.with_suffix(".sqlite3-wal"), path):
-        try:
-            stat = candidate.stat()
-            parts.append((candidate.name, stat.st_mtime_ns, stat.st_size))
-        except OSError:
-            parts.append((candidate.name, None, None))
+    for item in _track_paths(path):
+        p = Path(item)
+        for candidate in (p.with_suffix(".sqlite3"), p.with_suffix(".sqlite3-wal"), p):
+            try:
+                stat = candidate.stat()
+                parts.append((candidate.name, stat.st_mtime_ns, stat.st_size))
+            except OSError:
+                parts.append((candidate.name, None, None))
     return tuple(parts)
 
 
@@ -202,8 +238,8 @@ def load_track(path: str, session_id=None) -> Optional[pd.DataFrame]:
     has no rows -- callers show a "no data yet" state. Reads are cached
     until one of the files changes, so the callbacks of one refresh tick
     share a single load."""
-    key = (path, None if session_id is None else str(session_id))
-    signature = _track_signature(Path(path))
+    key = (tuple(_track_paths(path)), None if session_id is None else str(session_id))
+    signature = _track_signature(path)
     with _TRACK_CACHE_LOCK:
         cached = _TRACK_CACHE.get(key)
         load_lock = _TRACK_LOAD_LOCKS.setdefault(key, threading.Lock())
@@ -225,29 +261,32 @@ def load_track(path: str, session_id=None) -> Optional[pd.DataFrame]:
     return None if frame is None else frame.copy()
 
 
-def available_sessions(path: str) -> Optional[List]:
+def available_sessions(path) -> Optional[List]:
     """Every session of a track, newest first, however old (from the
     store's summary); falls back to the loaded frame for CSV-only tracks.
     None when the track has no data."""
-    store_path = Path(path).with_suffix(".sqlite3")
-    if store_path.exists():
-        try:
-            summary = DemoResultStore.open_existing(store_path).session_summary()
-        except Exception:
-            summary = None
-        if summary:
-            return [row["session_id"] for row in summary][::-1]
+    detail = available_sessions_detail(path)
+    if detail is not None:
+        return [row["session_id"] for row in detail]
     df = load_track(path)
     if df is None:
         return None
     return session_ids(df)
 
 
-def _read_track(path: str, max_rows: Optional[int] = None, session_id=None) -> Optional[pd.DataFrame]:
+def _read_track(path, max_rows: Optional[int] = None, session_id=None) -> Optional[pd.DataFrame]:
     """The newest ``max_rows`` (default MAX_ROWS) rounds of a track, of one
-    session when ``session_id`` is given."""
+    session when ``session_id`` is given. A combined track (several files)
+    is the newest rounds of each file, oldest first together."""
     limit = MAX_ROWS if max_rows is None else max(1, int(max_rows))
-    p = Path(path)
+    paths = _track_paths(path)
+    if len(paths) > 1:
+        frames = [frame for frame in (_read_track(item, max_rows, session_id) for item in paths) if frame is not None]
+        if not frames:
+            return None
+        combined = pd.concat(frames, ignore_index=True)
+        return combined.sort_values("Timestamp", kind="stable").reset_index(drop=True)
+    p = Path(paths[0])
     store_path = p.with_suffix(".sqlite3")
     df = None
     if store_path.exists():
@@ -276,9 +315,11 @@ def _read_track(path: str, max_rows: Optional[int] = None, session_id=None) -> O
 def default_track() -> str:
     """The track whose result store was written most recently (the running
     workers), so the page opens on live data; the first track when none has
-    data yet."""
+    data yet. Combined tracks are skipped: a lane of their own wins."""
     newest, newest_mtime = None, None
     for key, track in TRACKS.items():
+        if isinstance(track["path"], (tuple, list)):
+            continue
         path = Path(track["path"])
         for candidate in (path.with_suffix(".sqlite3"), path):
             try:
@@ -404,6 +445,8 @@ def track_settings(track_key: str) -> Dict[str, Any]:
         "fill_table_min_samples", "fill_queue_volume_ref",
         "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
         "algo3_min_volume_orders", "algo3_imbalance_clip",
+        "requote_band_perc", "trend_window_seconds", "trend_pause_perc",
+        "algo1_enabled", "algo3_enabled",
     )
     settings = {key: profile.get(key) for key in keys}
     overlay: Dict[str, Any] = {}
@@ -426,6 +469,9 @@ def track_settings(track_key: str) -> Dict[str, Any]:
     gross = settings["gross_bar"]
     settings["algo3_h_min"] = gross / (2.0 + gross) if math.isfinite(gross) else 1.0
     settings["algorithm"] = str(settings.get("algorithm") or DEFAULT_ALGORITHM)
+    lane = TRACKS.get(track_key, {}).get("lane")
+    if lane:
+        settings["algorithm"] = lane      # a lane runs its own algorithm whatever the field says
     return settings
 
 
@@ -623,6 +669,15 @@ def load_fill_table(path: str) -> Optional[Dict[str, Any]]:
 
 
 def diagnostics_path(track_key: str) -> str:
+    """The decision documents of a track: a demo lane writes its own file
+    next to its results (<pair>_track_demo_<lane>_diagnostics.jsonl); the
+    live worker and the single-worker history share the historical name.
+    A combined track has none (its lanes do)."""
+    track = TRACKS.get(track_key, {})
+    if isinstance(track.get("path"), (tuple, list)):
+        return os.path.join(_results_dir_of(track_key), f"{track_key}_no_diagnostics.jsonl")
+    if track.get("lane"):
+        return f"{os.path.splitext(track['path'])[0]}_diagnostics.jsonl"
     return os.path.join(_results_dir_of(track_key), f"{_symbol_of(track_key)}_algo1_diagnostics.jsonl")
 
 
@@ -876,12 +931,26 @@ def algorithms_in_rows(df: pd.DataFrame) -> List[str]:
     return sorted(present, key=lambda key: (algorithm_info(key).number, key))
 
 
-def available_sessions_detail(path: str) -> Optional[List[Dict[str, Any]]]:
+def available_sessions_detail(path) -> Optional[List[Dict[str, Any]]]:
     """Every session of a track, newest first, with the algorithms its
     rounds ran (in the order they first ran) and the rounds of each: from
     the store's summary, else from the loaded frame. None when the track
-    has no data."""
-    store_path = Path(path).with_suffix(".sqlite3")
+    has no data. A combined track merges its files' sessions."""
+    paths = _track_paths(path)
+    if len(paths) > 1:
+        merged: Dict[str, Dict[str, Any]] = {}
+        for item in paths:
+            for row in available_sessions_detail(item) or []:
+                entry = merged.setdefault(row["session_id"], {"session_id": row["session_id"], "algorithms": [], "algorithm_rounds": {}})
+                for key in row["algorithms"]:
+                    if key not in entry["algorithms"]:
+                        entry["algorithms"].append(key)
+                for key, count in row.get("algorithm_rounds", {}).items():
+                    entry["algorithm_rounds"][key] = entry["algorithm_rounds"].get(key, 0) + int(count)
+        if not merged:
+            return None
+        return sorted(merged.values(), key=lambda row: str(row["session_id"]), reverse=True)
+    store_path = Path(paths[0]).with_suffix(".sqlite3")
     if store_path.exists():
         try:
             summary = DemoResultStore.open_existing(store_path).session_summary()
@@ -928,6 +997,8 @@ def where_algorithm_ran(algorithm: str) -> List[Dict[str, Any]]:
     session first, with its rounds of that algorithm."""
     found = []
     for track_key, track in TRACKS.items():
+        if isinstance(track["path"], (tuple, list)):
+            continue                      # its lanes are listed on their own
         for row in available_sessions_detail(track["path"]) or []:
             if algorithm in row["algorithms"]:
                 found.append({"track": track_key, "label": track["label"], "session_id": row["session_id"],
@@ -986,11 +1057,17 @@ def _demo_worker_running(pair: str) -> bool:
 
 
 def load_effective_demo_config(track_key: str) -> Optional[dict]:
-    """Resolve desired and current-session runtime config for a Demo track."""
+    """Resolve desired and current-session runtime config for a Demo track:
+    a lane's own runtime snapshot (runtime_config_<pair>_<lane>.json), the
+    single-worker snapshot for the history track, nothing for a combined
+    track (its lanes have their own panels)."""
     track = TRACKS.get(track_key)
-    pair = track_key.removesuffix("_demo")
+    pair = _pair_of(track_key)
     if not track or track["status"] != "demo" or pair not in TRADING_PROFILES:
         return None
+    if isinstance(track["path"], (tuple, list)):
+        return None
+    lane = track.get("lane")
 
     state_dir = Path(DEMO_STATE_DIR)
     desired_error = None
@@ -1001,7 +1078,7 @@ def load_effective_demo_config(track_key: str) -> Optional[dict]:
         desired_error = str(error)
     runtime_error = None
     try:
-        snapshot = read_runtime_snapshot(state_dir, pair)
+        snapshot = read_runtime_snapshot(state_dir, pair, lane)
     except OverlayLoadError as error:
         snapshot = None
         runtime_error = str(error)
@@ -1908,12 +1985,16 @@ def show_algorithm_picker(active_tab):
               Input("track", "value"), Input("tick", "n_intervals"),
               State("session", "value"), State("url", "search"))
 def refresh_session_options(track_key, _, current_value, search=None):
-    """Default the session picker to "All sessions (compare)" on first
-    load (or to the session named in the deep link), not the newest single
-    session, and keep the operator's choice across auto-refresh ticks
-    (State never fires a callback); fall back to "all" only when the
-    selected session no longer exists. Every session is labelled with the
-    algorithm(s) its rounds ran."""
+    """Rebuild the session picker's entries (every session is labelled with
+    the algorithm(s) its rounds ran) and default the picker to "All sessions
+    (compare)" on first load, or to the session named in the deep link, not
+    to the newest single session. The value is written only when it has to
+    change: a tick's response carries the value the picker had when the
+    request was made, and when the operator picked a session meanwhile
+    (the heavier callbacks of the same tick queue ahead of this one),
+    writing that earlier value back would undo the choice -- the picker
+    "jumped back to All sessions". A choice that still exists is left alone
+    (no_update); only a session that no longer exists falls back to "all"."""
     detail = available_sessions_detail(TRACKS[track_key]["path"])
     if detail is None:
         return [], None
@@ -1923,10 +2004,9 @@ def refresh_session_options(track_key, _, current_value, search=None):
     ]
     if current_value is None:
         wanted = _url_params(search).get("session")
-        if wanted == "all" or wanted in ids:
-            return options, wanted
+        return options, (wanted if wanted == "all" or wanted in ids else "all")
     if current_value == "all" or current_value in ids:
-        return options, current_value
+        return options, no_update
     return options, "all"
 
 
@@ -2157,14 +2237,16 @@ def _no_rounds_for_algorithm(algorithm, track_key: str) -> html.Div:
         ran = f"{name} has not run on any track yet. "
     pair = _pair_of(track_key).upper()
     if TRACKS.get(track_key, {}).get("status") == "real":
-        target = f"the {pair} live worker (it is used when the worker is next started)"
+        how = (f"open the admin panel → Algorithm, choose {name} and activate it for the {pair} live worker "
+               "(it is used when the worker is next started)")
     else:
-        target = f"the {pair} demo (the worker switches at its next round)"
+        how = (f"open the admin panel → Algorithm, choose {name} and switch on its {pair} demo lane "
+               "(the worker starts the lane within seconds)")
     return html.Div([
         _card(html.P([
             html.Strong(f"No rounds of {name} in this view yet. "),
             ran,
-            f"To run it on this track, open the admin panel → Algorithm, choose {name} and activate it for {target}. "
+            f"To run it on this track, {how}. "
             "Pick \"All algorithms\" on the Algorithm tab to see every round again.",
         ], style={"color": TEXT_SECONDARY, "fontFamily": FONT_FAMILY, "textAlign": "center", "padding": "2rem"})),
     ])

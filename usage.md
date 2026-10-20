@@ -237,9 +237,12 @@ priority on Nobitex.
 
 `algo3` (MM_algo2) and `algo1` (MM_algo1v2) run in both modes; `algo2` still
 raises `NotImplementedError` in demo mode exactly as in real mode. In the Docker
-demo stack the algorithm is not a command-line flag: it is the `algorithm` field
-of the pair's Demo configuration (admin panel → **Algorithm**, or the first field
-of *Config BTC/USDT*), and a running worker switches at its next round. MM_algo2 is specified in
+demo stack the algorithm is not a command-line flag: the worker runs every
+algorithm switched on in the pair's Demo configuration (`algo1_enabled`,
+`algo3_enabled`; admin panel → **Algorithm**) at the same time, each in its
+own lane with its own paper account and result files, and starts or stops a
+lane within seconds of a change. `--algorithm` runs one algorithm alone in the
+single-worker files instead. MM_algo2 is specified in
 `docs/algorithms/MM_algo2.md`.
 
 ---
@@ -562,12 +565,15 @@ Normal Compose writes to `market_maker/results/`:
 
 ```text
 stack_session.json                         shared BTC/USDT session
-btc_track_demo.sqlite3                     canonical BTC round store
-usdt_track_demo.sqlite3                    canonical USDT round store
-btc_track_demo.csv / usdt_track_demo.csv   bounded dashboard exports
-paper_<session>_<symbol>.json               hot paper ledger/account
-paper_<session>_<symbol>_archive*.jsonl     rotated terminal-order archives
-paper_fee_scopes.json                       fee totals/high-watermarks
+btc_track_demo_<lane>.sqlite3              canonical BTC round store of one lane (algo1 or algo3)
+usdt_track_demo_<lane>.sqlite3             canonical USDT round store of one lane
+<pair>_track_demo_<lane>.csv               bounded dashboard export of the lane
+<pair>_track_demo_<lane>_diagnostics.jsonl the lane's decision documents
+btc_track_demo.sqlite3 / .csv              the single-worker history (until 20 Oct 2026; also --algorithm runs)
+paper_<session>_<symbol>_<lane>.json       hot paper ledger/account of a lane
+paper_<session>_<symbol>_<lane>_archive*.jsonl  rotated terminal-order archives
+runtime_config_<pair>_<lane>.json          a lane's applied settings (state directory)
+paper_fee_scopes.json                       fee totals/high-watermarks, shared by every lane
 ```
 
 Default limits are 10,000 rows in each CSV export, 100,000 durable result
@@ -744,9 +750,9 @@ the agent if this checkout may contain older queued requests.
 
 The per-pair configuration surface contains these fields:
 
-| Field (41 per pair) | Application mode |
+| Field (46 per pair) | Application mode |
 |---|---|
-| `algorithm` (`algo3` = MM_algo2, `algo1` = MM_algo1v2); MM_algo2's `algo3_depth_k`, `algo3_decay_rho`, `algo3_beta`, `algo3_half_spread`, `algo3_min_volume_orders`, `algo3_imbalance_clip`; shared: `skew_perc`, `hysteresis_ticks`, `refresh_seconds`, `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio`; MM_algo1v2 only: `grid_min_perc`, `grid_ratio`, `grid_max_perc`, `one_sided_lo`, `one_sided_hi`, `cost_basis_reference`, `ev_min`, `adverse_selection_perc`, `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | Hot (38 fields) — applied at a worker round boundary; a change of `algorithm` builds the new strategy at that boundary |
+| `algorithm` (live only: `algo3` = MM_algo2, `algo1` = MM_algo1v2); demo lanes `algo1_enabled`, `algo3_enabled`; MM_algo2's `algo3_depth_k`, `algo3_decay_rho`, `algo3_beta`, `algo3_half_spread`, `algo3_min_volume_orders`, `algo3_imbalance_clip`; shared: `skew_perc`, `hysteresis_ticks`, `refresh_seconds`, `requote_band_perc`, `trend_window_seconds`, `trend_pause_perc`, `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio`; MM_algo1v2 only: `grid_min_perc`, `grid_ratio`, `grid_max_perc`, `one_sided_lo`, `one_sided_hi`, `cost_basis_reference`, `ev_min`, `adverse_selection_perc`, `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | Hot (43 fields) — applied at a worker round boundary; a change of `algo1_enabled` / `algo3_enabled` starts or stops that lane at the worker's next check |
 | `demo_inv_initial`, `cash_initial`, `commission_perc` | New session (3 fields) — saved now, applied by **New session** |
 
 No current field requires a restart. Desired overlays are pair-isolated and

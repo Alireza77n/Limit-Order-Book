@@ -92,6 +92,7 @@ def _live_bot(monkeypatch, tmp_path, strategy, *, hysteresis_ticks, rounds=3):
     cfg.max_rounds = rounds
     cfg.time_step = 0
     cfg.hysteresis_ticks = hysteresis_ticks
+    cfg.requote_band_perc = 0.0 if hysteresis_ticks == 0 else 0.0003     # 0 ticks = the guard off
     exchange = _RestingOrdersExchange(base_balance=50.0, quote_balance=1e9)
     bot = SimpleMarketMaker(cfg, None, exchange, strategy=strategy, persist_to_db=False)
     return bot, exchange
@@ -187,6 +188,7 @@ def _demo_bot(monkeypatch, tmp_path, strategy, *, hysteresis_ticks, rounds=3):
     cfg.time_step = 0
     # hot-reloaded every round from the profile, so patch the profile
     monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "hysteresis_ticks", hysteresis_ticks)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "requote_band_perc", 0.0 if hysteresis_ticks == 0 else 0.0003)
     bot = run.make_bot(cfg, mode="demo")
     bot.exchange._market_data = _DeterministicMarketData()
     bot.strategy = strategy

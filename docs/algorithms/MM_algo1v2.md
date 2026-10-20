@@ -25,7 +25,8 @@ documentation is on its own branch:
 4. **Choice:** among all pairs $(B, A)$ with $R(B, A) > r_{\min}$, the one with the largest expected value
    $J = p_B\,p_A\,R - \eta\,[p_B(1 - p_A) + p_A(1 - p_B)]$, provided $J > J_{\min}$ (`ev_min`).
 5. **Single orders** at the band edges ($x \le 0.1$ buys only, $x \ge 0.9$ sells only) or when no pair passes;
-   resting prices within 5 ticks are kept, as in MM_algo2.
+   a resting price within the requote band (5 ticks or 0.03 % of the price, whichever is wider) is kept, as
+   in MM_algo2.
 
 ## Against MM_algo2
 
@@ -36,14 +37,18 @@ documentation is on its own branch:
 | How the spread is chosen | it is not: $h$ is the fee bar plus a tick | largest expected value $J$ above `ev_min` |
 | Fill probabilities | not used | measured table, or a formula |
 | One side only | never; at the band edges the engine's sizing makes one side zero | at the band edges, and as a fallback |
-| Fee bar, sizing, caps, cancellation, hysteresis | the same | the same |
+| Fee bar, sizing, caps, cancellation, hysteresis, one order per side, trend pause | the same | the same |
 
 ## Its settings and code in this branch
 
 Read by MM_algo1v2 only: `grid_min_perc`, `grid_ratio`, `grid_max_perc`, `one_sided_lo`, `one_sided_hi`,
 `cost_basis_reference`, `ev_min`, `adverse_selection_perc`, `fill_table_enabled`, `fill_table_max_age_hours`,
 `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref`. They stay on the admin
-config pages. The fee, the inventory band, the sizing, `skew_perc` and the hysteresis are shared.
+config pages. The fee, the inventory band, the sizing, `skew_perc`, the hysteresis and the engine rules of
+20 October 2026 (the requote band with one order per side, 3-minute orders, the target of 0.20 %, the trend
+pause) are shared with MM_algo2: [`MM_algo2.md` §19](MM_algo2.md#19-changes-of-20-october-2026-one-order-per-side-shorter-orders-higher-target-lanes)
+says what changed and why. On the demo MM_algo1v2 runs in its own lane (`algo1_enabled`), with its own paper
+account and results (`<pair>_track_demo_algo1.*`), at the same time as MM_algo2.
 
 Its code here (`strategy/algo1.py`, `fill_model.py`, `tools/build_fill_table.py`) makes the same decisions as
 on its branch. When MM_algo2 was added, the order-book arithmetic both algorithms use (tick, mid, returns,

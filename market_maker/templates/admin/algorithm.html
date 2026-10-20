@@ -18,7 +18,7 @@
 <section class="card mb-lg" aria-label="Demo" data-algorithm-table="demo">
   <div class="card-header algorithm-table-header">
     <h2>1. Demo (paper trading)</h2>
-    <span class="session-chip">Active session: <code data-demo-session>{{ state.demo_session_id or "none" }}</code></span>
+    <span class="session-chip">Active session: <code data-demo-session>{{ name }} · {{ state.demo_session_id or "none" }}</code></span>
   </div>
   <div class="card-body">
     {% if not demo_managed %}
@@ -27,30 +27,49 @@
     <div class="table-wrapper">
       <table class="table">
         <thead>
-          <tr><th>Pair</th><th>Worker</th><th>Algorithm now</th><th>Action</th></tr>
+          <tr><th>Pair</th><th>Worker</th><th>{{ name }} lane</th><th>Session</th><th>Lanes on</th><th>Action</th></tr>
         </thead>
         <tbody>
           {% for row in state.demo %}
+          {% set lane = row.lanes[selected] %}
           <tr data-demo-row="{{ row.pair }}">
             <td><strong>{{ row.symbol }}</strong></td>
             <td class="status-cell">
               {% if row.running %}<span class="status-badge status-running">Running</span>
               {% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
             </td>
-            <td><span class="status-badge algo-name" data-demo-algorithm="{{ row.pair }}:{{ row.algorithm or 'unknown' }}">{{ algorithm_labels.get(row.algorithm, row.algorithm or "unavailable") }}</span></td>
+            <td class="status-cell" data-demo-lane="{{ row.pair }}:{{ selected }}:{{ lane.state }}">
+              {% if lane.state == 'running' %}<span class="status-badge status-running">Running</span>
+              {% elif lane.state == 'starting' %}<span class="status-badge status-locked">Starting</span>
+              {% elif lane.state == 'worker_stopped' %}<span class="status-badge status-stopped">On, worker stopped</span>
+              {% elif lane.state == 'off' %}<span class="status-badge status-stopped">Off</span>
+              {% else %}<span class="status-badge status-warning">Unknown</span>{% endif %}
+            </td>
+            <td>{% if lane.enabled and lane.session_label %}<code class="mono" data-demo-lane-session="{{ row.pair }}:{{ selected }}">{{ lane.session_label }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
             <td>
-              {% if row.algorithm == selected %}
-                <span class="status-badge status-running" data-demo-active="{{ row.pair }}">Active</span>
-                {% if not row.running %}<span class="text-muted">runs when the worker is started (Workers)</span>{% endif %}
-              {% elif row.algorithm is none %}
+              {% for key, other in row.lanes.items() if other.enabled %}<span class="status-badge algo-name" data-demo-algorithm="{{ row.pair }}:{{ key }}">{{ algorithm_labels.get(key, key) }}</span> {% else %}<span class="text-muted">none</span>{% endfor %}
+            </td>
+            <td>
+              {% if lane.enabled is none %}
                 <span class="text-muted">Configuration unreadable: open Config {{ row.pair.upper() }}.</span>
-              {% else %}
+              {% elif lane.enabled %}
                 <form method="post" action="{{ url_for('admin_algorithm_activate') }}" class="inline-form"
-                      data-confirm="Activate {{ name }} on the {{ row.symbol }} demo? {% if row.running %}The worker switches at its next round{% else %}The worker runs it when it is started{% endif %}, inside session {{ row.session_id or 'the current session' }}.">
+                      data-confirm="Switch the {{ name }} lane off for the {{ row.symbol }} demo? The worker stops it within seconds and cancels its open paper orders; its results stay on the dashboard.">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <input type="hidden" name="algorithm" value="{{ selected }}">
                   <input type="hidden" name="target" value="demo">
                   <input type="hidden" name="pair" value="{{ row.pair }}">
+                  <input type="hidden" name="action" value="deactivate">
+                  <button type="submit" class="btn btn-secondary btn-sm" data-deactivate="demo:{{ row.pair }}">Switch {{ name }} off</button>
+                </form>
+              {% else %}
+                <form method="post" action="{{ url_for('admin_algorithm_activate') }}" class="inline-form"
+                      data-confirm="Switch the {{ name }} lane on for the {{ row.symbol }} demo? {% if row.running %}The worker starts it within seconds{% else %}It starts when the worker is started{% endif %}, in session {{ row.session_id or 'the current session' }}, with its own paper account and results. The other lanes keep running.">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="algorithm" value="{{ selected }}">
+                  <input type="hidden" name="target" value="demo">
+                  <input type="hidden" name="pair" value="{{ row.pair }}">
+                  <input type="hidden" name="action" value="activate">
                   <button type="submit" class="btn btn-primary btn-sm" data-activate="demo:{{ row.pair }}">Activate {{ name }}</button>
                 </form>
               {% endif %}
@@ -60,7 +79,7 @@
         </tbody>
       </table>
     </div>
-    <p class="text-muted mt-md">Both pairs share the one Demo session. Activate saves the algorithm in that pair's Demo configuration (the <code>Algorithm</code> field of Config BTC / Config USDT): a running worker switches at its next round and stays in the same session, so on the dashboard that session lists both algorithms. To give {{ name }} a session of its own, start a new demo session after activating it. Running demo workers restart in the new session and each pair's paper account starts again from its starting balances; the old session stays in the history.</p>
+    <p class="text-muted mt-md">Every algorithm switched on runs at the same time in its own lane of the pair's demo worker, with its own paper account and its own results (dashboard track "Demo {{ name }}"). Switching one on or off never touches the others. All lanes and both pairs share the one Demo session; the dashboard labels a session with its algorithm, e.g. <code>{{ name }} · {{ state.demo_session_id or "demo-…" }}</code>. Start a new demo session to give every lane a fresh paper account from the starting balances; the old session stays in the history.</p>
     <form method="post" action="{{ url_for('admin_new_session') }}" class="inline-form"
           data-confirm="Start a new demo session? Running demo workers restart in it and each pair's paper account starts again from its starting balances.">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

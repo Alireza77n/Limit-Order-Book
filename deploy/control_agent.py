@@ -105,6 +105,8 @@ LOCAL_WORKER_STATUS_ARGV: Dict[str, List[str]] = {
 BACKUP_GLOBS = (
     "paper_*.json", "paper_*_archive.jsonl", "paper_fee_scopes.json",
     "stack_session.json", "*_demo.csv", "*_demo.sqlite3",
+    # demo lanes (one algorithm each): <pair>_track_demo_<algo>.*
+    "*_demo_algo*.csv", "*_demo_algo*.sqlite3",
 )
 
 WORKER_STATUS_QUERY_TIMEOUT_SECONDS = 2.0
@@ -563,7 +565,8 @@ def handle_reset_demo(paths, pair, payload, run_argv):
     for source_dir in (paths.state_dir, paths.results_dir):
         if not source_dir.exists():
             continue
-        for pattern in ("*_demo.csv", "*_demo.sqlite3", "paper_*.json", "paper_*_archive.jsonl", "paper_fee_scopes.json"):
+        for pattern in ("*_demo.csv", "*_demo.sqlite3", "*_demo_algo*.csv", "*_demo_algo*.sqlite3",
+                        "paper_*.json", "paper_*_archive.jsonl", "paper_fee_scopes.json"):
             for target in source_dir.glob(pattern):
                 if target.is_file():
                     target.unlink()
@@ -624,20 +627,24 @@ def _delete_session_rounds(paths: AgentPaths, session_id: str) -> Dict[str, int]
     removed_rounds: Dict[str, int] = {}
     for pair in PAIRS:
         csv_name = os.path.basename(demo_csv_path(TRADING_PROFILES[pair]["output_csv"]))
-        db_path = paths.results_dir / f"{os.path.splitext(csv_name)[0]}.sqlite3"
-        if not db_path.exists():
-            continue
-        try:
-            store = DemoResultStore.open_existing(
-                db_path, csv_export_path=paths.results_dir / csv_name,
-            )
-        except (FileNotFoundError, ValueError):
-            continue
-        round_count = store.delete_session(session_id)
-        purge_session(db_path, session_id)
-        removed_rounds[pair] = round_count
-        if round_count:
-            store.export_bounded_csv()
+        stem = os.path.splitext(csv_name)[0]
+        # the pair's single-worker store (history) and its per-algorithm lane stores
+        stores = [paths.results_dir / f"{stem}.sqlite3"] + sorted(paths.results_dir.glob(f"{stem}_algo*.sqlite3"))
+        for db_path in stores:
+            if not db_path.exists():
+                continue
+            try:
+                store = DemoResultStore.open_existing(
+                    db_path, csv_export_path=db_path.with_suffix(".csv"),
+                )
+            except (FileNotFoundError, ValueError):
+                continue
+            round_count = store.delete_session(session_id)
+            purge_session(db_path, session_id)
+            key = pair if db_path.name == f"{stem}.sqlite3" else f"{pair}:{db_path.stem.rsplit('_', 1)[1]}"
+            removed_rounds[key] = round_count
+            if round_count:
+                store.export_bounded_csv()
     return removed_rounds
 
 

@@ -41,6 +41,41 @@
   {% endfor %}
 </div>
 
+{% if lane_balances %}
+<div class="card mb-lg">
+  <div class="card-header">
+    <h2>Lanes — one paper account per algorithm</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted mb-md">The demo worker of a pair runs every algorithm switched on in its own lane; each lane keeps its own paper account for the current session. The cards above are the single-worker ledger (history).</p>
+    <div class="table-wrapper">
+      <table class="table" aria-label="Lane balances">
+        <thead>
+          <tr><th>Pair</th><th>Algorithm</th><th>Inventory</th><th>Available Cash (IRT)</th><th>Valuation Price (IRT)</th><th>Fees (IRT)</th><th>Portfolio Wealth (IRT)</th></tr>
+        </thead>
+        <tbody>
+          {% for pair in ['btc', 'usdt'] %}{% for lane, account in lane_balances[pair].items() %}
+          <tr data-lane-balance="{{ pair }}:{{ lane }}">
+            <td><strong>{{ pair.upper() }}</strong></td>
+            <td><span class="status-badge algo-name">{{ algorithm_labels.get(lane, lane) }}</span></td>
+            {% if account %}
+            <td class="mono text-right">{{ '%.8f'|format(account.inventory or 0) }}</td>
+            <td class="mono text-right">{{ '%.2f'|format(account.cash or 0) }}</td>
+            <td class="mono text-right">{{ '%.2f'|format(account.valuation_price or 0) }}</td>
+            <td class="mono text-right">{{ '%.2f'|format(account.fees_quote or 0) }}</td>
+            <td class="mono text-right">{{ '%.2f'|format((account.inventory or 0) * (account.valuation_price or 0) + (account.cash or 0)) }}</td>
+            {% else %}
+            <td colspan="5" class="text-muted">no ledger this session (lane off, or not started yet)</td>
+            {% endif %}
+          </tr>
+          {% endfor %}{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="card mb-lg">
   <div class="card-header">
     <h2>Current Session Fees</h2>

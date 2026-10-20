@@ -68,7 +68,7 @@
                            aria-label="Select session {{ s.session_id }}">
                   {% endif %}
                 </td>
-                <td class="mono">{{ s.session_id }}</td>
+                <td class="mono" data-session-label="{{ s.session_id }}">{{ s.label if s.label else s.session_id }}</td>
                 <td>
                   {% if s.is_active %}
                     <span class="status-badge status-running">Active</span>

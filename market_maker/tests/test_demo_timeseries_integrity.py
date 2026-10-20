@@ -93,6 +93,7 @@ def demo_run(tmp_path, monkeypatch):
     cfg.demo_level1_fast_fill_enabled = True
     cfg.demo_level1_fill_delay_seconds = 30
     monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "hysteresis_ticks", 0)
+    monkeypatch.setitem(run.TRADING_PROFILES["usdt"], "requote_band_perc", 0.0)
 
     bot = run.make_bot(cfg, mode="demo")
     bot.strategy = _LevelOneBid()

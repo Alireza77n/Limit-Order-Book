@@ -20,6 +20,7 @@ def _repost_every_round(monkeypatch):
     test_engine_one_sided.py."""
     for pair in ("btc", "usdt"):
         monkeypatch.setitem(run.TRADING_PROFILES[pair], "hysteresis_ticks", 0)
+        monkeypatch.setitem(run.TRADING_PROFILES[pair], "requote_band_perc", 0.0)
 NOW = datetime(2026, 8, 9, 12, 0, tzinfo=timezone.utc)
 
 

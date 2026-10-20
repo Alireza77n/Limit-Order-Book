@@ -114,6 +114,21 @@ class QuoteArithmetic:
             return False
         return net > self.min_required_return()
 
+    # ---------- Requote band ----------
+    def requote_band(self, price: float) -> float:
+        """How far (in price units) a new price may sit from a resting order
+        of ours before the resting order is replaced:
+        max(hysteresis_ticks x tick, requote_band_perc x price). Shared by
+        the strategies' hysteresis and the engine's resting-order rules, so
+        "the same price" means the same thing everywhere."""
+        ticks = max(0, int(getattr(self.cfg, "hysteresis_ticks", 0) or 0))
+        perc = max(0.0, float(getattr(self.cfg, "requote_band_perc", 0.0) or 0.0))
+        try:
+            relative = perc * float(price)
+        except (TypeError, ValueError):
+            relative = 0.0
+        return max(ticks * self.tick_size(), relative)
+
     # ---------- Inventory ----------
     def inventory_position(self, inv_current: float) -> float:
         """x in [0, 1]: where the inventory sits inside [inv_min, inv_max]."""

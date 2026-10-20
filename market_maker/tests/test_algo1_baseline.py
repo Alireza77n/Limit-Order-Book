@@ -111,7 +111,7 @@ def test_quote_side_helpers_accept_a_missing_side():
 
 
 def test_resting_order_guard_blocks_only_prices_within_the_tick_window():
-    bot = make_bot(MMConfig(pair="USDTIRT", hysteresis_ticks=5))
+    bot = make_bot(MMConfig(pair="USDTIRT", hysteresis_ticks=5, requote_band_perc=0.0))   # ticks only
     resting = [(2_650_010.0, 1.0), (2_700_000.0, 0.0)]
     assert bot._resting_order_blocks(2_650_030.0, resting) is True     # 2 ticks away
     assert bot._resting_order_blocks(2_650_100.0, resting) is False    # 9 ticks away

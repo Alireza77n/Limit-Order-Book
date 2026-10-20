@@ -89,6 +89,7 @@
           <thead>
             <tr>
               <th>Timestamp</th>
+              <th>Algorithm</th>
               <th>Round</th>
               <th>Side</th>
               <th>Status</th>
@@ -107,6 +108,7 @@
             {% for row in rows %}
               <tr>
                 <td class="mono">{{ cell(row.timestamp[:19].replace('T', ' ') if row.timestamp else none) }}</td>
+                <td><span class="status-badge algo-name">{{ row.algorithm }}</span></td>
                 <td class="mono text-right">{{ cell(row.round) }}</td>
                 <td>
                   {% if not row.is_order %}

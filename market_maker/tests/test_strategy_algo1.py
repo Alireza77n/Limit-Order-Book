@@ -327,7 +327,7 @@ def test_resting_price_is_kept_within_the_tick_window():
 
 
 def test_hysteresis_is_off_with_zero_ticks():
-    strategy = Algo1Strategy(_cfg(hysteresis_ticks=0))
+    strategy = Algo1Strategy(_cfg(hysteresis_ticks=0, requote_band_perc=0.0))
     strategy.decide_order(make_orderbook(), 0.5)
     shifted = {
         "bids": [[str(100.01 - i), "1.0"] for i in range(11)],

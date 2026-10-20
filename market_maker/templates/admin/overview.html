@@ -61,9 +61,13 @@
         </thead>
         <tbody>
           <tr>
-            <td>Demo</td>
+            <td>Demo lanes on</td>
             {% for pair in ['btc', 'usdt'] %}
-            <td><span class="status-badge algo-name" data-demo-algorithm="{{ pair }}:{{ algorithms.demo[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.demo[pair], algorithms.demo[pair] or "unavailable") }}</span></td>
+            <td>
+              {% if algorithms.demo[pair] is none %}<span class="status-badge algo-name" data-demo-algorithm="{{ pair }}:unknown">unavailable</span>
+              {% elif not algorithms.demo[pair] %}<span class="status-badge status-stopped" data-demo-algorithm="{{ pair }}:none">none</span>
+              {% else %}{% for key in algorithms.demo[pair].split(',') %}<span class="status-badge algo-name" data-demo-algorithm="{{ pair }}:{{ key }}">{{ algorithm_labels.get(key, key) }}</span> {% endfor %}{% endif %}
+            </td>
             {% endfor %}
           </tr>
           <tr>
