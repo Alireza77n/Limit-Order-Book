@@ -388,11 +388,12 @@ the market had run through (section 19).
 **Orders live 3 minutes.** Every resting order older than `cancel_after_minutes` (3, until 20 October 10) is
 cancelled at the start of a round; in demo, "older" means strictly more than 180 s.
 
-**Trend pause (off by default).** With `trend_pause_perc` $> 0$ and `trend_window_seconds` $> 0$, the
-engine keeps the mid of the last window; once the samples cover at least half the window, a fall of the mid
-by more than `trend_pause_perc` over the window blocks buys this round (no buy is sent, resting buys are
-cancelled with `trend_pause`), and a rise by as much blocks sells. Replayed on the demo's market of 11–17
-October it did not improve the result (section 19), so both profiles ship it off (`trend_pause_perc` = 0).
+**Trend pause.** The engine keeps the mid of the last `trend_window_seconds` (600); once the samples cover
+at least half the window, a fall of the mid by more than `trend_pause_perc` (0.003 = 0.3 %) over the window
+blocks buys this round (no buy is sent, resting buys are cancelled with `trend_pause`), and a rise by as much
+blocks sells: in a falling market the bot stops adding coins, in a rising one it stops selling them off. On
+by default since 20 October 2026 at the operator's request; replayed on the demo's market of 11–17 October
+it changed the result by at most 0.06 of a point (section 19). `trend_pause_perc` = 0 switches it off.
 
 ---
 
@@ -786,7 +787,7 @@ every algorithm switched on runs at the same time in its own lane.
 | `hysteresis_ticks`, `refresh_seconds` | | | 5, 300 | $n$, $T$ (section 5.7; also the engine's resting-order guard) |
 | `requote_band_perc` | Requote Band Perc | 0–0.1 | 0.0003 | $\omega$: the requote band $w(p) = \max(n\epsilon, \omega p)$ (sections 5.7 and 6); a resting order outside it is replaced |
 | `cancel_after_minutes` | | ≥ 0 | 3 | the life of a resting order (section 6; 10 until 20 October 2026) |
-| `trend_window_seconds`, `trend_pause_perc` | | ≥ 0; 0–0.5 | 600, 0 (off) | the trend pause (section 6): a fall of the mid by more than the fraction over the window blocks buys, a rise blocks sells |
+| `trend_window_seconds`, `trend_pause_perc` | | ≥ 0; 0–0.5 | 600, 0.003 (0.3 %) | the trend pause (section 6): a fall of the mid by more than the fraction over the window blocks buys, a rise blocks sells; 0 switches it off |
 | `algo1_enabled`, `algo3_enabled` | | | on, on | demo lanes: run MM_algo1v2 / MM_algo2 on this pair, each in its own lane (section 16); a live worker ignores them |
 | `depth_max` | | | 10 | levels read for the recorded bid and ask level |
 
@@ -866,7 +867,7 @@ days; then every measurable condition must pass. The tab computes them on the ch
 | No order book (for example HTTP 403) | No round is recorded; resting orders are cancelled by the 3-minute rule. |
 | Live BTC amounts are sent as `str(amount)`, e.g. `2.378e-05` | Not checked against Nobitex by the test suite; MM_algo2 sends such orders from its first live BTC round (section 13). |
 | The live diagnostics file keeps the name `…_algo1_diagnostics.jsonl` | Historical name, shared by both algorithms; a demo lane writes its own file (section 7.3); each document carries `algorithm`. |
-| A fall of the price over hours is not caught by anything | The inventory skew (0.2 % at the band edges) and the sizing slow the accumulation of coins but do not stop it; the trend pause of section 6 did not help on the recorded market (section 19). |
+| A fall of the price over hours is not caught by anything | The inventory skew (0.2 % at the band edges) and the sizing slow the accumulation of coins but do not stop it; the trend pause of section 6 (on since 20 October) did not help on the recorded market (section 19). |
 
 ---
 
@@ -914,13 +915,12 @@ market (`results/t18_new_rules.csv`, `t19_trend_variants.csv`):
   7 %. Less loss, far less liquidity: the trade-off to revisit once fills are measured on a real account.
 * **Trend pause** (`trend_window_seconds`, `trend_pause_perc`): tested at 0.2 % / 5 min, 0.3 % / 10 min and
   0.5 % / 15 min, on buys only and on both sides. None improved the replay (BTC −0.56 % → −0.57 % to −0.64 %;
-  USDT unchanged). The falls that cost money last hours, not minutes. Shipped off, available on the Config
-  pages.
-* **Both algorithms** share these engine rules; MM_algo1v2's own hysteresis uses the same band.
-* Under the demo's touch rule MM_algo1v2 barely trades with replacement on (its candidates jump between book
-  levels, so an order rarely survives long enough to be run through), which says more about the demo's fill
-  model than about the algorithm: the demo never sees a taker trading into a resting order. A real account,
-  or trades from the exchange, is needed to measure fills.
+  USDT unchanged). The falls that cost money last hours, not minutes. On by default all the same (0.3 % over
+  10 minutes), because the operator wants the bot to stop buying into a fall; `trend_pause_perc` = 0 on the
+  Config pages switches it off.
+* These are engine rules: they apply to whichever algorithm the engine runs, on the demo and live. (The demo
+  never sees a taker trading into a resting order, only the touch of the opposite best price, so a real
+  account, or trades from the exchange, is needed to measure fills.)
 
 **Lanes.** The same day the demo worker gained lanes (section 16): one engine per enabled algorithm, in a
 thread of the pair's worker, with its own paper account, result files and runtime snapshot

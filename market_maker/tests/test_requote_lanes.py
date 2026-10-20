@@ -5,8 +5,8 @@
 * one order per side: a resting order outside the band of the new price is
   cancelled ("replaced"), one inside it keeps the new order from being sent;
 * orders live cancel_after_minutes (3) and the target is 0.20 % by default;
-* the trend pause blocks buys after a fall and sells after a rise (off by
-  default);
+* the trend pause blocks buys after a fall and sells after a rise (0.3 %
+  over 10 minutes by default);
 * a lane (run.py) has its own files, a pinned algorithm, a runtime snapshot
   of its own, and stops through the engine's stop event; LaneRunner starts
   and stops lanes as the overlay's algo*_enabled flags change.
@@ -36,7 +36,7 @@ def test_new_fields_exist_with_the_documented_defaults():
     for pair in ("btc", "usdt"):
         profile = TRADING_PROFILES[pair]
         assert profile["requote_band_perc"] == 0.0003
-        assert profile["trend_pause_perc"] == 0.0 and profile["trend_window_seconds"] == 600.0
+        assert profile["trend_pause_perc"] == 0.003 and profile["trend_window_seconds"] == 600.0
         assert profile["algo1_enabled"] is True and profile["algo3_enabled"] is True
         assert profile["cancel_after_minutes"] == 3
         assert profile["exp_ret_min"] == 0.002
@@ -223,12 +223,19 @@ def test_trend_pause_blocks_buys_after_a_fall_and_cancels_the_resting_buy(monkey
     assert any(o.fill_reason == "trend_pause" for o in _orders(bot) if o.side == "buy")
 
 
-def test_trend_pause_off_by_default_never_fires(monkeypatch, tmp_path):
-    bot, market = _demo_bot(monkeypatch, tmp_path, _Quotes([(90_000.0, 110_000.0)]), rounds=4)
-    assert bot.cfg.trend_pause_perc == 0.0
-    market.bid, market.ask = 80_000.0, 81_000.0
-    frame = bot.run()
-    assert "trend_pause" not in frame["Buy Not Sent Reason"].tolist()
+def test_trend_pause_is_on_by_default_at_0_3_percent_over_10_minutes(monkeypatch, tmp_path):
+    """The default (0.3 % over 600 s): nothing until the samples cover half
+    the window, nothing on a move inside 0.3 %, buys blocked after a fall
+    beyond it, sells after a rise beyond it."""
+    bot, _ = _demo_bot(monkeypatch, tmp_path, _Quotes([(90_000.0, 110_000.0)]), rounds=1)
+    assert bot.cfg.trend_pause_perc == 0.003 and bot.cfg.trend_window_seconds == 600.0
+    assert bot._trend_paused_sides(100_000.0, 0.0) == set()
+    assert bot._trend_paused_sides(99_000.0, 200.0) == set()          # a 1 % fall, but only 200 s of samples
+    assert bot._trend_paused_sides(99_800.0, 400.0) == set()          # 0.2 %: inside the threshold
+    assert bot._trend_paused_sides(99_600.0, 450.0) == {"buy"}        # 0.4 % down: no buying into the fall
+    assert bot._trend_paused_sides(100_500.0, 950.0) == {"sell"}      # 0.7 % up from the oldest sample still in the window (t = 400)
+    bot.cfg.trend_pause_perc = 0.0
+    assert bot._trend_paused_sides(90_000.0, 1_200.0) == set()        # 0 switches it off
 
 
 def test_stop_event_ends_the_loop_like_a_signal(monkeypatch, tmp_path):

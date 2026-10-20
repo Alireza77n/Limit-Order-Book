@@ -60,11 +60,13 @@ class MMConfig:
     # Trend pause: when the mid fell by more than trend_pause_perc over the
     # last trend_window_seconds, no buy is placed and resting buys are
     # cancelled; when it rose by more than that, the same for sells.
-    # trend_window_seconds = 0 or trend_pause_perc = 0 switches it off. Off by
-    # default: replayed on the demo's market of 11-17 October 2026 it did not
-    # improve the result (docs/algorithms/MM_algo2.md section 19).
+    # 0.3 % over 10 minutes by default since 20 October 2026: the operator
+    # wants no buying into a fall. Replayed on the demo's market of 11-17
+    # October 2026 it changed the result by at most 0.06 of a point
+    # (docs/algorithms/MM_algo2.md section 19). trend_window_seconds = 0 or
+    # trend_pause_perc = 0 switches it off.
     trend_window_seconds: float = 600.0
-    trend_pause_perc: float = 0.0
+    trend_pause_perc: float = 0.003
     depth_max: int = 15
     inv_max: float = 0.000365215
     inv_min: float = 0.0
@@ -295,7 +297,7 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         refresh_seconds=300.0,
         requote_band_perc=0.0003,
         trend_window_seconds=600.0,
-        trend_pause_perc=0.0,
+        trend_pause_perc=0.003,
         fill_table_enabled=True,
         fill_table_max_age_hours=48.0,
         fill_table_min_samples=50,
@@ -379,7 +381,7 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         refresh_seconds=300.0,
         requote_band_perc=0.0003,
         trend_window_seconds=600.0,
-        trend_pause_perc=0.0,
+        trend_pause_perc=0.003,
         fill_table_enabled=True,
         fill_table_max_age_hours=48.0,
         fill_table_min_samples=50,

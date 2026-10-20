@@ -239,7 +239,7 @@ The parameters that matter for MM_algo2:
 | `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction` | The linear size rule ([section 7](#7-how-order-sizes-are-decided)). |
 | `hysteresis_ticks`, `refresh_seconds`, `requote_band_perc` | Keep a pair that moved by at most the requote band (this many ticks, or this fraction of the price, whichever is wider) for up to this long; the engine does not re-post an order within the band and replaces a resting order that the new price has left outside it (one order per side). |
 | `time_step`, `cancel_after_minutes` | Seconds between rounds; age at which a resting order is cancelled (3 minutes since 20 October 2026). |
-| `trend_window_seconds`, `trend_pause_perc` | Trend pause: a fall of the mid by more than the fraction over the window blocks buys (resting buys are cancelled), a rise blocks sells. Off by default (0): it did not help on the recorded market. |
+| `trend_window_seconds`, `trend_pause_perc` | Trend pause: a fall of the mid by more than the fraction over the window blocks buys (resting buys are cancelled), a rise blocks sells. On by default (0.3 % over 10 minutes) at the operator's request; 0 switches it off. It did not help on the recorded market ([`MM_algo2.md` §19](docs/algorithms/MM_algo2.md#19-changes-of-20-october-2026-one-order-per-side-shorter-orders-higher-target-lanes)). |
 | `algo1_enabled`, `algo3_enabled` | Demo lanes: run MM_algo1v2 / MM_algo2 on this pair, each in its own lane with its own paper account and results. Ignored by a live worker. |
 | `depth_max` | Book levels read for the recorded bid and ask level. |
 | `buy_locked_cash_limit_*`, `sell_locked_inventory_limit_*` | The exposure guards: maximum share of cash or inventory locked in open orders. |
@@ -259,7 +259,7 @@ Values in force on 17 October 2026 (the demo's applied settings and the saved li
 | `cancel_after_minutes` | 10 (3 since 20 Oct) | 10 (3 since 20 Oct) | 10 | 10 |
 | `algo3_*` | defaults | defaults | defaults | defaults |
 | `skew_perc`, `hysteresis_ticks`, `refresh_seconds` | 0.002, 5, 300 | 0.002, 5, 300 | 0.002, 5, 300 | 0.002, 5, 300 |
-| `requote_band_perc`, `trend_pause_perc` (since 20 Oct) | 0.0003, 0 | 0.0003, 0 | 0.0003, 0 | 0.0003, 0 |
+| `requote_band_perc`, `trend_pause_perc` (since 20 Oct) | 0.0003, 0.003 | 0.0003, 0.003 | 0.0003, 0.003 | 0.0003, 0.003 |
 | Exposure guards | off | off | on, 25% | on, 25% |
 
 A changed live config takes effect only after the worker is stopped and started again.
@@ -459,7 +459,7 @@ Then, for each side separately:
 - Resting-order guard: a side is not re-sent when one of the worker's own orders already rests within
   the requote band of the price (`resting_order_kept`); an own order outside the band is cancelled first
   (`replaced`), so at most one order rests per side.
-- Trend pause (`trend_pause`, off by default): a side blocked by the pause is not sent and its resting order
+- Trend pause (`trend_pause`, 0.3 % over 10 minutes by default): a side blocked by the pause is not sent and its resting order
   is cancelled.
 
 With the live BTC settings and an empty wallet, MM_algo2's first buy is 0.00002378 BTC (8.83 % of the rial
@@ -557,15 +557,15 @@ crashes and corner cases:
     market had run through. The requote band is now a fraction of the price, a resting order outside it is
     replaced, and orders live 3 minutes. The replay of the recorded market cuts the demo's loss by about two
     thirds ([`MM_algo2.md` §19](docs/algorithms/MM_algo2.md#19-changes-of-20-october-2026-one-order-per-side-shorter-orders-higher-target-lanes)).
-    What remains is mostly the price falling while coins are held, which the trend pause (also added, off by
-    default) did not cure.
+    What remains is mostly the price falling while coins are held, which the trend pause (also added; on by
+    default at the operator's request) did not cure in the replay.
 
 ## 9. History
 
 ### 20 October 2026 (this branch)
 
 - Engine, both algorithms: requote band in percent with one order per side, orders live 3 minutes, target
-  0.20 %, trend pause (off). Demo lanes: a pair's worker runs every enabled algorithm at once, each with its
+  0.20 %, trend pause (0.3 % over 10 min). Demo lanes: a pair's worker runs every enabled algorithm at once, each with its
   own paper account and results; the admin Algorithm page switches lanes on and off; the dashboard has a
   track per lane, the two lanes side by side, and the single-worker history.
 

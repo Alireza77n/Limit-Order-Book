@@ -476,7 +476,7 @@ same in both): `tick_size()`, `mid_price()`, `inventory_position()`, `gross_retu
 The engine sizes the two orders by the inventory band: with no open orders, buy $= 2S(1-x)$ and sell $= 2Sx$.
 Resting orders count as if already filled. It then cancels a resting order of ours that the new price has
 left outside the requote band (one order per side), skips a side when one of its own orders already rests
-within the band of the price, when the trend pause blocks it (off by default), when the size is below $0.1S$
+within the band of the price, when the trend pause blocks it (0.3 % over 10 minutes by default), when the size is below $0.1S$
 or not affordable, when the buy would take the inventory above `inv_max`, and, in live, when the 25 %
 exposure guards would be exceeded. MM_algo2 always returns both prices; at the band edges it is the sizing
 that leaves one side out. Orders are cancelled after 3 minutes. Details: [`PROJECT_GUIDE.md` §7](PROJECT_GUIDE.md#7-how-order-sizes-are-decided) and
