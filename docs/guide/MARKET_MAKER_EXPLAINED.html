@@ -130,7 +130,7 @@
 <body>
 <main>
   <h1>The market maker and MM_algo2, explained from the ground up</h1>
-  <p class="lede">How the Nobitex market-making bot works on the branch <code>MM_algo2</code>, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit faeb0f6, data as of 20 October 2026).</p>
+  <p class="lede">How the Nobitex market-making bot works on the branch <code>MM_algo2</code>, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit 62efbfa, data as of 20 October 2026).</p>
   <div class="toc">
     <ol>
       <li><a href="#p1">The idea: what a market maker does</a></li>
@@ -350,7 +350,7 @@ flowchart TD
     <tr><th>#</th><th>Sell side: skip if …</th><th>Buy side: skip if …</th><th>Reason recorded</th></tr>
     <tr><td>1</td><td>the strategy gave no sell price (never with MM_algo2)</td><td>no buy price (never with MM_algo2)</td><td><code>one_sided_quote</code></td></tr>
     <tr><td>2</td><td>an own order rests within the requote band of the price (4.8: 5 ticks or 0.03 % of the price, whichever is wider); an own order <em>outside</em> the band was cancelled just before, so at most one rests per side</td><td>same</td><td><code>resting_order_kept</code> (the cancelled one: <code>replaced</code>)</td></tr>
-    <tr><td>2b</td><td>the trend pause blocks sells this round (off by default: <code>trend_pause_perc</code> = 0)</td><td>it blocks buys</td><td><code>trend_pause</code></td></tr>
+    <tr><td>2b</td><td>the trend pause blocks sells this round (the mid rose by more than <code>trend_pause_perc</code> = 0.3 % over <code>trend_window_seconds</code> = 10 min)</td><td>it blocks buys</td><td><code>trend_pause</code></td></tr>
     <tr><td>3</td><td>exposure guard (below)</td><td>target \(\lt 0.1S\)</td><td><code>locked_inventory_limit</code> / <code>inventory_sizing</code></td></tr>
     <tr><td>4</td><td>— (send if size \(\ge 0.1S\))</td><td>\(\min(\text{target},\ \text{free cash}/B) \lt 0.1S\)</td><td>— / <code>insufficient_cash</code></td></tr>
     <tr><td>5</td><td>target \(\lt 0.1S\) though coins are free</td><td>open buys \(+ q +\) this buy \(\gt q_{\max}\)</td><td><code>inventory_sizing</code> / <code>inventory_cap</code></td></tr>
@@ -904,6 +904,7 @@ flowchart TD
     <tr><td>\(n, T\)</td><td><code>hysteresis_ticks</code>, <code>refresh_seconds</code></td><td>keep a pair that moved by at most \(n\) ticks, for up to \(T\)</td><td class="r">5, 300 s</td><td class="r">same</td><td class="r">same</td></tr>
     <tr><td>\(\tau\)</td><td><code>cancel_after_minutes</code></td><td>order lifetime</td><td class="r">3 min (10 until 20 Oct)</td><td class="r">3 min (10 until 20 Oct)</td><td class="r">10 min</td></tr>
     <tr><td>\(\omega\)</td><td><code>requote_band_perc</code></td><td>requote band: a resting order outside \(\max(n\epsilon, \omega p)\) of the new price is replaced</td><td class="r">0.03 %</td><td class="r">0.03 %</td><td class="r">0.03 %</td></tr>
+    <tr><td></td><td><code>trend_pause_perc</code>, <code>trend_window_seconds</code></td><td>trend pause: no buy after the mid fell by this much over the window, no sell after such a rise</td><td class="r">0.3 % / 10 min</td><td class="r">0.3 % / 10 min</td><td class="r">0.3 % / 10 min</td></tr>
     <tr><td></td><td><code>depth_max</code></td><td>book levels read for the recorded bid and ask level</td><td class="r">10</td><td class="r">10</td><td class="r">10</td></tr>
     <tr><td>\(k_s\)</td><td><code>inventory_sizing_strength</code></td><td>slope of the size rule (3.4)</td><td class="r">1</td><td class="r">1</td><td class="r">1</td></tr>
     <tr><td></td><td><code>buy_locked_cash_limit_*</code>, <code>sell_locked_inventory_limit_*</code></td><td>exposure guards (3.4)</td><td class="r">off, 80 %</td><td class="r">off, 80 %</td><td class="r">on, 25 %</td></tr>

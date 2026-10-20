@@ -1,6 +1,6 @@
 # The market maker and MM_algo2, explained from the ground up
 
-How the Nobitex market-making bot works on the branch `MM_algo2`, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit faeb0f6, data as of 20 October 2026).
+How the Nobitex market-making bot works on the branch `MM_algo2`, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit 62efbfa, data as of 20 October 2026).
 
 > This guide is also available as a standalone page, [MARKET_MAKER_EXPLAINED.html](MARKET_MAKER_EXPLAINED.html) (open it in a browser; it uses MathJax and mermaid from public CDNs), with coloured tables and typeset pseudocode.
 
@@ -265,7 +265,7 @@ $`o_b`$ is the amount still resting in the bot's open buys and $`o_s`$ in its op
 | --- | --- | --- | --- |
 | 1 | the strategy gave no sell price (never with MM_algo2) | no buy price (never with MM_algo2) | `one_sided_quote` |
 | 2 | an own order rests within the requote band of the price (4.8: 5 ticks or 0.03 % of the price, whichever is wider); an own order *outside* the band was cancelled just before, so at most one rests per side | same | `resting_order_kept` (the cancelled one: `replaced`) |
-| 2b | the trend pause blocks sells this round (off by default: `trend_pause_perc` = 0) | it blocks buys | `trend_pause` |
+| 2b | the trend pause blocks sells this round (the mid rose by more than `trend_pause_perc` = 0.3 % over `trend_window_seconds` = 10 min) | it blocks buys | `trend_pause` |
 | 3 | exposure guard (below) | target $`\lt 0.1S`$ | `locked_inventory_limit` / `inventory_sizing` |
 | 4 | — (send if size $`\ge 0.1S`$) | $`\min(\text{target},\ \text{free cash}/B) \lt 0.1S`$ | — / `insufficient_cash` |
 | 5 | target $`\lt 0.1S`$ though coins are free | open buys $`+ q +`$ this buy $`\gt q_{\max}`$ | `inventory_sizing` / `inventory_cap` |
@@ -1026,6 +1026,7 @@ Everything below was found by reading the code and running it. None of it is hid
 | $`n, T`$ | `hysteresis_ticks`, `refresh_seconds` | keep a pair that moved by at most $`n`$ ticks, for up to $`T`$ | 5, 300 s | same | same |
 | $`\tau`$ | `cancel_after_minutes` | order lifetime | 3 min (10 until 20 Oct) | 3 min (10 until 20 Oct) | 10 min |
 | $`\omega`$ | `requote_band_perc` | requote band: a resting order outside $`\max(n\epsilon, \omega p)`$ of the new price is replaced | 0.03 % | 0.03 % | 0.03 % |
+|   | `trend_pause_perc`, `trend_window_seconds` | trend pause: no buy after the mid fell by this much over the window, no sell after such a rise | 0.3 % / 10 min | 0.3 % / 10 min | 0.3 % / 10 min |
 |   | `depth_max` | book levels read for the recorded bid and ask level | 10 | 10 | 10 |
 | $`k_s`$ | `inventory_sizing_strength` | slope of the size rule (3.4) | 1 | 1 | 1 |
 |   | `buy_locked_cash_limit_*`, `sell_locked_inventory_limit_*` | exposure guards (3.4) | off, 80 % | off, 80 % | on, 25 % |
