@@ -1,6 +1,6 @@
 # The market maker and MM_algo2, explained from the ground up
 
-How the Nobitex market-making bot works on the branch `MM_algo2`, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit 8fb83aa, data as of 17 October 2026).
+How the Nobitex market-making bot works on the branch `MM_algo2`, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit faeb0f6, data as of 20 October 2026).
 
 > This guide is also available as a standalone page, [MARKET_MAKER_EXPLAINED.html](MARKET_MAKER_EXPLAINED.html) (open it in a browser; it uses MathJax and mermaid from public CDNs), with coloured tables and typeset pseudocode.
 
@@ -51,7 +51,7 @@ The order book is the two lists, sorted best price first. Level 0 is the best pr
 
 ### 1.2 Orders, fills and the fee
 
-The bot uses **limit orders**: "buy up to 5 USDT at 2,633,130 or better". The order rests in the book until someone trades against it (a **fill**; a **partial fill** if only part of it trades), or until the bot cancels it. Each bot order lives at most $`\tau`$ = `cancel_after_minutes` = 10 minutes.
+The bot uses **limit orders**: "buy up to 5 USDT at 2,633,130 or better". The order rests in the book until someone trades against it (a **fill**; a **partial fill** if only part of it trades), or until the bot cancels it. Each bot order lives at most $`\tau`$ = `cancel_after_minutes` = 3 minutes (10 until 20 October 2026).
 
 The fee $`f`$ (`commission_perc`) is taken from what you *receive*: on a buy you receive $`(1-f)`$ of the coins you paid for; on a sell you receive $`(1-f)`$ of the rials. A **round trip** is a buy followed by a sell of the same coins.
 
@@ -193,7 +193,7 @@ A **worker** is one running process for one pair in one mode (for example "USDT,
 ```mermaid
 flowchart TD
   S["3.0 start: config, session id, lock; live: read wallets"] --> A
-  A["3.1 read the order book"] --> B["3.2 settle fills, cancel orders older than 10 min"]
+  A["3.1 read the order book"] --> B["3.2 settle fills, cancel orders older than 3 min"]
   B --> C["3.3 decide prices (part 4)"]
   C --> D["3.4 sizes and caps"]
   D --> E["3.5 send orders"]
@@ -235,7 +235,7 @@ Then every paper order whose age exceeds the lifetime is cancelled: age $`\gt \t
 
 #### Live: the exchange decides, the worker reads
 
-The worker asks Nobitex for its recently closed orders and keeps only those with a `clientOrderId` it created on this pair. For each, the newly matched amount since the last round (the "cumulative delta") is booked into cash and coins (3.6). Then every owned open order older than 10 minutes is cancelled with a signed request to `/market/orders/update-status`. Live inventory and cash are tracked from these fills; the wallet is read only once, at start.
+The worker asks Nobitex for its recently closed orders and keeps only those with a `clientOrderId` it created on this pair. For each, the newly matched amount since the last round (the "cumulative delta") is booked into cash and coins (3.6). Then every owned open order older than 3 minutes (`cancel_after_minutes`; 10 until 20 October 2026) is cancelled with a signed request to `/market/orders/update-status`. Live inventory and cash are tracked from these fills; the wallet is read only once, at start.
 
 ### 3.3 Deciding prices
 
@@ -264,7 +264,8 @@ $`o_b`$ is the amount still resting in the bot's open buys and $`o_s`$ in its op
 | # | Sell side: skip if … | Buy side: skip if … | Reason recorded |
 | --- | --- | --- | --- |
 | 1 | the strategy gave no sell price (never with MM_algo2) | no buy price (never with MM_algo2) | `one_sided_quote` |
-| 2 | an own order rests within 5 ticks of the price (4.8) | same | `resting_order_kept` |
+| 2 | an own order rests within the requote band of the price (4.8: 5 ticks or 0.03 % of the price, whichever is wider); an own order *outside* the band was cancelled just before, so at most one rests per side | same | `resting_order_kept` (the cancelled one: `replaced`) |
+| 2b | the trend pause blocks sells this round (off by default: `trend_pause_perc` = 0) | it blocks buys | `trend_pause` |
 | 3 | exposure guard (below) | target $`\lt 0.1S`$ | `locked_inventory_limit` / `inventory_sizing` |
 | 4 | — (send if size $`\ge 0.1S`$) | $`\min(\text{target},\ \text{free cash}/B) \lt 0.1S`$ | — / `insufficient_cash` |
 | 5 | target $`\lt 0.1S`$ though coins are free | open buys $`+ q +`$ this buy $`\gt q_{\max}`$ | `inventory_sizing` / `inventory_cap` |
@@ -404,7 +405,7 @@ Meaning: **the bid rounded down and the ask rounded up to the tick, neither on t
 
 ##### Step 6 · Keep or replace the pair (4.8)
 
-**Check:** are both new prices within 5 ticks (50 rial) of the pair issued earlier, is that pair younger than 300 seconds (counted from when it was first issued), and does it still pass the fee condition?
+**Check:** are both new prices within the requote band (5 ticks or 0.03 % of the price, whichever is wider) of the pair issued earlier, is that pair younger than 300 seconds (counted from when it was first issued), and does it still pass the fee condition?
 
 **Yes →** send the previous pair again (`microprice_pair_kept`). **No →** use the new pair (`microprice_pair`).
 
@@ -415,7 +416,7 @@ Meaning: **the bid rounded down and the ask rounded up to the tick, neither on t
 ##### Step 7 · Sell side (checked first)
 
 1. **No sell price** from gate 1 → **skip** `one_sided_quote` (never happens with MM_algo2)
-2. **An own sell already rests within 5 ticks** of this price → **not re-sent** `resting_order_kept` (the resting order stays)
+2. **An own sell already rests within the requote band** of this price → **not re-sent** `resting_order_kept` (the resting order stays; an own sell outside the band was just cancelled as `replaced`)
 3. **Size** $`= \min(\text{sell target } 2S\,x_s,\ \text{free coins} - q_{\min})`$. **Live only:** if coins locked in sells $`+`$ size $`\gt 25\%`$ of all coins → **skip** `locked_inventory_limit`
 4. **Size $`\ge 0.1\,S`$** → **SEND**
 5. **Otherwise** → **skip** `inventory_sizing`, `inventory_locked_in_open_orders` or `insufficient_inventory`
@@ -423,7 +424,7 @@ Meaning: **the bid rounded down and the ask rounded up to the tick, neither on t
 ##### Step 8 · Buy side
 
 1. **No buy price** → **skip** `one_sided_quote` (never happens with MM_algo2)
-2. **An own buy already rests within 5 ticks** → **not re-sent** `resting_order_kept`
+2. **An own buy already rests within the requote band** → **not re-sent** `resting_order_kept` (an own buy outside the band was just cancelled as `replaced`)
 3. **Buy target** $`2S\,(1 - x_b) \lt 0.1\,S`$ → **skip** `inventory_sizing`
 4. **Affordable size** $`\min(\text{target},\ \text{free cash}/B) \lt 0.1\,S`$ → **skip** `insufficient_cash`
 5. **Open buys $`+`$ coins $`+`$ this buy $`\gt q_{\max}`$** → **skip** `inventory_cap`
@@ -604,9 +605,9 @@ The book of 1.1: $`0.99840064 \times 2{,}637{,}640/2{,}633{,}130 - 1 = 0.011069\
 
 ### 4.8 Keeping a pair that barely moved
 
-MM_algo2 remembers the pair it last issued and when it first issued it. A new pair is replaced by the remembered one when both prices moved by at most $`n`$ = `hysteresis_ticks` = 5 ticks (50 rial), the remembered pair is younger than `refresh_seconds` = 300 s, and it still passes the fee condition. Keeping a pair does not restart its clock, so after 300 s a new pair is always issued. A round with no quote, or a newly built strategy (a demo switch of algorithm, a restart), forgets it. The engine separately does not send an order when one of its own orders already rests within 5 ticks of the price.
+MM_algo2 remembers the pair it last issued and when it first issued it. A new pair is replaced by the remembered one when both prices moved by at most the requote band $`w(p) = \max(n\epsilon, \omega p)`$, with $`n`$ = `hysteresis_ticks` = 5 ticks and $`\omega`$ = `requote_band_perc` = 0.03 % of the price (about 790 rial on USDT, 64 million rial on BTC), the remembered pair is younger than `refresh_seconds` = 300 s, and it still passes the fee condition. Keeping a pair does not restart its clock, so after 300 s a new pair is always issued. A round with no quote, or a newly built strategy (a demo switch of algorithm, a restart), forgets it. The engine uses the same band: it does not send an order when one of its own already rests within the band of the price, and it cancels a resting order that the new price has left outside the band, so at most one order rests per side.
 
-The window is counted in ticks: 50 rial is about 0.0019 % of the USDT price but $`2.3 \times 10^{-10}`$ of the BTC price, so a BTC pair is kept only when the book has not moved at all. In the real BTC round of 4.0 the new prices were about 1,040,000 rial away from the remembered pair, which was replaced.
+Until 20 October 2026 the band was the ticks alone, 50 rial: about 0.0019 % of the USDT price but $`2.3 \times 10^{-10}`$ of the BTC price, so a BTC pair was kept only when the book had not moved at all, and a new order was added almost every round while the old ones rested for 10 minutes (up to 11 of ours open at once on BTC, 26 on USDT). In the real BTC round of 4.0 the new prices were about 1,040,000 rial away from the remembered pair, which was replaced; with the percent band they are inside it and the pair is kept.
 
 ### 4.9 What the strategy hands back
 
@@ -774,7 +775,7 @@ For a fill at price $`P`$ placed at time $`t`$, take the mid $`m_{t+h}`$ of the 
 
 At $`h`$ = 60 s: -0.005 % (18 fills); at 300 s: -0.044 %.
 
-Caveat: the clock starts when the order was *placed* (it may fill up to 10 minutes later) and the reference is the bot's own limit price, not the mid at the fill. A buy placed below the mid scores positive even if the market never moves. So this number is not yet the true post-fill price move.
+Caveat: the clock starts when the order was *placed* (it may fill up to `cancel_after_minutes` later: 3 minutes since 20 October 2026, 10 before) and the reference is the bot's own limit price, not the mid at the fill. A buy placed below the mid scores positive even if the market never moves. So this number is not yet the true post-fill price move.
 
 #### Net PnL and inventory position
 
@@ -875,7 +876,7 @@ Caveats: $`K`$ assumes one round per minute on 252 days, while USDT runs every 1
 
 ### 7.2 Configuration
 
-**Demo.** 41 settings can be edited per pair. 38 apply at once ("hot"), among them **`algorithm`** (the first field, also set from the admin **Algorithm** page: MM_algo2 or MM_algo1v2) and MM_algo2's six `algo3_*` settings; 3 apply only at the next session: `cash_initial`, `demo_inv_initial` and `commission_perc`. A change of `algorithm` makes the worker build the new strategy at its next round boundary: same session, ledger and inventory, and the new strategy starts with no memory. The admin validates a change and enqueues it; the demo agent validates again and writes `demo_config_<pair>.json` (keeping the previous file for Revert). At the start of every round the worker compares a fingerprint of the desired settings with what it applied; if they differ it applies the hot fields and publishes `runtime_config_<pair>.json` (applied values, pending new-session values, status), which the admin and dashboard show. Rules checked: each value within its bounds, `algorithm` one of the catalog's keys (`algo3`, `algo1`), `inv_min` < `inv_max`, `order_size` > 0, and MM_algo1v2's `grid_min_perc` ≤ `grid_max_perc` and `one_sided_lo` < `one_sided_hi`.
+**Demo.** 46 settings can be edited per pair. 43 apply at once ("hot"), among them the lane switches **`algo1_enabled`** and **`algo3_enabled`** (also flipped from the admin **Algorithm** page), the engine rules of 20 October 2026 (`requote_band_perc`, `cancel_after_minutes`, `trend_window_seconds`, `trend_pause_perc`) and MM_algo2's six `algo3_*` settings; 3 apply only at the next session: `cash_initial`, `demo_inv_initial` and `commission_perc`. Since 20 October a pair's demo worker runs every algorithm switched on at the same time, each in its own *lane*: its own paper account, result files (`<pair>_track_demo_<lane>.*`) and runtime snapshot (`runtime_config_<pair>_<lane>.json`); the worker starts or stops a lane within seconds of a change. The `algorithm` field is read by live workers only. The admin validates a change and enqueues it; the demo agent validates again and writes `demo_config_<pair>.json` (keeping the previous file for Revert). At the start of every round the worker compares a fingerprint of the desired settings with what it applied; if they differ it applies the hot fields and publishes `runtime_config_<pair>.json` (applied values, pending new-session values, status), which the admin and dashboard show. Rules checked: each value within its bounds, `algorithm` one of the catalog's keys (`algo3`, `algo1`), `inv_min` < `inv_max`, `order_size` > 0, and MM_algo1v2's `grid_min_perc` ≤ `grid_max_perc` and `one_sided_lo` < `one_sided_hi`.
 
 **Live.** 39 settings (the demo ones minus the two starting values), saved by the forward agent to `forward_config_<pair>.json`; the saved `algorithm` is the one the worker is started with. The value used is built in this order: the profile, the saved file, then three enforced rules: `commission_perc` at least 0.25 %, both exposure guards on, each guard ratio at most 25 %. A live worker reads its settings once at start; after a change it must be stopped and started.
 
@@ -903,7 +904,7 @@ The admin panel never touches workers or files directly. It writes a **command f
 
 ### 7.4 The admin panel
 
-Reached at `https://37.32.31.162/admin/`. On the server it opens on the live forward page. Pages: Overview (session, workers, the algorithm of each pair, recent audit); Algorithm (choose an algorithm in a drop-down, then activate it per pair on the demo or for live; the demo table and the live table each show their active session, and the page can start a new demo session); Config BTC / USDT (demo settings, desired versus applied); Workers (start, stop, restart, new session, cancel orders); Live Forward Test (start with typed confirmation, stop); Live Config BTC / USDT (live settings and fresh wallet balances); Sessions (demo and live, delete); Backups (create, restore, download); Reset; Recovery; Export; Orders; Balances; Logs; Audit. Access needs a login (username and password hash), then a signed session cookie that expires after 30 idle minutes, and every action carries a per-session anti-forgery token.
+Reached at `https://37.32.31.162/admin/`. On the server it opens on the live forward page. Pages: Overview (session, workers, the algorithm of each pair, recent audit); Algorithm (choose an algorithm in a drop-down; the demo table shows that algorithm's lane per pair — Running, Starting, Off — with its session as `MM_algo2 · <session id>` and switches it on or off without touching the other lanes; the live table shows what each live worker runs and what is saved for its next start; the page can start a new demo session); Config BTC / USDT (demo settings, desired versus applied); Workers (start, stop, restart, new session, cancel orders); Live Forward Test (start with typed confirmation, stop); Live Config BTC / USDT (live settings and fresh wallet balances); Sessions (demo and live, delete); Backups (create, restore, download); Reset; Recovery; Export; Orders; Balances; Logs; Audit. Access needs a login (username and password hash), then a signed session cookie that expires after 30 idle minutes, and every action carries a per-session anti-forgery token.
 
 ### 7.5 The nightly fill-table job
 
@@ -989,7 +990,7 @@ Everything below was found by reading the code and running it. None of it is hid
 | 2 | The half-spread is the fee bar plus one tick, not a choice. | Every completed round trip earns about $`r_{\min}`$ (0.01 %). Nothing in the rule weighs the chance of a fill, or the cost of only one side filling. | 4.5 |
 | 3 | The pair is at least $`2h`$ wide: 0.17 % in demo, 0.51 % live. | Its orders usually wait behind the best prices, so they fill only when the price comes to them; at the live fee they wait far from the market. | 5.4 |
 | 4 | One side filling is not priced. | When only buys fill and the price keeps falling, the coins lose value; the skew and the sizing slow the accumulation, the band and `inv_max` cap it. | 1.4, 6.2 |
-| 5 | The hysteresis window is in ticks. | 5 ticks are about 0.0019 % of the USDT price and $`2.3 \times 10^{-10}`$ of the BTC price: on BTC a pair is kept only when the book has not moved. | 4.8, 5.5 |
+| 5 | The requote band is one fraction of the price (0.03 %) for both pairs. | 79 ticks on USDT, about 64 million rial on BTC: a narrower band replaces orders more often, a wider one leaves a staler order. (Until 20 October 2026 it was 5 ticks, nothing on BTC, and orders piled up.) | 4.8, 5.5 |
 | 6 | In the live round loop only a failed order-book read is handled. | Any other error from Nobitex (order status, cancel, open orders) ends the worker after it cancels its own orders. The forward agent does not restart it; it stays stopped until it is started again from the panel. This stopped the live BTC worker on 16 October. | 3.8, 8 |
 | 7 | The live order amount is sent as Python text (`str(amount)`), which for small BTC sizes is scientific notation (`2.378e-05`). | The test suite does not check the format against Nobitex. MM_algo2 sends such BTC buys from its first live round (8.2); the preflight notebook is where to check that Nobitex accepts it. | 3.5, 8.2 |
 | 8 | Each live worker reads the whole rial wallet as its own starting cash. | The USDT and BTC workers each believe they own the same 57,637,520 rial; only the 25 % exposure guards keep their combined orders below the real balance. | 3.0, 8.1 |
@@ -1023,7 +1024,8 @@ Everything below was found by reading the code and running it. None of it is hid
 | $`q_{\min}, q_{\max}`$ | `inv_min`, `inv_max` | inventory band | 0 – 50 USDT / 0 – 0.000472 BTC | 0 – 300 / 0 – 0.0037 | 0 – 15 / 0 – 0.0001527 |
 | $`S`$ | `order_size` | base order size | 1 USDT / 0.000015 BTC | 5 / 0.000062 | 1 / 0.00001189 |
 | $`n, T`$ | `hysteresis_ticks`, `refresh_seconds` | keep a pair that moved by at most $`n`$ ticks, for up to $`T`$ | 5, 300 s | same | same |
-| $`\tau`$ | `cancel_after_minutes` | order lifetime | 10 min | 10 min | 10 min |
+| $`\tau`$ | `cancel_after_minutes` | order lifetime | 3 min (10 until 20 Oct) | 3 min (10 until 20 Oct) | 10 min |
+| $`\omega`$ | `requote_band_perc` | requote band: a resting order outside $`\max(n\epsilon, \omega p)`$ of the new price is replaced | 0.03 % | 0.03 % | 0.03 % |
 |   | `depth_max` | book levels read for the recorded bid and ask level | 10 | 10 | 10 |
 | $`k_s`$ | `inventory_sizing_strength` | slope of the size rule (3.4) | 1 | 1 | 1 |
 |   | `buy_locked_cash_limit_*`, `sell_locked_inventory_limit_*` | exposure guards (3.4) | off, 80 % | off, 80 % | on, 25 % |
@@ -1075,7 +1077,7 @@ Output: the orders sent in this round, and one recorded row
  4  for each own order o that filled F coins at its price P_o do     [3.2]
  5      if o is a buy then (q, c) ← (q + (1 - f)F, c - F P_o)        [3.6]
  6      else (q, c) ← (q - F, c + (1 - f)F P_o)                      [3.6]
- 7  cancel own orders older than 10 minutes                          [3.2]
+ 7  cancel own orders older than 3 minutes (10 until 20 Oct 2026)    [3.2]
 
     Gate 1 · choose the prices
  8  (B, A) ← ChoosePrices(book, q)                                   [Listing 2]
