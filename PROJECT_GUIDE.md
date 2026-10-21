@@ -15,7 +15,7 @@ Contents
 3. [What every file is](#3-what-every-file-is)
 4. [Where configuration values come from](#4-where-configuration-values-come-from)
 5. [One round of the trading loop](#5-one-round-of-the-trading-loop)
-6. [Algorithm 1 in detail](#6-algorithm-1-in-detail)
+6. [Algorithm 1 in detail](#6-algorithm-1-in-detail-version-2-2026-10-11)
 7. [How order sizes are decided](#7-how-order-sizes-are-decided)
 8. [What changed on 2026-10-03](#8-what-changed-on-2026-10-03)
 9. [Problems found in review](#9-problems-found-in-review)
@@ -206,13 +206,14 @@ The parameters that matter for trading:
 | `commission_perc` | Fee per leg, as a fraction (0.0025 = 0.25%). |
 | `exp_ret_min` | Minimum net round-trip return required to quote. |
 | `time_step` | Seconds between rounds. |
-| `cancel_after_minutes` | Age at which a resting order is cancelled; also the lifetime the fill probabilities refer to. |
+| `cancel_after_minutes` | Age at which a resting order is cancelled (3 minutes since 20 October 2026; 10 before); also the lifetime the fill probabilities refer to. |
 | `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_ratio` | Maximum share of cash or inventory that may be locked in open orders. |
 | `grid_min_perc`, `grid_ratio`, `grid_max_perc` | Candidate distances from the quote centre ([section 6](#6-algorithm-1-in-detail-version-2-2026-10-11), step 2). |
 | `skew_perc` | How far the inventory moves the quote centre at the band edges (step 1). |
 | `one_sided_lo`, `one_sided_hi`, `cost_basis_reference` | When only one side is quoted and against which reference price (step 5). |
 | `ev_min`, `adverse_selection_perc` | Expected-value floor and the one-leg cost in the pair score (step 4). |
-| `hysteresis_ticks`, `refresh_seconds` | Keep a resting price / do not re-post within this window (step 6). |
+| `hysteresis_ticks`, `refresh_seconds`, `requote_band_perc` | Keep a resting price / do not re-post within the requote band (this many ticks or this fraction of the price, whichever is wider) for up to this long; a resting order outside the band is replaced, one order per side (step 6). |
+| `trend_window_seconds`, `trend_pause_perc` | Trend pause: no buy after the mid fell by more than the fraction over the window (resting buys are cancelled), no sell after such a rise. 0.3 % over 10 minutes by default; 0 switches it off. |
 | `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | The fill model (step 3; `docs/algorithms/FILL_MODEL.md`). |
 
 Live-mode values at the time of the review:
@@ -241,7 +242,7 @@ Real mode, `engine.py`, `SimpleMarketMaker.run()`.
 ```mermaid
 flowchart TD
     A[Fetch order book] --> B[Update fills<br/>new inventory and cash]
-    B --> C[Cancel own orders older than 10 minutes]
+    B --> C[Cancel own orders older than 3 minutes]
     C --> D[Algorithm 1: pick bid and ask levels<br/>skewed by inventory]
     D --> E{Net return after fees<br/>above exp_ret_min?}
     E -- no --> H
@@ -259,7 +260,7 @@ currency and of `rls`. If either read fails it exits without trading.
 | A | `GET /v3/orderbook/<pair>`. If it fails, the round is skipped. | `exchange/nobitex.py` |
 | B | Lists the worker's own open and closed orders. For each, takes the newly matched amount since the last round. A buy adds `matched − fee` to inventory and subtracts `matched × price` from cash. A sell subtracts `matched` from inventory and adds `matched × price − fee` to cash. | `update_inventory_and_cash` |
 | C | Cancels the worker's own open orders older than `cancel_after_minutes`. Orders it did not send are never touched. | `_cancel_owned_stale_orders` |
-| D, E | [Section 6](#6-algorithm-1-in-detail). | `strategy/algo1.py` |
+| D, E | [Section 6](#6-algorithm-1-in-detail-version-2-2026-10-11). | `strategy/algo1.py` |
 | F, G | [Section 7](#7-how-order-sizes-are-decided). | `run()` |
 | H | One row appended to the CSV, one Telegram message, then `sleep(time_step)`. | `run()` |
 

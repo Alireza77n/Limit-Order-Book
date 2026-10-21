@@ -17,7 +17,10 @@ if os.environ.get("LOB_DISABLE_DOTENV") != "1":
 class MMConfig:
     # Trading / market params
     commission_perc: float = 0.0025
-    cancel_after_minutes: float = 10.0
+    # Age at which a resting order of ours is cancelled. 3 minutes since 20
+    # October 2026 (it was 10): on the demo, most fills were of orders that
+    # had rested long enough for the market to run through them.
+    cancel_after_minutes: float = 3.0
     # Minimum expected round-trip NET return, as a fraction of the capital
     # deployed at the submitted buy price. Algorithm 1 only quotes a
     # (bid, ask) pair when its fee-adjusted round-trip return
@@ -105,10 +108,25 @@ class MMConfig:
     # adverse-selection cost charged when only one leg fills.
     ev_min: float = 0.00001
     adverse_selection_perc: float = 0.0
-    # Keep a resting price while the new one is within hysteresis_ticks and
-    # the quote is younger than refresh_seconds (0 = always re-quote).
+    # Keep a resting price while the new one is within the requote band
+    # (below) and the quote is younger than refresh_seconds.
     hysteresis_ticks: int = 5
     refresh_seconds: float = 300.0
+    # Requote band: a resting order of ours is kept while the new price is
+    # within max(hysteresis_ticks x tick, requote_band_perc x price) of it;
+    # a new price outside the band cancels it and replaces it, so at most one
+    # order rests per side. Before 20 October 2026 the band was ticks only,
+    # 50 rial, which on BTC is nothing: a new order was added almost every
+    # round and up to 11 of ours rested at once.
+    requote_band_perc: float = 0.0003
+    # Trend pause: when the mid fell by more than trend_pause_perc over the
+    # last trend_window_seconds, no buy is placed and resting buys are
+    # cancelled; when it rose by more than that, the same for sells. 0.3 %
+    # over 10 minutes by default since 20 October 2026 (the operator wants no
+    # buying into a fall); trend_window_seconds = 0 or trend_pause_perc = 0
+    # switches it off.
+    trend_window_seconds: float = 600.0
+    trend_pause_perc: float = 0.003
     # Fill-probability model (fill_model.py): measured table when fresh and
     # populated, else the formula p = 1 - exp(-lambda_tau * exp(-kappa * delta)).
     fill_table_enabled: bool = True
@@ -201,8 +219,8 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         # Matches commission_perc, i.e. today's actual bootstrap default
         # (engine.py falls back to exp_ret_min=commission_perc when unset) --
         # adding it here makes it Admin-editable without changing behavior.
-        exp_ret_min=0.0010,
-        cancel_after_minutes=10,
+        exp_ret_min=0.0020,
+        cancel_after_minutes=3,
         algorithm_id="1btc",
         depth_max=10,
         inv_max=0.000472,
@@ -247,6 +265,9 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         adverse_selection_perc=0.0,
         hysteresis_ticks=5,
         refresh_seconds=300.0,
+        requote_band_perc=0.0003,
+        trend_window_seconds=600.0,
+        trend_pause_perc=0.003,
         fill_table_enabled=True,
         fill_table_max_age_hours=48.0,
         fill_table_min_samples=50,
@@ -272,8 +293,8 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         # reports/live-session-audit-2026-08-10.md); lower this from Admin
         # if more frequent USDT quoting is wanted. Left unchanged here so
         # this commit does not itself alter trading behavior.
-        exp_ret_min=0.0010,
-        cancel_after_minutes=10,
+        exp_ret_min=0.0020,
+        cancel_after_minutes=3,
         algorithm_id="1usdt",
         depth_max=10,
         inv_max=50,
@@ -317,6 +338,9 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         adverse_selection_perc=0.0,
         hysteresis_ticks=5,
         refresh_seconds=300.0,
+        requote_band_perc=0.0003,
+        trend_window_seconds=600.0,
+        trend_pause_perc=0.003,
         fill_table_enabled=True,
         fill_table_max_age_hours=48.0,
         fill_table_min_samples=50,

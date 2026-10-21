@@ -39,6 +39,7 @@ EXPECTED = {
     "ev_min": "hot", "adverse_selection_perc": "hot", "hysteresis_ticks": "hot", "refresh_seconds": "hot",
     "fill_table_enabled": "hot", "fill_table_max_age_hours": "hot", "fill_table_min_samples": "hot",
     "fill_kappa": "hot", "fill_lambda_tau": "hot", "fill_queue_volume_ref": "hot",
+    "requote_band_perc": "hot", "trend_window_seconds": "hot", "trend_pause_perc": "hot",
 }
 
 HIDDEN_SAFE_DEFAULT_FIELDS = {

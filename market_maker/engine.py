@@ -1,6 +1,7 @@
 import json
 import math
 import time
+from collections import deque
 import numpy as np
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -92,6 +93,8 @@ class SimpleMarketMaker:
         self.telegram_reporter = PaperTelegramReporter(self.telegram_client)
         self.result_store = None
         self.no_quote_monitor = None
+        # (time in seconds, mid) samples for the trend pause.
+        self._mid_history: deque = deque()
 
         # Connect to MySQL (use your existing DB) -- skipped entirely in
         # demo/paper-trading mode so a demo run never touches the real
@@ -196,6 +199,24 @@ class SimpleMarketMaker:
         )
         return self._prune_cancelled_active_ids(cancelled)
 
+    def _cancel_live_order(self, record) -> Set[str]:
+        """Live: cancel one resting order of ours (a record of
+        get_open_order_totals: price, remaining, clientOrderId, exchange id)
+        and forget it. Returns the cancelled client id, or nothing when the
+        exchange refused."""
+        if len(record) < 4 or record[3] is None:
+            return set()
+        client_id = str(record[2])
+        try:
+            self.exchange.cancel_order(record[3])
+        except Exception as exc:  # noqa: BLE001 -- a refused cancel must not stop the round
+            print(json.dumps({
+                "event": "live_requote_cancel_failed", "client_order_id": client_id,
+                "error": f"{type(exc).__name__}: {exc}", "symbol": self.pair,
+            }, sort_keys=True), flush=True)
+            return set()
+        return self._prune_cancelled_active_ids({client_id})
+
     def _cancel_owned_stale_orders(
         self, max_age_minutes: float, df: Optional[pd.DataFrame] = None
     ) -> Set[str]:
@@ -239,7 +260,8 @@ class SimpleMarketMaker:
         buy_cash_locked    = 0.0
         sell_amount_locked = 0.0
         sell_cash_value    = 0.0
-        # (price, remaining) of our resting orders, for the re-post guard.
+        # (price, remaining, clientOrderId, exchange id) of our resting
+        # orders, for the re-post guard and the replacement rule.
         self._resting_orders = {"buy": [], "sell": []}
     
         def _f(x: Any) -> float:
@@ -285,7 +307,7 @@ class SimpleMarketMaker:
             elif side == "sell":
                 sell_amount_locked += amt
                 sell_cash_value    += amt * price
-            self._resting_orders[side].append((price, amt))
+            self._resting_orders[side].append((price, amt, clid, o.get("id")))
     
         buy_totals  = {"amount": buy_amount_locked,  "cash": buy_cash_locked}
         sell_totals = {"amount": sell_amount_locked, "cash": sell_cash_value}
@@ -339,23 +361,96 @@ class SimpleMarketMaker:
         except (TypeError, ValueError):
             return None
 
+    def _requote_band(self, price: Optional[float]) -> float:
+        """The band (in price units) within which a resting order of ours
+        counts as "the same price": the strategy's requote_band when it has
+        one, else the same rule from the settings."""
+        if price is None:
+            return 0.0
+        method = getattr(self.strategy, "requote_band", None)
+        if callable(method):
+            try:
+                return max(0.0, float(method(price)))
+            except (TypeError, ValueError):
+                pass
+        ticks = max(0, int(getattr(self.cfg, "hysteresis_ticks", 0) or 0))
+        perc = max(0.0, float(getattr(self.cfg, "requote_band_perc", 0.0) or 0.0))
+        return max(ticks * self._tick_size(), perc * float(price))
+
     def _resting_order_blocks(self, price: Optional[float], resting) -> bool:
-        """True when an order of ours already rests within hysteresis_ticks of
-        ``price``: re-posting it every round would only churn and lose queue
-        position. ``resting`` is an iterable of (price, remaining amount)."""
+        """True when an order of ours already rests within the requote band
+        of ``price``: re-posting it every round would only churn and lose
+        queue position. ``resting`` is an iterable whose items start with
+        (price, remaining amount)."""
         if price is None:
             return False
-        ticks = int(getattr(self.cfg, "hysteresis_ticks", 0) or 0)
-        if ticks <= 0:
+        band = self._requote_band(price)
+        if band <= 0:
             return False
-        epsilon = self._tick_size()
-        for resting_price, remaining in resting:
+        for item in resting:
+            resting_price, remaining = item[0], item[1]
             try:
-                if float(remaining) > 0 and abs(float(resting_price) - float(price)) <= ticks * epsilon + 1e-9:
+                if float(remaining) > 0 and abs(float(resting_price) - float(price)) <= band + 1e-9:
                     return True
             except (TypeError, ValueError):
                 continue
         return False
+
+    def _trend_paused_sides(self, mid: Optional[float], now_seconds: float) -> Set[str]:
+        """The sides the trend pause blocks this round: "buy" after the mid
+        fell by more than trend_pause_perc over the last trend_window_seconds,
+        "sell" after it rose by as much. Nothing until the samples cover at
+        least half the window; nothing when either setting is 0."""
+        history = self._mid_history
+        window = float(getattr(self.cfg, "trend_window_seconds", 0.0) or 0.0)
+        pause = float(getattr(self.cfg, "trend_pause_perc", 0.0) or 0.0)
+        try:
+            mid_value = float(mid)
+        except (TypeError, ValueError):
+            return set()
+        if not math.isfinite(mid_value) or mid_value <= 0:
+            return set()
+        history.append((float(now_seconds), mid_value))
+        if window <= 0 or pause <= 0:
+            while len(history) > 1:
+                history.popleft()
+            return set()
+        while history and history[0][0] < now_seconds - window:
+            history.popleft()
+        if not history or history[0][0] > now_seconds - window / 2.0:
+            return set()
+        drift = mid_value / history[0][1] - 1.0
+        if drift <= -pause:
+            return {"buy"}
+        if drift >= pause:
+            return {"sell"}
+        return set()
+
+    def _cancel_paper_orders(self, orders, *, reason: str, now) -> list:
+        """Demo: cancel the given paper orders of ours; the events back-fill
+        the rows that created them."""
+        events = []
+        ledger = self.exchange.ledger
+        for order in orders:
+            if order.status not in {"open", "partially_filled"}:
+                continue
+            events.append(ledger.cancel_order(
+                order.client_order_id, reason=reason, now=now,
+                initiator="demo_engine", call_site=f"SimpleMarketMaker.{reason}",
+            ))
+        return events
+
+    def _paper_orders_outside_band(self, side: str, price: Optional[float], orders) -> list:
+        """The resting paper orders on ``side`` that a new ``price`` replaces:
+        every one farther than the requote band from it (one order per side)."""
+        if price is None:
+            return []
+        band = self._requote_band(price)
+        return [
+            order for order in orders
+            if order.side == side and order.status in {"open", "partially_filled"}
+            and abs(float(order.limit_price) - float(price)) > band + 1e-9
+        ]
 
     def _emit_algo1_diagnostic(
         self, ob: Dict[str, Any], inv_current: float, *, round_no: int,
@@ -1494,7 +1589,22 @@ class SimpleMarketMaker:
 
                 buy_order = sell_order = None
                 buy_reason = sell_reason = "no_quote" if quote is None else None
+                replace_events = []
+                paused_sides = self._trend_paused_sides((best_bid + best_ask) / 2.0, now.timestamp())
                 if quote is not None:
+                    resting_orders = [
+                        order for order in ledger.active_orders.values()
+                        if order.status in {"open", "partially_filled"}
+                    ]
+                    # One order per side: a new price outside the requote band
+                    # replaces the resting order; a paused side rests nothing.
+                    for side, price in (("sell", ask_price), ("buy", bid_price)):
+                        if side in paused_sides:
+                            doomed = [o for o in resting_orders if o.side == side]
+                            replace_events += self._cancel_paper_orders(doomed, reason="trend_pause", now=now)
+                        else:
+                            doomed = self._paper_orders_outside_band(side, price, resting_orders)
+                            replace_events += self._cancel_paper_orders(doomed, reason="replaced", now=now)
                     resting_orders = [
                         order for order in ledger.active_orders.values()
                         if order.status in {"open", "partially_filled"}
@@ -1525,6 +1635,8 @@ class SimpleMarketMaker:
                         # v2 quoted the bid side only (inventory low, or only
                         # the buy leg cleared the bar).
                         sell_reason = "one_sided_quote"
+                    elif "sell" in paused_sides:
+                        sell_reason = "trend_pause"
                     elif self._resting_order_blocks(ask_price, resting_sells):
                         sell_reason = "resting_order_kept"
                     elif sell_amount >= self._min_tradable_size() and (
@@ -1582,6 +1694,8 @@ class SimpleMarketMaker:
                         # v2 quoted the ask side only (inventory high, or only
                         # the sell leg cleared the bar).
                         buy_reason = "one_sided_quote"
+                    elif "buy" in paused_sides:
+                        buy_reason = "trend_pause"
                     elif self._resting_order_blocks(bid_price, resting_buys):
                         buy_reason = "resting_order_kept"
                     elif buy_target < self._min_tradable_size():
@@ -1618,6 +1732,19 @@ class SimpleMarketMaker:
 
                 snapshot = ledger.snapshot(valuation_price=last_price)
                 scopes = ledger.fee_scopes()
+                if replace_events:
+                    self._sync_demo_order_rows(
+                        order_df,
+                        changed_order_ids={event.order_id for event in replace_events},
+                        snapshot=snapshot,
+                        scopes=scopes,
+                        round_fee=round_fee,
+                    )
+                    self._update_demo_result_orders(
+                        replace_events, snapshot=snapshot, scopes=scopes, round_fee=round_fee,
+                    )
+                    for event in replace_events:
+                        self._safe_reporter_call("order_changed", ledger, event)
                 round_message = self._format_round_message(
                     round_no,
                     now.astimezone(TEHRAN_TZ).strftime("%Y-%m-%d %H:%M:%S"),
@@ -1940,6 +2067,22 @@ class SimpleMarketMaker:
                     # Current locked totals (and resting prices) from our open orders
                     buy_locked, sell_locked = self.get_open_order_totals()
                     resting = getattr(self, "_resting_orders", {"buy": [], "sell": []})
+                    # One order per side (replacement) and the trend pause, as
+                    # in the demo loop; a cancellation changes the locked totals.
+                    paused_sides = self._trend_paused_sides((best_bid + best_ask) / 2.0, time.time())
+                    replaced = set()
+                    for side, price in (("sell", ask_price), ("buy", bid_price)):
+                        band = self._requote_band(price)
+                        for record in list(resting.get(side, [])):
+                            if side in paused_sides or (price is not None and abs(float(record[0]) - float(price)) > band + 1e-9):
+                                replaced |= self._cancel_live_order(record)
+                    if replaced:
+                        buy_locked, sell_locked = self.get_open_order_totals()
+                        resting = getattr(self, "_resting_orders", {"buy": [], "sell": []})
+                    if "sell" in paused_sides:
+                        ask_price = None
+                    if "buy" in paused_sides:
+                        bid_price = None
                     buy_target, sell_target = self._inventory_sized_order_targets(
                         float(inv_current),
                         open_buy_amount=buy_locked['amount'],

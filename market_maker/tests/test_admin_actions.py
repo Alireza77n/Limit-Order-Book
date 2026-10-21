@@ -24,6 +24,7 @@ EXPECTED_FIELDS = {
     "ev_min", "adverse_selection_perc", "hysteresis_ticks", "refresh_seconds",
     "fill_table_enabled", "fill_table_max_age_hours", "fill_table_min_samples",
     "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
+    "requote_band_perc", "trend_window_seconds", "trend_pause_perc",
 }
 
 

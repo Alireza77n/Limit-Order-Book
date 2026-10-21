@@ -29,6 +29,7 @@ FORWARD_FIELDS = frozenset({
     "grid_min_perc", "grid_ratio", "grid_max_perc", "skew_perc",
     "one_sided_lo", "one_sided_hi", "cost_basis_reference",
     "ev_min", "adverse_selection_perc", "hysteresis_ticks", "refresh_seconds",
+    "requote_band_perc", "trend_window_seconds", "trend_pause_perc",
     "fill_table_enabled", "fill_table_max_age_hours", "fill_table_min_samples",
     "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
 })

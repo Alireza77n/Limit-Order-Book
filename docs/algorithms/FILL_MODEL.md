@@ -63,7 +63,7 @@ $p(0.38\%) = 0.20$, $p(0.75\%) = 0.05$, $p(1.5\%) = 0.0025$.
 ```json
 {
   "pair": "USDT",
-  "horizon_seconds": 600,
+  "horizon_seconds": 180,
   "updated_at": "2026-10-11T03:00:14+00:00",
   "method": "price_path+own_orders",
   "samples": 120960,
@@ -88,15 +88,21 @@ bucket centres and clamps outside the first/last usable bucket.
 
 ## 3. Rebuilding it
 
+The horizon is the order lifetime, `cancel_after_minutes × 60`: 180 s since 20 October 2026
+(600 before; `ALGORITHM_1_V2.md` §2.8). A table built for another horizon is not rejected by the
+model, so the builder's `--horizon-seconds` must follow the setting. The fallback formula's
+`fill_lambda_tau` (1.0, expected fills at zero distance per lifetime) was set for the 10-minute
+lifetime and has not been re-estimated; it is used only while the table is missing or stale.
+
 On the server, daily (cron, as `marketmaker-forward`), from
 `/opt/market-maker-forward/market_maker`:
 
 ```bash
-venv/bin/python -m tools.build_fill_table --pair usdt --horizon-seconds 600 \
+venv/bin/python -m tools.build_fill_table --pair usdt --horizon-seconds 180 \
   --csv /var/lib/market-maker-forward/results/usdt_track.csv \
   --csv /var/lib/market-maker-forward/results/usdt_track_demo.csv \
   --out /var/lib/market-maker-forward/results/fill_table_usdtirt.json
-venv/bin/python -m tools.build_fill_table --pair btc --horizon-seconds 600 \
+venv/bin/python -m tools.build_fill_table --pair btc --horizon-seconds 180 \
   --csv /var/lib/market-maker-forward/results/btc_track.csv \
   --csv /var/lib/market-maker-forward/results/btc_track_demo.csv \
   --out /var/lib/market-maker-forward/results/fill_table_btcirt.json

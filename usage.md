@@ -9,7 +9,7 @@ project *is* and how it's architected, see [README.md](README.md).
 |---|---|---|---|---|
 | [Live trading](#1-live-trading-real-money-real-account) | `python run.py --profile btc\|usdt` | Yes | **Yes -- real money** | **Yes** |
 | [Demo / paper trading](#1b-demo-mode-real-market-data-simulated-orders) | `python run.py --profile btc\|usdt --mode demo` | **Yes** | No -- simulated | No |
-| [Automated tests](#2-automated-tests-no-account-no-money-no-database) | `pytest -q` | No | No | No |
+| [Automated tests](#2-automated-tests) | `pytest -q` | No | No | No |
 | [History dashboard](#3-history-dashboard) | `python dashboard.py` | No (reads local SQLite/CSV results) | No | No |
 | [Research notebooks](#4-research-notebooks-read-only) | open in Jupyter | No | No | No |
 | [Docker](#6-docker) | `docker compose up -d --build --wait` | Yes (demo mode) | No -- simulated | No |
@@ -246,7 +246,8 @@ A running worker picks the new file up at its next round. The related
 settings (`fill_table_enabled`, `fill_table_max_age_hours`,
 `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`) and the other v2
 settings (`grid_*`, `skew_perc`, `one_sided_*`, `ev_min`,
-`adverse_selection_perc`, `hysteresis_ticks`, `refresh_seconds`) are editable
+`adverse_selection_perc`, `hysteresis_ticks`, `refresh_seconds`, `requote_band_perc`,
+`trend_window_seconds`, `trend_pause_perc`) are editable
 from the admin panel's Config pages for demo and live.
 
 ## 2. Automated tests
@@ -709,7 +710,7 @@ The per-pair configuration surface contains these fields:
 
 | Field | Application mode |
 |---|---|
-| `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio` | Hot — applied at a worker round boundary |
+| `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `requote_band_perc`, `trend_window_seconds`, `trend_pause_perc`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio` | Hot — applied at a worker round boundary |
 | `demo_inv_initial`, `cash_initial`, `commission_perc` | New session — saved now, applied by **New session** |
 
 No current field requires a restart. Desired overlays are pair-isolated and

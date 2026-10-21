@@ -300,10 +300,15 @@ fallback when no pair is feasible.
 
 ## Step 6: hysteresis
 
-A new price within `hysteresis_ticks` of the resting one, while the resting
-quote is younger than `refresh_seconds`, is replaced by the resting price; the
-engine does not re-post a side when one of its own orders already rests within
-that window (`resting_order_kept`).
+A new price within the requote band of the resting one (`hysteresis_ticks` = 5
+ticks or `requote_band_perc` = 0.03 % of the price, whichever is wider), while
+the resting quote is younger than `refresh_seconds`, is replaced by the resting
+price; the engine does not re-post a side when one of its own orders already
+rests within the band (`resting_order_kept`) and cancels a resting order the new
+price has left outside it (`replaced`): one order per side. Since 20 October
+2026 orders live 3 minutes, the target is 0.20 % and the engine pauses buys
+after the mid fell 0.3 % within 10 minutes (sells after such a rise):
+[`ALGORITHM_1_V2.md` §2.8](docs/algorithms/ALGORITHM_1_V2.md#28-engine-rules-of-20-october-2026).
 
 ## Algorithm 1 summary
 
@@ -377,8 +382,10 @@ run.py main() ── make_cfg(profile, mode) ── make_bot(cfg) ── SimpleM
 ## Stage 7 — engine-side checks
 
 Unchanged from version 1 except that a side the strategy left out is skipped
-(`one_sided_quote`) and a side whose price is within `hysteresis_ticks` of one
-of our resting orders is not re-posted (`resting_order_kept`). Sizes, cash and
+(`one_sided_quote`), a side whose price is within the requote band of one of
+our resting orders is not re-posted (`resting_order_kept`; a resting order
+outside the band is replaced) and a side the trend pause blocks is not sent
+(`trend_pause`). Sizes, cash and
 inventory caps and the locked-exposure guards are as described in
 [`PROJECT_GUIDE.md` §7](PROJECT_GUIDE.md#7-how-order-sizes-are-decided).
 

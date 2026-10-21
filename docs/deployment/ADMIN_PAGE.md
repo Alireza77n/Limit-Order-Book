@@ -97,7 +97,9 @@ current field requires a worker or stack restart.
 | `order_size` | hot | Base-asset amount per order round; also updates the coupled Demo fill budget |
 | `inv_max` | hot | Maximum inventory |
 | `inv_min` | hot | Minimum inventory |
-| `cancel_after_minutes` | hot | Resting-order cancellation age |
+| `cancel_after_minutes` | hot | Resting-order cancellation age (3 minutes since 20 October 2026) |
+| `requote_band_perc` | hot | Requote band as a fraction of price: a resting order outside it is replaced, one order per side |
+| `trend_window_seconds`, `trend_pause_perc` | hot | Trend pause: no buy after the mid fell by more than the fraction over the window, no sell after such a rise |
 | `depth_max` | hot | Maximum strategy order-book depth |
 | `time_step` | hot | Seconds between quoting rounds |
 | `demo_inv_initial` | new session | Starting Demo inventory |

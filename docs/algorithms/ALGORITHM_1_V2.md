@@ -188,13 +188,20 @@ When it is used:
 ### 2.6 Hysteresis
 
 The strategy remembers the price it last issued on each side with its time.
-A new price within `hysteresis_ticks` ticks of the resting one, while the
-resting quote is younger than `refresh_seconds`, is replaced by the resting
-price (and reported with `"bid kept": True`). The engine completes the rule:
-if an order of ours already rests within the same tick window of the quoted
-price, the side is **not re-posted** this round (`resting_order_kept`). Together
-they stop the cancel/re-post churn and the accumulation of near-identical
-orders that caused the 2026-08 batch-fill incident.
+A new price within the requote band of the resting one, while the resting
+quote is younger than `refresh_seconds`, is replaced by the resting price (and
+reported with `"bid kept": True`). The band is $w(p) = \max(n\epsilon, \omega p)$
+with $n$ = `hysteresis_ticks` (5 ticks) and $\omega$ = `requote_band_perc`
+(0.03 % of the price), whichever is wider (`requote_band(price)` in
+`strategy/algo1.py`); until 20 October 2026 it was the ticks alone, 50 rial,
+which on BTC is nothing. The engine completes the rule with the same band: if
+an order of ours already rests within the band of the quoted price, the side is
+**not re-posted** this round (`resting_order_kept`), and a resting order of ours
+that the new price has left *outside* the band is cancelled first (`replaced`),
+so at most one order rests per side (section 2.8). Together they stop the
+cancel/re-post churn and the accumulation of near-identical orders (the 2026-08
+batch-fill incident; up to 11 of ours open at once on the BTC demo of October
+2026).
 
 If the kept price no longer clears the bar with the new partner leg, both
 sides are re-quoted at the new prices.
@@ -206,14 +213,54 @@ sizes them with the linear inventory rule
 (`_inventory_sized_order_targets`: $\text{buy} = 2S(1-x_{\text{buy}})$,
 $\text{sell} = 2Sx_{\text{sell}}$ with resting orders counted), caps them by cash,
 inventory and `inv_max`, applies the locked-exposure guards, drops anything
-below 1 % of `order_size`, and sends. A side the strategy left out (`None`)
-is skipped and recorded as `one_sided_quote`.
+below 1 % of `order_size`, and sends — unless the trend pause of section 2.8
+blocks the side. A side the strategy left out (`None`) is skipped and recorded
+as `one_sided_quote`.
+
+### 2.8 Engine rules of 20 October 2026
+
+The demo of 15–17 October 2026 (fee 0.08 %, target 0.01 %, both pairs) lost 20 million rial on 1 billion
+per pair. The analysis (`Report_investor/demo_analysis/`, every number from the recorded rounds and paper
+ledgers) found that every fill was a `price_touch` of an order that had rested for minutes while new ones
+were added each round — the requote band was 5 ticks, 50 rial, which on BTC is nothing, so a new order was
+added almost every round and up to 11 of ours were open at once on BTC, 26 on USDT — and that 62–88 % of the
+fills were of orders at least seven rounds old. Four engine rules answer this; they are the engine's, so they
+apply to MM_algo1v2 exactly as to any other strategy the engine runs:
+
+| Rule | Setting | What the engine does |
+|---|---|---|
+| requote band in percent, one order per side | `requote_band_perc` = 0.0003 | the band of section 2.6 is $\max(5\epsilon, 0.03\,\%\,p)$; a resting order of ours outside the band of the new price is cancelled (`replaced`) before the new order is sent, one inside it keeps the new order from being sent (`resting_order_kept`) |
+| orders live 3 minutes | `cancel_after_minutes` = 3 (10 before) | a resting order older than 3 minutes is cancelled at the start of the round (`stale_timeout`); the fill probabilities of section 2.3 refer to this lifetime, so the nightly fill table is built with `--horizon-seconds 180` (`FILL_MODEL.md`) |
+| target 0.20 % | `exp_ret_min` = 0.002 (0.001 before) | the bar $r_{\min}$ of section 2.4, the operator's requirement until real fills are measured |
+| trend pause | `trend_window_seconds` = 600, `trend_pause_perc` = 0.003 | after the mid fell by more than 0.3 % within the last 10 minutes no buy is placed and resting buys are cancelled (`trend_pause`); after such a rise, the same for sells. The bot stops adding coins in a falling market and stops selling them off in a rising one. 0 switches it off. |
+
+**What the replay says for this algorithm.** `demo_analysis/simulator.py` replays the recorded market
+with the demo's touch fill rule (an order fills when the opposite best price reaches it) and this
+algorithm's own re-selection over the logged candidates; fee 0.08 %, 1 billion rial per pair, BTC over
+45.8 h and USDT over 10.7 h of MM_algo1v2 rounds (`results/t18_new_rules.csv`):
+
+| Rule | BTC: result, fills, time at the best price | USDT |
+|---|---|---|
+| demo settings (target 0.01 %, 10-minute orders, stacking) | −0.91 %, 327 fills, 48 % | −0.21 %, 128 fills, 17 % |
+| requote band 0.03 % with replacement | −0.01 %, 1 fill, 0 % | −0.11 %, 3 fills, 0 % |
+| + orders live 3 minutes | the same | the same |
+| + target 0.20 % | 0.00 %, no fill | −0.11 %, 3 fills |
+| + trend pause 0.3 % over 10 min | 0.00 %, no fill (58 buy rounds and 67 sell rounds paused) | −0.11 %, 3 fills (none paused) |
+
+With replacement on, MM_algo1v2 barely trades under the demo's touch rule: its candidates sit at the first
+book level beyond each grid distance and jump between levels as the book moves, so an order rarely survives
+long enough to be run through. That says more about the demo's fill model than about the algorithm — the
+demo never sees a taker trading into a resting order — and it is why the fill probabilities of section 2.3
+need a real account, or the exchange's trades, to be measured. The remaining USDT loss is the coins losing
+value in a falling market (−1.5 % over 15–17 October), not trading.
+
+Tests: `tests/test_requote_rules.py`.
 
 ---
 
 ## 3. Worked example
 
-USDT/IRT, fee $0.25\%$, $r_{\min} = 0.25\%$ ($G = 0.7532\%$), lifetime 10 min,
+USDT/IRT, fee $0.25\%$, $r_{\min} = 0.25\%$ ($G = 0.7532\%$), lifetime 10 min (the example's own settings; since 20 October 2026 the profiles use a 3-minute lifetime and $r_{\min} = 0.20\%$),
 25 of 50 USDT held ($x = 0.5$, so $c = m = 2{,}660{,}000$), fallback fill
 formula ($\kappa = 400$, $\lambda_\tau = 1$). Book (prices in rial, volumes in
 USDT):
@@ -359,11 +406,12 @@ Live Config page (`forward_config.FORWARD_FIELDS`).
 | `cost_basis_reference` | True | lone sells judged against $\bar P$ when known |
 | `ev_min` | 1e-5 | expected-value floor (fraction of capital per lifetime) |
 | `adverse_selection_perc` | 0.0 | $\eta$ |
-| `hysteresis_ticks`, `refresh_seconds` | 5, 300 | keep a resting price within 5 ticks for up to 5 minutes |
+| `hysteresis_ticks`, `refresh_seconds`, `requote_band_perc` | 5, 300, 0.0003 | keep a resting price within the requote band (5 ticks or 0.03 % of the price, whichever is wider) for up to 5 minutes; the engine replaces a resting order outside the band (sections 2.6, 2.8) |
+| `trend_window_seconds`, `trend_pause_perc` | 600, 0.003 | engine: no buy after the mid fell 0.3 % within 10 minutes, no sell after such a rise (section 2.8); 0 switches it off |
 | `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples` | True, 48, 50 | when the measured table is used |
 | `fill_kappa`, `fill_lambda_tau` | 400, 1.0 | fallback formula |
 | `fill_queue_volume_ref` | 0 (off) | queue correction |
-| `commission_perc`, `exp_ret_min`, `inv_min`, `inv_max`, `cancel_after_minutes` | as before | fee, bar, band, lifetime |
+| `commission_perc`, `exp_ret_min`, `inv_min`, `inv_max`, `cancel_after_minutes` | 0.0025, 0.002, per pair, per pair, 3 | fee, bar, band, lifetime; `exp_ret_min` 0.002 and `cancel_after_minutes` 3 since 20 October 2026 (0.001 and 10 before, section 2.8) |
 
 `demo_level1_fast_fill_enabled` is now **off** in both profiles: version 1's
 level-1 quote sat next to the touch, version 2's level index says nothing about
@@ -426,6 +474,7 @@ adverse-selection numbers as headline tiles (usage.md §3).
 | every returned pair clears the bar (property test over random books) | `test_every_returned_pair_clears_the_fee_bar` |
 | one-sided at band edges and as fallback, cost basis | `test_full_inventory_*`, `test_empty_inventory_*`, `test_lone_leg_*`, `test_cost_basis_*` |
 | hysteresis | `test_resting_price_is_kept_*`, `test_hysteresis_is_off_*` |
+| requote band, one order per side, 3-minute life, trend pause (section 2.8) | `test_requote_rules.py` |
 | diagnostics schema, purity, reasons | `test_algo1_diagnostics.py` |
 | engine: missing side, resting-order guard, both loops | `test_engine_one_sided.py`, `test_algo1_baseline.py` |
 | fill model: table, freshness, samples, fallback, reload | `test_fill_model.py` |
