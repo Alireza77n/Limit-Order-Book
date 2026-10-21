@@ -12,7 +12,7 @@ class MMConfig:
     inv_min: float = 0.0
     inv_max: float = 50.0
     depth_max: int = 10               # book levels considered when anchoring
-    cancel_after_minutes: float = 10.0
+    cancel_after_minutes: float = 3.0      # order lifetime: 3 minutes since 20 October 2026 (10 before)
     # candidate grid
     grid_min_perc: float = 0.0005
     grid_ratio: float = 1.4
@@ -29,6 +29,7 @@ class MMConfig:
     # hysteresis
     hysteresis_ticks: int = 5
     refresh_seconds: float = 300.0
+    requote_band_perc: float = 0.0003   # requote band: 5 ticks or 0.03 % of the price, whichever is wider
     # fill model
     fill_table_enabled: bool = True
     fill_table_max_age_hours: float = 48.0

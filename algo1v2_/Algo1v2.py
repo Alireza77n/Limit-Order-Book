@@ -773,14 +773,29 @@ class Algo1Strategy(Strategy):
             evaluation.mode = "bid_only"
             evaluation.chosen_bid = result.candidate
 
+    # ---------- Requote band ----------
+    def requote_band(self, price: float) -> float:
+        """How far (in price units) a new price may sit from a resting order
+        of ours before the resting order is replaced:
+        max(hysteresis_ticks x tick, requote_band_perc x price). Used by the
+        hysteresis below and by the engine's resting-order rules, so "the
+        same price" means the same thing everywhere."""
+        ticks = max(0, int(getattr(self.cfg, "hysteresis_ticks", 0) or 0))
+        perc = max(0.0, float(getattr(self.cfg, "requote_band_perc", 0.0) or 0.0))
+        try:
+            relative = perc * float(price)
+        except (TypeError, ValueError):
+            relative = 0.0
+        return max(ticks * self.tick_size(), relative)
+
     # ---------- Hysteresis ----------
     def _apply_hysteresis(self, bid: Optional[float], ask: Optional[float]) -> Tuple[Optional[float], Optional[float], Dict[str, bool]]:
-        """Keep a resting price while the new one is within hysteresis_ticks
-        of it and the quote is younger than refresh_seconds; a side that is
-        no longer quoted forgets its resting price."""
-        ticks = max(0, int(getattr(self.cfg, "hysteresis_ticks", 0) or 0))
+        """Keep a resting price while the new one is within the requote band
+        of it (requote_band above: hysteresis_ticks ticks or requote_band_perc
+        of the price, whichever is wider) and the quote is younger than
+        refresh_seconds; a side that is no longer quoted forgets its resting
+        price."""
         refresh = float(getattr(self.cfg, "refresh_seconds", 0.0) or 0.0)
-        epsilon = self.tick_size()
         now = float(self.clock())
         kept = {"bid": False, "ask": False}
         prices = {"bid": bid, "ask": ask}
@@ -790,9 +805,10 @@ class Algo1Strategy(Strategy):
                 self._resting.pop(side, None)
                 continue
             previous = self._resting.get(side)
+            band = self.requote_band(previous[0]) if previous is not None else 0.0
             if (
-                previous is not None and ticks > 0
-                and abs(new - previous[0]) <= ticks * epsilon + 1e-9
+                previous is not None and band > 0
+                and abs(new - previous[0]) <= band + 1e-9
                 and now - previous[1] < refresh
             ):
                 prices[side] = previous[0]
