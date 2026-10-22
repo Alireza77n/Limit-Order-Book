@@ -1,6 +1,6 @@
 # The market maker, explained from the ground up
 
-How the Nobitex market-making bot works, end to end: what it trades and why, one round of a worker step by step, the decision rule (Algorithm 1, version 2), how fill chances are estimated, how results are measured, and how the system is run. Every formula is taken from the code and every worked example was produced by running the bot's own code or read from its real data on the server (code at commit e6cf973, data as of 21 October 2026).
+How the Nobitex market-making bot works, end to end: what it trades and why, one round of a worker step by step, the decision rule (Algorithm 1, version 2), how fill chances are estimated, how results are measured, and how the system is run. Every formula is taken from the code and every worked example was produced by running the bot's own code or read from its real data on the server (code at commit 324e145, data as of 21 October 2026).
 
 > This guide is also available as a standalone page, [MARKET_MAKER_EXPLAINED.html](MARKET_MAKER_EXPLAINED.html) (open it in a browser; it uses MathJax and mermaid from public CDNs), with coloured tables and typeset pseudocode.
 
@@ -244,7 +244,7 @@ The strategy receives the book and the current inventory and returns a buy price
 **Target sizes.** With $`S`$ = `order_size`, slope $`k_s`$ = `inventory_sizing_strength` (1 in both profiles) and floor $`\phi`$ = `inventory_sizing_min_fraction` (0):
 
 ```math
-\pi(e) = 2\,\operatorname{clamp}\!\Big(\frac{e - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\Big) - 1, \qquad \text{buy} = S\cdot\operatorname{clamp}\big(1 - k_s\,\pi(q + o_b),\ \phi,\ 1+k_s\big), \qquad \text{sell} = S\cdot\operatorname{clamp}\big(1 + k_s\,\pi(q - o_s),\ \phi,\ 1+k_s\big)
+\pi(e) = 2\,\mathrm{clamp}\!\Big(\frac{e - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\Big) - 1, \qquad \text{buy} = S\cdot\mathrm{clamp}\big(1 - k_s\,\pi(q + o_b),\ \phi,\ 1+k_s\big), \qquad \text{sell} = S\cdot\mathrm{clamp}\big(1 + k_s\,\pi(q - o_s),\ \phi,\ 1+k_s\big)
 ```
 
 $`o_b`$ is the amount still resting in the bot's open buys and $`o_s`$ in its open sells, so orders already placed count as if filled. With $`k_s = 1`$, $`\phi = 0`$ and no open orders this is simply
@@ -1104,7 +1104,7 @@ The specification (`docs/algorithms/ALGORITHM_1_V2.md` §7) sets nine conditions
 Computed on the wealth series, one value per round, with round-to-round returns $`r_t = W_t/W_{t-1} - 1`$ and an annualisation factor $`K = 252 \times 24 \times 60 = 362{,}880`$:
 
 ```math
-\text{total return} = \frac{W_T - W_0}{W_0}, \qquad \text{Sharpe} = \frac{\overline{r - r_f}}{\operatorname{sd}(r - r_f)}\sqrt K, \qquad \text{max drawdown} = \max_t \frac{\text{peak}_t - W_t}{\text{peak}_t}, \qquad \text{Calmar} = \frac{\text{annual return}}{\text{max drawdown}}
+\text{total return} = \frac{W_T - W_0}{W_0}, \qquad \text{Sharpe} = \frac{\overline{r - r_f}}{\mathrm{sd}(r - r_f)}\sqrt K, \qquad \text{max drawdown} = \max_t \frac{\text{peak}_t - W_t}{\text{peak}_t}, \qquad \text{Calmar} = \frac{\text{annual return}}{\text{max drawdown}}
 ```
 
 with $`r_f`$ the risk-free rate entered on the tab, converted per round. Sortino uses only the returns below the target in its denominator. Win rate, profit factor and the trade statistics score each filled order by its *planned* return at placement.
@@ -1309,7 +1309,7 @@ Everything below was found while writing this page, by reading the code and runn
 
 Three listings cover everything the bot does. [Listing 1](#listing-1) is one round of a worker; at line 8 it calls [Listing 2](#listing-2), which chooses the prices (Algorithm 1 v2); at line 10 that one reads each candidate's fill chance from [Listing 3](#listing-3). Every line does one thing. The small number on the right names the section that explains the line, and the notes under each listing hold the details.
 
-Notation: $`\gets`$ means "becomes"; $`S`$ is the order size, $`f`$ the fee, $`[q_{\min}, q_{\max}]`$ the coin band, and $`\operatorname{pos}(v) = \operatorname{clamp}\big((v - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1\big)`$ the position of an amount $`v`$ in that band. Every other symbol is in part 10.
+Notation: $`\gets`$ means "becomes"; $`S`$ is the order size, $`f`$ the fee, $`[q_{\min}, q_{\max}]`$ the coin band, and $`\mathrm{pos}(v) = \mathrm{clamp}\big((v - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1\big)`$ the position of an amount $`v`$ in that band. Every other symbol is in part 10.
 
 <a id="listing-1"></a>
 
@@ -1333,7 +1333,7 @@ Output: the orders sent in this round, and one recorded row
  8  (B, A) ← ChoosePrices(book, q)                                   [Listing 2]
 
     Gate 2 · size and send each side
- 9  x_s ← pos(q - o_s) and x_b ← pos(q + o_b)                        [3.4]
+ 9  x_s ← mathrmpos(q - o_s) and x_b ← mathrmpos(q + o_b)            [3.4]
 10  if A exists and no own sell rests within 5 ticks of A then
 11      size ← min(2S x_s, free coins - q_min)
 12      if size ≥ 0.1 S and the exposure guard allows then
@@ -1370,7 +1370,7 @@ Output: a buy price B, a sell price A, both, or no order
 
     Step 2 · The candidate prices
  3  m ← (b_0 + a_0)/2                                                [4.1]
- 4  x ← pos(q)                                                       [4.1]
+ 4  x ← mathrmpos(q)                                                 [4.1]
  5  c ← m (1 - σ_q (2x - 1))                                         [4.2]
  6  for δ = δ_min, δ_min ρ, δ_min ρ^2, … while δ ≤ δ_max do          [4.3]
  7      B ← one tick above the first bid ≤ c (1 - δ), but below a_0
