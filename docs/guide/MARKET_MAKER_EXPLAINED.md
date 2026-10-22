@@ -1,6 +1,6 @@
 # The market maker and MM_algo2, explained from the ground up
 
-How the Nobitex market-making bot works on the branch `MM_algo2`, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit 62efbfa, data as of 20 October 2026).
+How the Nobitex market-making bot works on the branch `MM_algo2`, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit d38742a, data as of 20 October 2026).
 
 > This guide is also available as a standalone page, [MARKET_MAKER_EXPLAINED.html](MARKET_MAKER_EXPLAINED.html) (open it in a browser; it uses MathJax and mermaid from public CDNs), with coloured tables and typeset pseudocode.
 
@@ -248,7 +248,7 @@ The strategy receives the book and the current inventory (in demo, the paper led
 **Target sizes.** With $`S`$ = `order_size`, slope $`k_s`$ = `inventory_sizing_strength` (1 in both profiles) and floor $`\phi`$ = `inventory_sizing_min_fraction` (0):
 
 ```math
-\pi(e) = 2\,\operatorname{clamp}\!\Big(\frac{e - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\Big) - 1, \qquad \text{buy} = S\cdot\operatorname{clamp}\big(1 - k_s\,\pi(q + o_b),\ \phi,\ 1+k_s\big), \qquad \text{sell} = S\cdot\operatorname{clamp}\big(1 + k_s\,\pi(q - o_s),\ \phi,\ 1+k_s\big)
+\pi(e) = 2\,\mathrm{clamp}\!\Big(\frac{e - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\Big) - 1, \qquad \text{buy} = S\cdot\mathrm{clamp}\big(1 - k_s\,\pi(q + o_b),\ \phi,\ 1+k_s\big), \qquad \text{sell} = S\cdot\mathrm{clamp}\big(1 + k_s\,\pi(q - o_s),\ \phi,\ 1+k_s\big)
 ```
 
 $`o_b`$ is the amount still resting in the bot's open buys and $`o_s`$ in its open sells, so orders already placed count as if filled. With $`k_s = 1`$, $`\phi = 0`$ and no open orders this is simply
@@ -363,7 +363,7 @@ Weighted volumes of the top $`k`$ levels, $`V^b`$ and $`V^a`$, and the imbalance
 V^b + V^a \lt V_{\min} = n_V \cdot S \quad\Longrightarrow\quad I = 0 \text{ and the centre starts at the mid}
 ```
 
-Otherwise $`I = \operatorname{clamp}(I_{\text{raw}}, -0.8, 0.8)`$ and the centre starts at the **microprice** $`p_{\text{micro}} = (a_0 v^b_0 + b_0 v^a_0)/(v^b_0 + v^a_0)`$.
+Otherwise $`I = \mathrm{clamp}(I_{\text{raw}}, -0.8, 0.8)`$ and the centre starts at the **microprice** $`p_{\text{micro}} = (a_0 v^b_0 + b_0 v^a_0)/(v^b_0 + v^a_0)`$.
 
 **continue**
 
@@ -372,7 +372,7 @@ Otherwise $`I = \operatorname{clamp}(I_{\text{raw}}, -0.8, 0.8)`$ and the centre
 **Centre**
 
 ```math
-c = p_{\text{micro}}\,(1 + \beta I)\,\bigl(1 - \sigma_q\,(2x - 1)\bigr), \qquad x = \operatorname{clamp}\!\Big(\frac{q - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\Big)
+c = p_{\text{micro}}\,(1 + \beta I)\,\bigl(1 - \sigma_q\,(2x - 1)\bigr), \qquad x = \mathrm{clamp}\!\Big(\frac{q - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\Big)
 ```
 
 Meaning: **start where the book says the price is heading, then lean with the imbalance ($`\beta`$ = 0 for now) and move against the inventory**: a full band lowers the centre by $`\sigma_q`$ = 0.2 %, an empty band raises it by 0.2 %.
@@ -460,7 +460,7 @@ $`I_{\text{raw}} \gt 0`$: more volume waits to buy than to sell. $`I_{\text{raw}
 Two guards turn $`I_{\text{raw}}`$ into the $`I`$ that is used:
 
 - **Thin book.** If $`V^b + V^a \lt V_{\min} = n_V \cdot S`$ ($`n_V`$ = `algo3_min_volume_orders` = 20), the top of the book is too thin to say anything: $`I = 0`$ and the centre starts at the mid. In demo $`V_{\min}`$ = 20 × 5 = 100 USDT and 20 × 0.000062 = 0.00124 BTC.
-- **Clip.** Otherwise $`I = \operatorname{clamp}(I_{\text{raw}}, -I_{\max}, I_{\max})`$, $`I_{\max}`$ = `algo3_imbalance_clip` = 0.8, so one large level, possibly placed only to be pulled, cannot push the lean to its maximum.
+- **Clip.** Otherwise $`I = \mathrm{clamp}(I_{\text{raw}}, -I_{\max}, I_{\max})`$, $`I_{\max}`$ = `algo3_imbalance_clip` = 0.8, so one large level, possibly placed only to be pulled, cannot push the lean to its maximum.
 
 **Example.**
 
@@ -504,7 +504,7 @@ The book of 1.1: $`I_0 = (384.6 - 698.87)/(384.6 + 698.87) = -0.29006`$. The def
 Where the inventory sits in its band, 0 (empty) to 1 (full):
 
 ```math
-x = \operatorname{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right) \qquad (x = \tfrac12 \text{ if the band is empty or invalid})
+x = \mathrm{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right) \qquad (x = \tfrac12 \text{ if the band is empty or invalid})
 ```
 
 $`q`$ is the whole holding, including coins already locked in the bot's own open sells. An inventory outside the band counts as the nearest edge.
@@ -691,7 +691,7 @@ r_{t,\tau} = \beta\, I_t + e_t, \qquad \hat\beta = \frac{\sum_t I_t\, r_{t,\tau}
 $`\hat\beta`$ is used only if its $`t`$-statistic exceeds 3. The windows of neighbouring books overlap (at $`\tau`$ = 600 s, sixty consecutive books share most of their future), so their errors are correlated, and the plain standard error is far too small. The script uses the Newey–West estimator with $`L = \lceil \tau/10\,\text{s} \rceil`$ lags:
 
 ```math
-\widehat{\operatorname{Var}}(\hat\beta) = \frac{\sum_t u_t^2 + 2\sum_{l=1}^{L}\bigl(1 - \tfrac{l}{L+1}\bigr)\sum_t u_t\,u_{t-l}}{\bigl(\sum_t I_t^2\bigr)^2}, \qquad u_t = I_t\, e_t .
+\widehat{\mathrm{Var}}(\hat\beta) = \frac{\sum_t u_t^2 + 2\sum_{l=1}^{L}\bigl(1 - \tfrac{l}{L+1}\bigr)\sum_t u_t\,u_{t-l}}{\bigl(\sum_t I_t^2\bigr)^2}, \qquad u_t = I_t\, e_t .
 ```
 
 | Pair | $`\tau`$ | pairs $`(I_t, r_t)`$ | $`\hat\beta`$ | $`t`$ (Newey–West) | $`t`$ ignoring overlap | independent windows | lean at median $`\lvert I\rvert`$ |
@@ -856,7 +856,7 @@ Nine conditions the demo must meet, over at least five days, before the same alg
 Computed on the wealth series, one value per round, with round-to-round returns $`r_t = W_t/W_{t-1} - 1`$ and an annualisation factor $`K = 252 \times 24 \times 60 = 362{,}880`$:
 
 ```math
-\text{total return} = \frac{W_T - W_0}{W_0}, \qquad \text{Sharpe} = \frac{\overline{r - r_f}}{\operatorname{sd}(r - r_f)}\sqrt K, \qquad \text{max drawdown} = \max_t \frac{\text{peak}_t - W_t}{\text{peak}_t}, \qquad \text{Calmar} = \frac{\text{annual return}}{\text{max drawdown}}
+\text{total return} = \frac{W_T - W_0}{W_0}, \qquad \text{Sharpe} = \frac{\overline{r - r_f}}{\mathrm{sd}(r - r_f)}\sqrt K, \qquad \text{max drawdown} = \max_t \frac{\text{peak}_t - W_t}{\text{peak}_t}, \qquad \text{Calmar} = \frac{\text{annual return}}{\text{max drawdown}}
 ```
 
 with $`r_f`$ the risk-free rate entered on the tab, converted per round. Sortino uses only the returns below the target in its denominator. Win rate, profit factor and the trade statistics score each filled order by its *planned* return at placement.
@@ -1060,7 +1060,7 @@ Read by MM_algo1v2 only, and not by MM_algo2: `grid_*`, `one_sided_*`, `cost_bas
 
 Three listings cover everything the bot does. [Listing 1](#listing-1) is one round of a worker; at line 8 it calls [Listing 2](#listing-2), which chooses the prices (MM_algo2); at line 2 that one reads the book signal (the imbalance and the microprice) from [Listing 3](#listing-3). Every line does one thing. The small number on the right names the section that explains the line, and the notes under each listing hold the details.
 
-Notation: $`\gets`$ means "becomes"; $`S`$ is the order size, $`f`$ the fee, $`[q_{\min}, q_{\max}]`$ the coin band, and $`\operatorname{pos}(v) = \operatorname{clamp}\big((v - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1\big)`$ the position of an amount $`v`$ in that band. Every other symbol is in part 10.
+Notation: $`\gets`$ means "becomes"; $`S`$ is the order size, $`f`$ the fee, $`[q_{\min}, q_{\max}]`$ the coin band, and $`\mathrm{pos}(v) = \mathrm{clamp}\big((v - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1\big)`$ the position of an amount $`v`$ in that band. Every other symbol is in part 10.
 
 <a id="listing-1"></a>
 
