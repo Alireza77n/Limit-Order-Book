@@ -1,6 +1,6 @@
 # The market maker, explained from the ground up
 
-How the Nobitex market-making bot works, end to end: what it trades and why, one round of a worker step by step, the decision rule (Algorithm 1, version 2), how fill chances are estimated, how results are measured, and how the system is run. Every formula is taken from the code and every worked example was produced by running the bot's own code or read from its real data on the server (code at commit 324e145, data as of 21 October 2026).
+How the Nobitex market-making bot works, end to end: what it trades and why, one round of a worker step by step, the decision rule (Algorithm 1, version 2), how fill chances are estimated, how results are measured, and how the system is run. Every formula is taken from the code and every worked example was produced by running the bot's own code or read from its real data on the server (code at commit 2626cdb, data as of 21 October 2026).
 
 > This guide is also available as a standalone page, [MARKET_MAKER_EXPLAINED.html](MARKET_MAKER_EXPLAINED.html) (open it in a browser; it uses MathJax and mermaid from public CDNs), with coloured tables and typeset pseudocode.
 
@@ -1263,7 +1263,7 @@ Everything below was found while writing this page, by reading the code and runn
 | Symbol | Setting | Meaning | Code default | Demo now (USDT / BTC) | Live now (USDT / BTC) |
 | --- | --- | --- | ---: | ---: | ---: |
 | $`f`$ | `commission_perc` | fee per filled order | 0.10 % | 0.08 % | 0.25 % |
-| $`r_{\min}`$ | `exp_ret_min` | required net return of a round trip | 0.10 % | 0.01 % | 0.01 % |
+| $`r_{\min}`$ | `exp_ret_min` | required net return of a round trip | 0.02 % (0.20 % on 20–22 Oct 2026) | 0.02 % (0.20 % on 20–22 Oct 2026) | 0.01 % |
 | $`J_{\min}`$ | `ev_min` | expected-value floor per lifetime | $`10^{-5}`$ | $`10^{-5}`$ | $`10^{-5}`$ |
 | $`\eta`$ | `adverse_selection_perc` | cost charged in $`J`$ when only one leg fills | 0 | 0 | 0 |
 | $`q_{\min}, q_{\max}`$ | `inv_min`, `inv_max` | inventory band | 0 – 50 USDT / 0 – 0.000472 BTC | 0 – 300 / 0 – 0.0037 | 0 – 15 / 0 – 0.0001527 |
