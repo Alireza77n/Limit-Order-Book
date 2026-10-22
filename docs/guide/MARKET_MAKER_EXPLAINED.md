@@ -1,6 +1,6 @@
 # The market maker and MM_algo2, explained from the ground up
 
-How the Nobitex market-making bot works on the branch `MM_algo2`, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit d38742a, data as of 20 October 2026).
+How the Nobitex market-making bot works on the branch `MM_algo2`, end to end: what it trades and why, one round of a worker step by step, the decision rule MM_algo2 with every formula proved, what its order-book signal looks like on real books, how results are measured, and how the system is run. Every worked example was produced by running this branch's own code on real Nobitex order books, or read from the bot's real data on the server (code at commit c040f46, data as of 20 October 2026).
 
 > This guide is also available as a standalone page, [MARKET_MAKER_EXPLAINED.html](MARKET_MAKER_EXPLAINED.html) (open it in a browser; it uses MathJax and mermaid from public CDNs), with coloured tables and typeset pseudocode.
 
@@ -1019,7 +1019,7 @@ Everything below was found by reading the code and running it. None of it is hid
 | $`n_V`$ | `algo3_min_volume_orders` | thin-book threshold, in order sizes | 20 | 20 | 20 |
 | $`I_{\max}`$ | `algo3_imbalance_clip` | clip of the imbalance | 0.8 | 0.8 | 0.8 |
 | $`f`$ | `commission_perc` | fee per filled order | 0.10 % | 0.08 % | 0.25 % |
-| $`r_{\min}`$ | `exp_ret_min` | required net return of a round trip | 0.10 % | 0.01 % | 0.01 % |
+| $`r_{\min}`$ | `exp_ret_min` | required net return of a round trip | 0.02 % (0.20 % on 20–22 Oct 2026) | 0.02 % (0.20 % on 20–22 Oct 2026) | 0.01 % |
 | $`\sigma_q`$ | `skew_perc` | largest inventory shift of the centre | 0.2 % | 0.2 % | 0.2 % |
 | $`q_{\min}, q_{\max}`$ | `inv_min`, `inv_max` | inventory band | 0 – 50 USDT / 0 – 0.000472 BTC | 0 – 300 / 0 – 0.0037 | 0 – 15 / 0 – 0.0001527 |
 | $`S`$ | `order_size` | base order size | 1 USDT / 0.000015 BTC | 5 / 0.000062 | 1 / 0.00001189 |
