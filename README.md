@@ -244,7 +244,7 @@ and sends them.
 
 ## Step 1: inventory position and quote centre
 
-$$x = \operatorname{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\,0,\,1\right),\qquad
+$$x = \mathrm{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\,0,\,1\right),\qquad
 c = m\,\bigl(1 - \sigma_q\,(2x - 1)\bigr)\quad(\sigma_q = \texttt{skew\_perc}).$$
 
 Half-full inventory leaves $c = m$; a full band moves the centre $\sigma_q$ below

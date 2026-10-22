@@ -70,7 +70,7 @@ $G = 1.0025/0.9975^2 - 1 = 0.7532\%$.
 
 ### 2.1 Inventory position and quote centre
 
-$$x = \operatorname{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right), \qquad
+$$x = \mathrm{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right), \qquad
 c = m\,\bigl(1 - \sigma_q\,(2x - 1)\bigr).$$
 
 With $x > \tfrac12$ (too many coins) the centre sits below the mid: every ask
