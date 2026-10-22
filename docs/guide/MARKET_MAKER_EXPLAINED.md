@@ -1333,7 +1333,7 @@ Output: the orders sent in this round, and one recorded row
  8  (B, A) ← ChoosePrices(book, q)                                   [Listing 2]
 
     Gate 2 · size and send each side
- 9  x_s ← mathrmpos(q - o_s) and x_b ← mathrmpos(q + o_b)            [3.4]
+ 9  x_s ← pos(q - o_s) and x_b ← pos(q + o_b)                        [3.4]
 10  if A exists and no own sell rests within 5 ticks of A then
 11      size ← min(2S x_s, free coins - q_min)
 12      if size ≥ 0.1 S and the exposure guard allows then
@@ -1370,7 +1370,7 @@ Output: a buy price B, a sell price A, both, or no order
 
     Step 2 · The candidate prices
  3  m ← (b_0 + a_0)/2                                                [4.1]
- 4  x ← mathrmpos(q)                                                 [4.1]
+ 4  x ← pos(q)                                                       [4.1]
  5  c ← m (1 - σ_q (2x - 1))                                         [4.2]
  6  for δ = δ_min, δ_min ρ, δ_min ρ^2, … while δ ≤ δ_max do          [4.3]
  7      B ← one tick above the first bid ≤ c (1 - δ), but below a_0
