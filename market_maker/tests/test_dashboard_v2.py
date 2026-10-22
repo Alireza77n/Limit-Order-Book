@@ -173,10 +173,10 @@ def test_load_track_cache_refreshes_when_the_store_changes(tmp_path):
 def test_deep_links_select_tab_track_and_session(monkeypatch):
     from dash import no_update
 
-    assert dashboard.apply_url("?tab=decision&track=usdt_demo") == ("decision", "usdt_demo")
-    assert dashboard.apply_url("?tab=nope&track=nope") == (no_update, no_update)
-    assert dashboard.apply_url("") == (no_update, no_update)
-    assert dashboard.apply_url(None) == (no_update, no_update)
+    assert dashboard.apply_url("?tab=decision&track=usdt_demo") == "decision"
+    assert dashboard.apply_url("?tab=nope&track=nope") is no_update
+    assert dashboard.apply_url("") is no_update
+    assert dashboard.apply_url(None) is no_update
 
     monkeypatch.setattr(dashboard, "load_track", lambda path: pd.DataFrame([{"Session_id": "s1"}, {"Session_id": "s2"}]))
     assert dashboard.refresh_session_options("btc_real", 0, None, "?session=s2")[1] == "s2"

@@ -138,7 +138,9 @@ def test_deep_link_selects_the_algorithm():
     assert dashboard.apply_url_algorithm("?tab=algorithm&algo=all") == "all"
     assert dashboard.apply_url_algorithm("?algo=algo9") is no_update
     assert dashboard.apply_url_algorithm(None) is no_update
-    assert dashboard.apply_url("?tab=algorithm&track=usdt_demo") == ("algorithm", "usdt_demo")
+    assert dashboard.apply_url("?tab=algorithm&track=usdt_demo") == "algorithm"
+    assert dashboard.tracks_for_algorithm("all", "?track=usdt_demo", None)[1] == "usdt_demo"       # first load
+    assert dashboard.tracks_for_algorithm("all", "?track=usdt_demo", "btc_demo")[1] is no_update   # a made choice wins
 
 
 def test_sessions_are_labelled_with_their_algorithm(mixed_track):
@@ -302,3 +304,27 @@ def test_the_empty_state_says_where_the_algorithm_has_run(tmp_path, monkeypatch)
     text = _text_of(dashboard.render_tab_content("overview", "usdt_demo", "all", 0, 0.0, 0.0, "algo3"))
     assert "MM_algo2 has not run on any track yet." in text
 
+
+
+# ---------- the Track list follows the Algorithm choice (22 October 2026) ----------
+
+def test_one_algorithm_offers_only_its_own_demo_lane():
+    """The operator chose MM_algo1v2 and still saw "Demo MM_algo2" and the
+    two-lane track in the list: one algorithm offers the live track, the
+    single-worker history and its own lane only."""
+    keys = dashboard.visible_tracks("algo1")
+    assert "btc_demo_algo1" in keys and "usdt_demo_algo1" in keys
+    assert "btc_demo_algo3" not in keys and "btc_demo_lanes" not in keys
+    assert "btc_real" in keys and "btc_demo" in keys
+    assert set(dashboard.visible_tracks("all")) == set(dashboard.TRACKS)
+    assert set(dashboard.visible_tracks(None)) == set(dashboard.TRACKS)
+
+
+def test_the_track_switches_to_the_chosen_algorithms_lane():
+    options, value = dashboard.tracks_for_algorithm("algo1", None, "btc_demo_lanes")
+    assert value == "btc_demo_algo1"
+    assert [o["value"] for o in options] == dashboard.visible_tracks("algo1")
+    assert dashboard.tracks_for_algorithm("algo3", None, "usdt_demo_algo1")[1] == "usdt_demo_algo3"
+    assert dashboard.tracks_for_algorithm("algo3", None, "usdt_demo_algo3")[1] is no_update   # unchanged: not rewritten
+    assert dashboard.tracks_for_algorithm("all", None, "btc_demo_algo1")[1] is no_update       # still offered
+    assert dashboard.TRACKS["btc_demo_lanes"]["label"] == "BTC — Demo, both algorithms (compare)"

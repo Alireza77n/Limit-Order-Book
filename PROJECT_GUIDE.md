@@ -250,7 +250,7 @@ Values in force on 17 October 2026 (the demo's applied settings and the saved li
 |---|---:|---:|---:|---:|
 | `algorithm` | **algo3 (MM_algo2)** since 11:15 UTC | algo1 (MM_algo1v2) | **algo3 (MM_algo2)**, saved; the worker is stopped | none saved, so algo1 (MM_algo1v2) |
 | `commission_perc` | 0.0008 | 0.0008 | 0.0025 | 0.0025 |
-| `exp_ret_min` | 0.0001 | 0.0001 | 0.0001 | 0.0001 |
+| `exp_ret_min` | 0.0002 (since 22 Oct; 0.0001 before 20 Oct, 0.002 on 20–22 Oct) | 0.0002 (same) | 0.0001 | 0.0001 |
 | MM_algo2 half-spread $h_{\min}$ | 0.0850 % | 0.0850 % | 0.2553 % | 0.2553 % |
 | `inv_min` – `inv_max` | 0 – 0.0037 | 0 – 300 | 0 – 0.0001527 | 0 – 15 |
 | `order_size` | 0.000062 | 5 | 0.00001189 | 1 |
@@ -564,9 +564,10 @@ crashes and corner cases:
 ### 20 October 2026 (this branch)
 
 - Engine, both algorithms: requote band in percent with one order per side, orders live 3 minutes, target
-  0.20 %, trend pause (0.3 % over 10 min). Demo lanes: a pair's worker runs every enabled algorithm at once, each with its
+  0.20 % (0.02 % since 22 October), trend pause (0.3 % over 10 min). Demo lanes: a pair's worker runs every enabled algorithm at once, each with its
   own paper account and results; the admin Algorithm page switches lanes on and off; the dashboard has a
-  track per lane, the two lanes side by side, and the single-worker history.
+  track per lane, both lanes together ("compare"), and the single-worker history; since 22 October the
+  Track list follows the Algorithm choice.
 
 ### MM_algo2 (2026-10-17, this branch)
 

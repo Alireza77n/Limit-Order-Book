@@ -99,7 +99,7 @@ def _build_tracks() -> Dict[str, Dict[str, Any]]:
                 "path": path, "status": "demo", "lane": lane,
             }
         tracks[f"{pair}_demo_lanes"] = {
-            "label": f"{name} — Demo, {' and '.join(algorithm_label(k) for k in SELECTABLE_ALGORITHMS)} side by side",
+            "label": f"{name} — Demo, both algorithms (compare)",
             "path": tuple(lane_paths), "status": "demo", "lane": None,
         }
         tracks[f"{pair}_demo"] = {
@@ -1957,14 +1957,62 @@ app.layout = html.Div([
 ], style={"background": PAGE, "padding": "1rem 1.5rem", "minHeight": "100vh", "fontFamily": FONT_FAMILY})
 
 
-@app.callback(Output("main-tabs", "value"), Output("track", "value"), Input("url", "search"))
+@app.callback(Output("main-tabs", "value"), Input("url", "search"))
 def apply_url(search):
-    """Deep links: ?tab=decision&track=usdt_demo (&session=<id>, applied by
-    refresh_session_options; &algo=algo3, applied by apply_url_algorithm)
-    open the page on that view."""
-    params = _url_params(search)
-    tab, track = params.get("tab"), params.get("track")
-    return (tab if tab in TAB_VALUES else no_update, track if track in TRACKS else no_update)
+    """Deep links: ?tab=decision (&track=usdt_demo, applied by
+    tracks_for_algorithm; &session=<id>, applied by refresh_session_options;
+    &algo=algo3, applied by apply_url_algorithm) open the page on that view."""
+    tab = _url_params(search).get("tab")
+    return tab if tab in TAB_VALUES else no_update
+
+
+def visible_tracks(choice) -> List[str]:
+    """The tracks the picker offers for an Algorithm choice: the live tracks
+    and the single-worker history always (their rounds are filtered to the
+    chosen algorithm); one algorithm's own demo lane only when it is chosen;
+    the two lanes together only under "All algorithms"."""
+    keys = []
+    for key, track in TRACKS.items():
+        lane = track.get("lane")
+        combined = isinstance(track["path"], (tuple, list))
+        if choice in (None, ALGORITHM_VIEW_ALL) or (lane is None and not combined) or lane == choice:
+            keys.append(key)
+    return keys
+
+
+def _track_for_choice(current, choice, allowed: List[str]):
+    """Keep the current track when the choice still offers it; otherwise the
+    same pair's lane of the chosen algorithm, else the first track offered."""
+    if current in allowed:
+        return current
+    if current in TRACKS and choice in SELECTABLE_ALGORITHMS:
+        wanted = f"{_pair_of(current)}_demo_{choice}"
+        if wanted in allowed:
+            return wanted
+    return allowed[0] if allowed else None
+
+
+@app.callback(Output("track", "options"), Output("track", "value"),
+              Input("algorithm-choice", "value"), Input("url", "search"), State("track", "value"))
+def tracks_for_algorithm(choice, search, current):
+    """The Track list follows the Algorithm choice (visible_tracks); a track
+    named in the deep link wins when the choice offers it. The value is
+    written only when it has to change, so a late response never undoes a
+    choice the operator made meanwhile."""
+    allowed = visible_tracks(choice)
+    options = [{"label": TRACKS[key]["label"], "value": key} for key in allowed]
+    wanted = _url_params(search).get("track")
+    if wanted in allowed and (current is None or _triggered_by("url")):
+        return options, (wanted if wanted != current else no_update)
+    value = _track_for_choice(current, choice, allowed)
+    return options, (no_update if value == current else value)
+
+
+def _triggered_by(component_id: str) -> bool:
+    try:
+        return ctx.triggered_id == component_id
+    except Exception:          # called outside a callback (tests)
+        return False
 
 
 @app.callback(Output("algorithm-choice", "value"), Input("url", "search"))

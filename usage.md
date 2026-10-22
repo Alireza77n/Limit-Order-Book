@@ -311,6 +311,9 @@ ask, teal = fills), each on its own single axis. Every line chart uses
 
 Pick a **track** (which result store) and a **session** (a specific run,
 or "All sessions (compare)" to overlay runs), then use the eight tabs. The
+Track list follows the Algorithm choice of the first tab: one algorithm
+offers the live track, its own demo lane and the single-worker history;
+"All algorithms" offers every track, including the two lanes together. The
 session picker lists every session in the store, however old, labelled first
 with the algorithm(s) its rounds ran, in the order they ran; choosing
 one loads that session's own newest rounds, while the comparison view

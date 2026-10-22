@@ -4,7 +4,7 @@
   whichever is wider, shared by both strategies and the engine;
 * one order per side: a resting order outside the band of the new price is
   cancelled ("replaced"), one inside it keeps the new order from being sent;
-* orders live cancel_after_minutes (3) and the target is 0.20 % by default;
+* orders live cancel_after_minutes (3) and the target is 0.02 % by default (0.20 % on 20-22 October);
 * the trend pause blocks buys after a fall and sells after a rise (0.3 %
   over 10 minutes by default);
 * a lane (run.py) has its own files, a pinned algorithm, a runtime snapshot
@@ -39,7 +39,7 @@ def test_new_fields_exist_with_the_documented_defaults():
         assert profile["trend_pause_perc"] == 0.003 and profile["trend_window_seconds"] == 600.0
         assert profile["algo1_enabled"] is True and profile["algo3_enabled"] is True
         assert profile["cancel_after_minutes"] == 3
-        assert profile["exp_ret_min"] == 0.002
+        assert profile["exp_ret_min"] == 0.0002
     from forward_config import FORWARD_FIELDS
     assert {"requote_band_perc", "trend_window_seconds", "trend_pause_perc"} <= FORWARD_FIELDS
     assert not {"algo1_enabled", "algo3_enabled"} & FORWARD_FIELDS

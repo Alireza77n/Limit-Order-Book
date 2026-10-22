@@ -782,7 +782,7 @@ every algorithm switched on runs at the same time in its own lane.
 | `algo3_min_volume_orders` | Algo3 Min Volume Orders | ≥ 0 | 20 | $n_V$: a top thinner than $n_V \cdot S$ carries no signal; 0 = always trust the book |
 | `algo3_imbalance_clip` | Algo3 Imbalance Clip | 0–1 | 0.8 | $I_{\max}$ |
 | `skew_perc` | Skew Perc | | 0.002 | $\sigma_q$, shared with MM_algo1v2 |
-| `commission_perc`, `exp_ret_min` | Commission Perc, Exp Ret Min | | | $f$, $r_{\min}$: the fee bar (live forces $f \ge 0.25\%$) |
+| `commission_perc`, `exp_ret_min` | Commission Perc, Exp Ret Min | | 0.0025, 0.0002 | $f$, $r_{\min}$: the fee bar (live forces $f \ge 0.25\%$); $r_{\min}$ 0.0002 since 22 October 2026 (0.002 on 20–22 October, 0.001 before) |
 | `inv_min`, `inv_max`, `order_size` | | | | the band and $S$ (sizing, the thin-book threshold) |
 | `hysteresis_ticks`, `refresh_seconds` | | | 5, 300 | $n$, $T$ (section 5.7; also the engine's resting-order guard) |
 | `requote_band_perc` | Requote Band Perc | 0–0.1 | 0.0003 | $\omega$: the requote band $w(p) = \max(n\epsilon, \omega p)$ (sections 5.7 and 6); a resting order outside it is replaced |
@@ -818,9 +818,11 @@ The other MM_algo1v2 settings (`grid_*`, `one_sided_*`, `ev_min`, `adverse_selec
 * **Command line:** `python run.py --profile btc --mode demo` runs the lanes the configuration enables;
   `--algorithm algo3` runs MM_algo2 alone in the single-worker files (`btc_track_demo.csv`).
 * **Results dashboard** (`http://37.32.31.162/`): per pair the tracks are *Live Forward Test*, *Demo
-  MM_algo1v2*, *Demo MM_algo2* (one per lane), *Demo, MM_algo1v2 and MM_algo2 side by side* (both lanes
-  together) and *Demo history* (the single worker until 20 October). The first tab, **Algorithm**, lists
-  **MM_algo1v2**, **MM_algo2** and **All algorithms — side by side**.
+  MM_algo1v2*, *Demo MM_algo2* (one per lane), *Demo, both algorithms (compare)* (the two lanes together)
+  and *Demo history* (the single worker until 20 October). The first tab, **Algorithm**, lists
+  **MM_algo1v2**, **MM_algo2** and **All algorithms — side by side**; the Track list follows that choice
+  (since 22 October): one algorithm offers the live track, its own lane and the history, "All algorithms"
+  every track.
   * Choosing MM_algo2 shows its description, the settings in force, its headline numbers and two charts of
     its own (the imbalance over time, and where the centre sat relative to the mid). Every other tab then
     shows MM_algo2's rounds only.
@@ -909,10 +911,14 @@ market (`results/t18_new_rules.csv`, `t19_trend_variants.csv`):
   value in a falling market (BTC fell 1.9 % over the six days of the replay, USDT 1.5 % over 15–17 October).
 * **Orders live 3 minutes** (`cancel_after_minutes` = 3): little effect once replacement is on; kept because
   an order that no longer follows the quote should not rest for ten minutes.
-* **Target 0.20 %** (`exp_ret_min` = 0.002, the operator's requirement until real fills are measured): it
-  widens MM_algo2's half-spread to 0.18 %, above the BTC market spread (0.125 %) and far above USDT's
-  (0.05 %), so the quotes sit at the best price 9 % (BTC) and 1 % (USDT) of the time instead of 50 % and
-  7 %. Less loss, far less liquidity: the trade-off to revisit once fills are measured on a real account.
+* **Target 0.20 %** (`exp_ret_min` = 0.002, the operator's requirement of 20 October): it widens
+  MM_algo2's half-spread to 0.18 %, above the BTC market spread (0.125 %) and far above USDT's (0.05 %), so
+  the quotes sit at the best price 9 % (BTC) and 1 % (USDT) of the time instead of 50 % and 7 %. Less
+  loss, far less liquidity. In the lanes' first 25 minutes of 22 October at 0.20 % MM_algo2 sent a buy in
+  16 of 27 BTC rounds and 25 of 161 USDT rounds, MM_algo1v2 in 1 and 0; the operator then lowered the
+  target to **0.02 %** (`exp_ret_min` = 0.0002, both profiles, both pairs' demo overlays), the value in
+  force since 10:14 UTC that day. The fee bar then sets the half-spread alone ($h_{\min}$ of section 5.3
+  with $r_{\min}$ = 0.02 %).
 * **Trend pause** (`trend_window_seconds`, `trend_pause_perc`): tested at 0.2 % / 5 min, 0.3 % / 10 min and
   0.5 % / 15 min, on buys only and on both sides. None improved the replay (BTC −0.56 % → −0.57 % to −0.64 %;
   USDT unchanged). The falls that cost money last hours, not minutes. On by default all the same (0.3 % over

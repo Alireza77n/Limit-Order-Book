@@ -249,7 +249,7 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         # Matches commission_perc, i.e. today's actual bootstrap default
         # (engine.py falls back to exp_ret_min=commission_perc when unset) --
         # adding it here makes it Admin-editable without changing behavior.
-        exp_ret_min=0.0020,
+        exp_ret_min=0.0002,
         cancel_after_minutes=3,
         algorithm_id="1btc",
         depth_max=10,
@@ -334,7 +334,7 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         # reports/live-session-audit-2026-08-10.md); lower this from Admin
         # if more frequent USDT quoting is wanted. Left unchanged here so
         # this commit does not itself alter trading behavior.
-        exp_ret_min=0.0020,
+        exp_ret_min=0.0002,
         cancel_after_minutes=3,
         algorithm_id="1usdt",
         depth_max=10,

@@ -44,7 +44,8 @@ reload at round boundaries, runtime snapshots per lane) ← `control_queue.py` �
 ## Current goal (October 2026)
 
 Run both algorithms on the demo at the same time (lanes) under the rules of 20 October 2026 —
-one order per side (requote band 0.03 %), 3-minute orders, target 0.20 %, trend pause 0.3 % over
+one order per side (requote band 0.03 %), 3-minute orders, target 0.02 % (0.20 % on 20–22 October),
+trend pause 0.3 % over
 10 minutes — measure fills, and prepare the fee-discount proposal for the exchange
 (`Report_investor/`). Live workers are stopped; the operator decides when they run.
 

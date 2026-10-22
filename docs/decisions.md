@@ -35,6 +35,13 @@ Decision: `exp_ret_min` = 0.002 in both profiles. Reason: the operator's require
 touch-only fill rule cannot measure fills, so the bar stays high until a real account does.
 Status: accepted 2026-10-20; revisit with real fills.
 
+## ADR-012: target 0.02 % (supersedes ADR-005)
+
+Decision: `exp_ret_min` = 0.0002 in both profiles and in both pairs' demo overlays. Reason: at
+0.20 % the lanes' first 25 minutes on 22 October placed a buy in 16 of 27 BTC rounds and 25 of
+161 USDT rounds (MM_algo2) and in 1 and 0 (MM_algo1v2); the operator decided the demo must trade.
+The fee bar now sets MM_algo2's half-spread on its own. Status: accepted 2026-10-22.
+
 ## ADR-006: trend pause on by default
 
 Decision: `trend_pause_perc` = 0.003 over `trend_window_seconds` = 600: no buy after the mid fell

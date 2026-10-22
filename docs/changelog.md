@@ -5,6 +5,12 @@ Newest first. Commit hashes are on this branch.
 ## 2026-10-22
 
 ### Changed
+- Dashboard: the Track list follows the Algorithm choice (one algorithm = the live track, its own
+  demo lane and the single-worker history; "All algorithms" = every track); the two-lane track is
+  named *Demo, both algorithms (compare)*; `apply_url` sets the tab only, `tracks_for_algorithm` the
+  track.
+- Target 0.02 %: `exp_ret_min` 0.002 → 0.0002 in both profiles and, through the control queue, in
+  both pairs' demo overlays (in force since 10:14 UTC; ADR-012).
 - Admin Algorithm page: the Demo table names the chosen algorithm in every row (column
   *Algorithm* = name + lane state); the other lanes moved to *Also running*.
 - `docs/algorithms/MM_algo1v2.md` removed; every reference points at branch `MM_algo1v2` on GitHub
