@@ -27,7 +27,7 @@
     <div class="table-wrapper">
       <table class="table">
         <thead>
-          <tr><th>Pair</th><th>Worker</th><th>{{ name }} lane</th><th>Session</th><th>Lanes on</th><th>Action</th></tr>
+          <tr><th>Pair</th><th>Worker</th><th>Algorithm</th><th>Session</th><th>Also running</th><th>Action</th></tr>
         </thead>
         <tbody>
           {% for row in state.demo %}
@@ -39,6 +39,7 @@
               {% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
             </td>
             <td class="status-cell" data-demo-lane="{{ row.pair }}:{{ selected }}:{{ lane.state }}">
+              <span class="status-badge algo-name" data-demo-algorithm="{{ row.pair }}:{{ selected }}">{{ name }}</span>
               {% if lane.state == 'running' %}<span class="status-badge status-running">Running</span>
               {% elif lane.state == 'starting' %}<span class="status-badge status-locked">Starting</span>
               {% elif lane.state == 'worker_stopped' %}<span class="status-badge status-stopped">On, worker stopped</span>
@@ -47,7 +48,7 @@
             </td>
             <td>{% if lane.enabled and lane.session_label %}<code class="mono" data-demo-lane-session="{{ row.pair }}:{{ selected }}">{{ lane.session_label }}</code>{% else %}<span class="text-muted">—</span>{% endif %}</td>
             <td>
-              {% for key, other in row.lanes.items() if other.enabled %}<span class="status-badge algo-name" data-demo-algorithm="{{ row.pair }}:{{ key }}">{{ algorithm_labels.get(key, key) }}</span> {% else %}<span class="text-muted">none</span>{% endfor %}
+              {% for key, other in row.lanes.items() if other.enabled and key != selected %}<span class="status-badge algo-name" data-demo-algorithm="{{ row.pair }}:{{ key }}">{{ algorithm_labels.get(key, key) }}</span> {% else %}<span class="text-muted">—</span>{% endfor %}
             </td>
             <td>
               {% if lane.enabled is none %}

@@ -53,7 +53,7 @@ Once every round (10 s on USDT/IRT, 60 s on BTC/IRT) the engine hands the strate
 
 ### 2.1 Inventory position and quote centre
 
-$$x=\operatorname{clamp}\!\left(\frac{q-q_{\min}}{q_{\max}-q_{\min}},\,0,\,1\right),\qquad c=m\bigl(1-\sigma_q(2x-1)\bigr).$$
+$$x=\mathrm{clamp}\!\left(\frac{q-q_{\min}}{q_{\max}-q_{\min}},\,0,\,1\right),\qquad c=m\bigl(1-\sigma_q(2x-1)\bigr).$$
 
 With more than half the band held ($x>\tfrac12$) the centre sits below the mid, so every ask candidate is nearer the market and every bid farther: selling becomes more likely than buying. With an empty inventory ($x=0$) the centre sits $\sigma_q=0.2\,\%$ above the mid. Inventory outside the band saturates at 0 or 1 instead of producing an ever-growing shift.
 

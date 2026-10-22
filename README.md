@@ -275,7 +275,7 @@ between the best bid and the best ask. When more volume rests at the best bid, i
 
 $$
 c = p_{\text{micro}}\,\bigl(1 + \beta I\bigr)\,\bigl(1 - \sigma_q\,(2x - 1)\bigr),
-\qquad x = \operatorname{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\right).
+\qquad x = \mathrm{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}}, 0, 1\right).
 $$
 
 A half-full band leaves the centre at the microprice. A full band moves it $\sigma_q$ = 0.2 % down, so selling
@@ -542,8 +542,8 @@ track the two algorithms cover different periods (for example, the BTC demo sess
   times its profit after fees; the best pair that clears the fee bar is quoted. It stays selectable in this
   branch, and it is the code default of the `algorithm` setting, so that the two algorithms can be compared on
   the same dashboard. Its documentation, the fill model and its history are on the branch
-  [`MM_algo1v2`](https://github.com/Alireza77n/Limit-Order-Book/tree/MM_algo1v2); a one-page summary is in
-  [`docs/algorithms/MM_algo1v2.md`](docs/algorithms/MM_algo1v2.md).
+  [`MM_algo1v2`](https://github.com/Alireza77n/Limit-Order-Book/tree/MM_algo1v2); nothing about it is
+  documented on this branch.
 * **Avellaneda–Stoikov** (`strategy/algo2.py`, key `algo2`): a placeholder whose `decide_order()` raises
   `NotImplementedError`. Its name has nothing to do with MM_algo2. The notebooks in `market_maker/research/`
   estimate two of its parameters; the model itself is documented on the `MM_algo1v2` branch.
@@ -642,7 +642,6 @@ docs/
                              and make_mm_algo2_doc_data.py, which computes them with this branch's code
   algorithms/figures/        the specification's figures and make_mm_algo2_figures.py
   algorithms/PNL_ATTRIBUTION.md  the dashboard's split of each round's PnL into price and trading
-  algorithms/MM_algo1v2.md   one page on the comparison algorithm, with links to its branch
   guide/                     the whole system explained, as Markdown and as a standalone HTML page
   deployment/                admin panel and deployment notes
 ```

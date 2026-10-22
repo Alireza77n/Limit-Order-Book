@@ -51,8 +51,10 @@ Status: accepted 2026-10-20.
 ## ADR-008: each branch documents its own algorithm
 
 Decision: `MM_algo2` documents MM_algo2; MM_algo1v2's behaviour, numbers and changes live on
-branch `MM_algo1v2`; `docs/algorithms/MM_algo1v2.md` here is a one-page pointer.
-Reason: the operator's rule. Status: accepted 2026-10-17, reaffirmed 2026-10-20.
+branch `MM_algo1v2`; nothing about it is documented on this branch (the catalog's doc link for
+`algo1` points at that branch on GitHub).
+Reason: the operator's rule. Status: accepted 2026-10-17, reaffirmed 2026-10-20 and 2026-10-22 (the
+one-page pointer removed).
 
 ## ADR-009: the demo fills by price touch only
 

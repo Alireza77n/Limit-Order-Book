@@ -40,7 +40,7 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
     "algo1": AlgorithmInfo(
         key="algo1", number=1, label="MM_algo1v2",
         title="Algorithm 1, version 2: distance grid, fill probabilities and expected value",
-        cls=Algo1Strategy, implemented=True, doc="docs/algorithms/MM_algo1v2.md",
+        cls=Algo1Strategy, implemented=True, doc="https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo1v2/docs/algorithms/ALGORITHM_1_V2.md",
         summary=(
             "Moves a quote centre away from the mid as the inventory fills: c = mid · (1 − skew · (2x − 1)).",
             "Builds candidate bids and asks on a geometric grid of distances from the centre, each one tick inside a real book level.",

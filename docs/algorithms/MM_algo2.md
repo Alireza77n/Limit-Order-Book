@@ -200,7 +200,7 @@ $-142.12880836567$ and $(s/2)\,I_0$ = $-142.12880836571$. The test
 ### 5.1 Inventory position
 
 $$
-x = \operatorname{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right),
+x = \mathrm{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right),
 \qquad x = \tfrac12 \text{ if } q_{\max} \le q_{\min}.
 $$
 
@@ -349,11 +349,11 @@ engine checks the sell side first, then the buy side; a live worker applies the 
 
 **Target sizes.** With $k_s$ = `inventory_sizing_strength` (1), floor $\phi$ =
 `inventory_sizing_min_fraction` (0), $o_b$ and $o_s$ the amounts still resting in the worker's open buys
-and sells, and $\pi(e) = 2\operatorname{clamp}\bigl((e - q_{\min})/(q_{\max} - q_{\min}), 0, 1\bigr) - 1$:
+and sells, and $\pi(e) = 2\mathrm{clamp}\bigl((e - q_{\min})/(q_{\max} - q_{\min}), 0, 1\bigr) - 1$:
 
 $$
-\text{buy} = S \cdot \operatorname{clamp}\bigl(1 - k_s\,\pi(q + o_b),\ \phi,\ 1 + k_s\bigr), \qquad
-\text{sell} = S \cdot \operatorname{clamp}\bigl(1 + k_s\,\pi(q - o_s),\ \phi,\ 1 + k_s\bigr).
+\text{buy} = S \cdot \mathrm{clamp}\bigl(1 - k_s\,\pi(q + o_b),\ \phi,\ 1 + k_s\bigr), \qquad
+\text{sell} = S \cdot \mathrm{clamp}\bigl(1 + k_s\,\pi(q - o_s),\ \phi,\ 1 + k_s\bigr).
 $$
 
 With no open orders and the settings in force, this is buy $= 2S(1 - x)$ and sell $= 2Sx$. The two always add
@@ -667,7 +667,7 @@ $\tau$ = 600 s, 60 consecutive books share most of their window), so the standar
 autocorrelation: the script uses the Newey–West estimator with $L = \lceil \tau / 10\,\text{s} \rceil$ lags,
 
 $$
-\widehat{\operatorname{Var}}(\hat\beta) = \frac{\sum_t u_t^2 + 2\sum_{l=1}^{L} \bigl(1 - \tfrac{l}{L+1}\bigr) \sum_t u_t\, u_{t-l}}{\bigl(\sum_t I_t^2\bigr)^2},
+\widehat{\mathrm{Var}}(\hat\beta) = \frac{\sum_t u_t^2 + 2\sum_{l=1}^{L} \bigl(1 - \tfrac{l}{L+1}\bigr) \sum_t u_t\, u_{t-l}}{\bigl(\sum_t I_t^2\bigr)^2},
 \qquad u_t = I_t\, e_t .
 $$
 

@@ -43,7 +43,7 @@ The code holds three strategy classes:
 | Name shown | Code | Status |
 |---|---|---|
 | **MM_algo2** | `strategy/algo3.py`, key `algo3` | This branch's algorithm. Implemented and tested; running on the BTC demo since 17 Oct 2026, 11:15 UTC. |
-| **MM_algo1v2** (Algorithm 1 version 2) | `strategy/algo1.py`, key `algo1` | Kept selectable for comparison; it is the code default of the setting. Documented on its own branch; summary in [`docs/algorithms/MM_algo1v2.md`](docs/algorithms/MM_algo1v2.md). |
+| **MM_algo1v2** (Algorithm 1 version 2) | `strategy/algo1.py`, key `algo1` | Kept selectable for comparison; it is the code default of the setting. Documented on its own branch only: [`ALGORITHM_1_V2.md`](https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo1v2/docs/algorithms/ALGORITHM_1_V2.md). |
 | Avellaneda–Stoikov | `strategy/algo2.py`, key `algo2` | Placeholder only, not implemented. Unrelated to the name MM_algo2. |
 
 Which one a worker runs is the `algorithm` setting, chosen per pair on the admin
@@ -186,7 +186,6 @@ real trading or to MySQL: `safety.py` refuses to start.
 | `docs/algorithms/data/` | The real order books, settings and demo rounds every number comes from, and `make_mm_algo2_doc_data.py`, which computes them with this branch's code. |
 | `docs/algorithms/figures/` | The specification's figures and the script that draws them. |
 | `docs/algorithms/PNL_ATTRIBUTION.md` | How the dashboard splits each round's change in wealth into price PnL and trading PnL. |
-| `docs/algorithms/MM_algo1v2.md` | One page on the comparison algorithm, with links to its branch. |
 | `docs/guide/MARKET_MAKER_EXPLAINED.md` (and `.html`) | The whole system explained from the ground up around MM_algo2: one round of a worker, the order decision as numbered checks, every formula with proofs, the book signal on real data, the dashboard metrics, operations, the live forward test, limitations, glossary and pseudocode. |
 | `docs/deployment/` | The admin page and deployment notes. |
 | `docs/reports/`, `docs/superpowers/` | Dated records: the 11 October investor update (about MM_algo1v2, the algorithm then running) and earlier plans. |

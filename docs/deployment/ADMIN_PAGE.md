@@ -95,8 +95,9 @@ active session and while the live workers run.
 > every algorithm switched on by **`algo1_enabled`** / **`algo3_enabled`** at the same time, each in its own
 > *lane* with its own paper account, result files and runtime snapshot (`runtime_config_<pair>_<lane>.json`).
 > The **Algorithm** page (`/admin/algorithm`, second menu item) is the simpler way to switch: a drop-down of
-> the algorithm names, then a Demo table (per pair: worker, the chosen algorithm's lane state — Running,
-> Starting, Off, On with the worker stopped — its session as `MM_algo2 · <session id>`, the other lanes on,
+> the algorithm names, then a Demo table (per pair: worker, the chosen algorithm's name with its lane state —
+> Running, Starting, Off, On with the worker stopped — its session as `MM_algo2 · <session id>`, the other
+> lanes also running,
 > and *Activate* / *Switch off*, which flip the lane's flag through `apply_config`; the worker starts or stops
 > the lane within seconds and the other lanes are untouched) and a Live table (per pair: worker, algorithm of
 > the running worker, algorithm saved for its next start, *Activate*; each live worker's active session next

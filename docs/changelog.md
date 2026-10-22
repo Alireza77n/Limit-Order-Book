@@ -2,6 +2,30 @@
 
 Newest first. Commit hashes are on this branch.
 
+## 2026-10-22
+
+### Changed
+- Admin Algorithm page: the Demo table names the chosen algorithm in every row (column
+  *Algorithm* = name + lane state); the other lanes moved to *Also running*.
+- `docs/algorithms/MM_algo1v2.md` removed; every reference points at branch `MM_algo1v2` on GitHub
+  (catalog `doc`, README, PROJECT_GUIDE, config comment).
+- Math in the Markdown docs: `\operatorname` (not rendered by GitHub) replaced by `\mathrm`
+  (README, MM_algo2.md, the guide, the investor report).
+- Server: `/root/deploy_dashboard.sh` v5 takes `SKIP_TESTS=1` (with a `TESTED_LOCALLY` note in the
+  log) — the 2 GB box cannot run the suite without starving sshd/nginx or being OOM-killed, which
+  is what took the dashboards down on 20 and 21 October; the suite runs on the operator's PC.
+- Server, 09:44–09:52 UTC: `f9b27a9` deployed to both stacks (tests skipped); the demo worker
+  containers recreated on the new image; both pairs' overlays set to the 20 October rules
+  (`cancel_after_minutes` 3, `exp_ret_min` 0.002, `requote_band_perc` 0.0003, `trend_pause_perc`
+  0.003 over 600 s, both lanes on; fee 0.08 % kept); new demo session
+  `demo-20261022T094903Z-81cabc208b6d` with all four lanes running; the fill-table cron and the
+  tables rebuilt with `--horizon-seconds 180`. No live worker touched.
+
+### Reason
+The operator's review of 22 October: the Demo table showed the running algorithm's name where the
+chosen one was expected; a page about MM_algo1v2 still lived on this branch; GitHub refused the
+`\operatorname` macro.
+
 ## 2026-10-21
 
 ### Changed

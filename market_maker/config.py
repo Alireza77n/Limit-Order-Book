@@ -116,7 +116,7 @@ class MMConfig:
     inventory_sizing_min_fraction: float = 0.0
 
     # MM_algo1v2 (Algorithm 1 v2) quote selection -- see strategy/algo1.py; it is
-    # specified on the MM_algo1v2 branch (summary here: docs/algorithms/MM_algo1v2.md).
+    # specified on the MM_algo1v2 branch (documented there, not on this branch).
     # All of these are hot-reloadable from
     # the admin panel (demo_config.FIELD_DEFINITIONS / forward_config.FORWARD_FIELDS).
     #
