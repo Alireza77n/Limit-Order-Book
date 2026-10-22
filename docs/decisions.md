@@ -34,6 +34,12 @@ longer follows the quote should not rest for ten minutes. Status: accepted 2026-
 Decision: `exp_ret_min` = 0.002 in both profiles. Reason: the operator's requirement; the demo's
 touch-only fill rule cannot measure fills. Status: accepted 2026-10-20; revisit with real fills.
 
+## ADR-008: target 0.02 % (supersedes ADR-005)
+
+Decision: `exp_ret_min` = 0.0002 in both profiles. Reason: at 0.20 % the demo lanes of 22 October
+placed almost no order in their first 25 minutes (this algorithm: a buy in 1 of 27 BTC rounds and
+0 of 161 USDT rounds); the operator decided the demo must trade. Status: accepted 2026-10-22.
+
 ## ADR-006: trend pause on by default
 
 Decision: `trend_pause_perc` = 0.003 over `trend_window_seconds` = 600: no buy after the mid fell

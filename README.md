@@ -306,7 +306,7 @@ the resting quote is younger than `refresh_seconds`, is replaced by the resting
 price; the engine does not re-post a side when one of its own orders already
 rests within the band (`resting_order_kept`) and cancels a resting order the new
 price has left outside it (`replaced`): one order per side. Since 20 October
-2026 orders live 3 minutes, the target is 0.20 % and the engine pauses buys
+2026 orders live 3 minutes, the target is 0.02 % (0.20 % on 20–22 October) and the engine pauses buys
 after the mid fell 0.3 % within 10 minutes (sells after such a rise):
 [`ALGORITHM_1_V2.md` §2.8](docs/algorithms/ALGORITHM_1_V2.md#28-engine-rules-of-20-october-2026).
 

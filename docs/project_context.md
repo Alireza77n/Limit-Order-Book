@@ -40,7 +40,7 @@ price-touch fill rule). Control plane: `demo_config.py` (overlays, hot reload, r
 ## Current goal (October 2026)
 
 Keep this branch a faithful, self-contained record of Algorithm 1 version 2 under the rules of
-20 October 2026 (one order per side, 3-minute orders, target 0.20 %, trend pause), with its own
+20 October 2026 (one order per side, 3-minute orders, target 0.02 % since 22 October, trend pause), with its own
 documentation and tests; measure its fills on a real account before judging it.
 
 ## Important constraints

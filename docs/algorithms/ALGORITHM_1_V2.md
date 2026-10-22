@@ -231,7 +231,7 @@ apply to MM_algo1v2 exactly as to any other strategy the engine runs:
 |---|---|---|
 | requote band in percent, one order per side | `requote_band_perc` = 0.0003 | the band of section 2.6 is $\max(5\epsilon, 0.03\,\%\,p)$; a resting order of ours outside the band of the new price is cancelled (`replaced`) before the new order is sent, one inside it keeps the new order from being sent (`resting_order_kept`) |
 | orders live 3 minutes | `cancel_after_minutes` = 3 (10 before) | a resting order older than 3 minutes is cancelled at the start of the round (`stale_timeout`); the fill probabilities of section 2.3 refer to this lifetime, so the nightly fill table is built with `--horizon-seconds 180` (`FILL_MODEL.md`) |
-| target 0.20 % | `exp_ret_min` = 0.002 (0.001 before) | the bar $r_{\min}$ of section 2.4, the operator's requirement until real fills are measured |
+| target | `exp_ret_min` = 0.0002 since 22 October (0.002 on 20–22 October, 0.001 before) | the bar $r_{\min}$ of section 2.4; 0.20 % was the operator's requirement of 20 October, lowered to 0.02 % on 22 October because at 0.20 % the demo lanes placed almost no order (this algorithm sent a buy in 1 of 27 BTC rounds and 0 of 161 USDT rounds in their first 25 minutes) |
 | trend pause | `trend_window_seconds` = 600, `trend_pause_perc` = 0.003 | after the mid fell by more than 0.3 % within the last 10 minutes no buy is placed and resting buys are cancelled (`trend_pause`); after such a rise, the same for sells. The bot stops adding coins in a falling market and stops selling them off in a rising one. 0 switches it off. |
 
 **What the replay says for this algorithm.** `demo_analysis/simulator.py` replays the recorded market
@@ -411,7 +411,7 @@ Live Config page (`forward_config.FORWARD_FIELDS`).
 | `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples` | True, 48, 50 | when the measured table is used |
 | `fill_kappa`, `fill_lambda_tau` | 400, 1.0 | fallback formula |
 | `fill_queue_volume_ref` | 0 (off) | queue correction |
-| `commission_perc`, `exp_ret_min`, `inv_min`, `inv_max`, `cancel_after_minutes` | 0.0025, 0.002, per pair, per pair, 3 | fee, bar, band, lifetime; `exp_ret_min` 0.002 and `cancel_after_minutes` 3 since 20 October 2026 (0.001 and 10 before, section 2.8) |
+| `commission_perc`, `exp_ret_min`, `inv_min`, `inv_max`, `cancel_after_minutes` | 0.0025, 0.0002, per pair, per pair, 3 | fee, bar, band, lifetime; `exp_ret_min` 0.0002 since 22 October 2026 (0.002 on 20–22 October, 0.001 before) and `cancel_after_minutes` 3 since 20 October (10 before), section 2.8 |
 
 `demo_level1_fast_fill_enabled` is now **off** in both profiles: version 1's
 level-1 quote sat next to the touch, version 2's level index says nothing about

@@ -2,6 +2,17 @@
 
 Newest first.
 
+## 2026-10-22
+
+### Changed
+- Target 0.02 %: `exp_ret_min` 0.002 → 0.0002 in both profiles (ADR-008); on the server the demo
+  overlays of both pairs carry the same value for this algorithm's lanes.
+- `\operatorname` → `\mathrm` in the Markdown math (GitHub does not render `\operatorname`); the
+  guide's plain-text listings read `pos(q)` again.
+
+### Reason
+At 0.20 % the demo lanes placed almost no order; GitHub refused the macro.
+
 ## 2026-10-21 — engine rules of 20 October 2026
 
 ### Changed
