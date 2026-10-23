@@ -282,10 +282,11 @@ none); the engine decides the sizes ([section 7](#7-how-order-sizes-are-decided)
 
 ### Step 1: the inventory moves the quote centre
 
-```
-x = clamp( (inv − inv_min) / (inv_max − inv_min), 0, 1 )
-c = mid × (1 − skew_perc × (2x − 1))
-```
+$$
+x = \mathrm{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right), \qquad c = \text{mid} \times \bigl(1 - \sigma_q\,(2x - 1)\bigr)
+$$
+
+($q$ the inventory inside its band $[q_{\min}, q_{\max}]$, $\sigma_q$ = `skew_perc`.)
 
 Half-full inventory leaves the centre at the mid. A full band moves it
 `skew_perc` (0.2%) below the mid, so every ask candidate is nearer the market
@@ -312,10 +313,15 @@ CSVs) when it is fresh, otherwise from the fallback formula
 
 ### Step 4: every bid/ask pair is scored by expected value
 
-```
-R_net = ask × (1 − fee)² / bid − 1                      (unchanged from version 1)
-J     = p_bid × p_ask × R_net − adverse_selection_perc × (p_bid(1 − p_ask) + p_ask(1 − p_bid))
-```
+$$
+R_{\text{net}} = \frac{A\,(1 - f)^2}{B} - 1 \qquad \text{(unchanged from version 1)}
+$$
+
+$$
+J = p_B\,p_A\,R_{\text{net}} - \eta\,\bigl(p_B\,(1 - p_A) + p_A\,(1 - p_B)\bigr)
+$$
+
+($B$ the bid, $A$ the ask, $p_B$ and $p_A$ their fill probabilities, $f$ the fee, $\eta$ = `adverse_selection_perc`.)
 
 A pair is feasible when `R_net > exp_ret_min` and `J > ev_min`. The feasible
 pair with the largest `J` is quoted. All pairs are scored, so one odd level
@@ -405,11 +411,13 @@ Example with `order_size` 10, a band of 0 to 100, inventory 50 and no fills:
 
 ### Limits applied after the rule
 
-```
-sell = min(sell target, inventory − amount in open sells − inv_min)
-buy  = min(buy target, (cash − cash in open buys) / bid price)
-buy is sent only if  open buys + inventory + buy ≤ inv_max
-```
+$$
+\begin{aligned}
+\text{sell} &= \min\bigl(\text{sell target},\ \text{inventory} - \text{amount in open sells} - \text{inv}_{\min}\bigr) \\
+\text{buy} &= \min\bigl(\text{buy target},\ (\text{cash} - \text{cash in open buys}) / \text{bid price}\bigr) \\
+\text{buy is sent only if} &\quad \text{open buys} + \text{inventory} + \text{buy} \le \text{inv}_{\max}
+\end{aligned}
+$$
 
 Then, for each side separately:
 

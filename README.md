@@ -312,15 +312,17 @@ after the mid fell 0.3 % within 10 minutes (sells after such a rise):
 
 ## Algorithm 1 summary
 
-```text
-inputs : book {bids, asks, lastTradePrice}, inventory q, cfg
-x  = clamp((q − inv_min)/(inv_max − inv_min), 0, 1);   c = mid·(1 − skew·(2x − 1))
-bids, asks = anchored candidates on the distance grid (one tick inside the level; no cross)
-p  = fill probability per candidate (table or formula)
-if x ≥ hi: best lone ask vs (cost basis or c)       elif x ≤ lo: best lone bid vs c
-else: best pair by J with R_net > r_min and J > ev_min;  if none: best lone leg;  if none: no quote
-apply hysteresis;  return {bid, ask (either may be None), levels, economics, probabilities, reason}
-```
+1. **Inputs:** the book (bids, asks, last trade price), the inventory $q$ and the settings.
+2. **Centre:** $x = \mathrm{clamp}((q - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1)$ and $c = m\,(1 - \sigma_q\,(2x - 1))$,
+   with $\sigma_q$ = `skew_perc`.
+3. **Candidates:** the anchored bids and asks on the distance grid, one tick inside the level and never crossing.
+4. **Fill probability** $p$ of every candidate, from the table or the formula.
+5. **One-sided inventory:** if $x \ge x_{hi}$: the best lone ask against the cost basis or $c$; if $x \le x_{lo}$: the
+   best lone bid against $c$.
+6. **Otherwise:** the best pair by $J$ among those with $R_{\text{net}} > r_{\min}$ and $J > J_{\min}$; if none, the best
+   lone leg; if none, no quote.
+7. **Hysteresis and output:** apply the hysteresis; return the bid and the ask (either may be absent), the levels,
+   the economics, the probabilities and the reason.
 
 ## Output of Algorithm 1
 

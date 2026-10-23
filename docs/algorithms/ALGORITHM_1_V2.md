@@ -308,41 +308,36 @@ USDT.
 
 ## 4. Pseudocode
 
-```text
-function decide_order(book, q):                                  # Algo1Strategy.decide_order
-    update_cost_basis(q)                                         # §2.5: inventory delta → P̄
-    E = evaluate(book, q)
-    if not E.ok:  forget resting prices;  return None            # reason in no_quote_reason()
-    bid, ask = E.chosen_bid.price, E.chosen_ask.price            # either may be None
-    bid, ask, kept = apply_hysteresis(bid, ask)                  # §2.6
-    if kept and not still_clears_bar(bid, ask, E):  re-quote at the new prices
-    return {bid, ask, bid level, ask level, mid price, centre, inventory position,
-            gross/net return, expected value, fill probs, quote mode, selection reason, ...}
+`Algo1Strategy.decide_order(book, q)`:
 
-function evaluate(book, q):                                      # pure; shared with diagnostics()
-    if depth_cap(book) == 0 or mid(book) is None:  return fail("invalid_or_single_level_order_book")
-    x = clamp((q − inv_min) / (inv_max − inv_min), 0, 1)
-    c = mid · (1 − skew_perc · (2x − 1))
-    bids, asks = build_candidates(book, c)                       # §2.2, with p attached (§2.3)
-    if x ≥ one_sided_hi:  return best_single(asks, ref = P̄ or c)  or fail("no_side_clears_bar")
-    if x ≤ one_sided_lo:  return best_single(bids, ref = c)       or fail("no_side_clears_bar")
-    best = None
-    for B in bids, A in asks:                                    # §2.4
-        R = (1 − f)² · A/B − 1
-        J = pB·pA·R − η·(pB(1 − pA) + pA(1 − pB))
-        if R > r_min and J > ev_min and (best is None or J > best.J):  best = (B, A)
-    if best:  return pair(best)
-    single = best_single(asks, ref = P̄ or c) ∪ best_single(bids, ref = c)   # §2.5 fallback
-    if single:  return single
-    return fail("expected_value_below_floor" if any pair cleared the bar else "no_side_clears_bar")
+1. Update the cost basis from the inventory delta (§2.5: the average cost $\bar P$).
+2. $E = \mathrm{evaluate}(\text{book}, q)$. If $E$ failed: forget the resting prices and return no quote; the reason
+   is `no_quote_reason()`.
+3. Take the chosen bid and ask prices from $E$ (either may be absent) and apply the hysteresis (§2.6). If the kept
+   pair no longer clears the bar, quote at the new prices.
+4. Return the bid, the ask, their levels, the mid, the centre, the inventory position, the gross and the net return,
+   the expected value, the fill probabilities, the quote mode and the selection reason.
 
-function build_candidates(book, c):                              # §2.2
-    for δ in grid:
-        target = c(1 − δ);  i = first level with b_i ≤ target
-        B = b_i + ε  if i exists  else round_down(target)       # synthetic when the book ends
-        B = min(B, a_0 − ε);  keep once;  distance = (c − B)/c;  volume_ahead = Σ v_k for k < i
-        (asks symmetric with ≥ and a_j − ε, max(A, b_0 + ε))
-```
+`evaluate(book, q)` (pure; shared with `diagnostics()`):
+
+1. If the depth cap is 0 or the mid is undefined: fail with `invalid_or_single_level_order_book`.
+2. $x = \mathrm{clamp}\bigl((q - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1\bigr)$ and $c = m\,(1 - \sigma_q\,(2x - 1))$.
+3. Build the candidates of both sides (§2.2) with their fill probabilities $p$ attached (§2.3).
+4. If $x \ge x_{hi}$: the best single ask against $\bar P$ or $c$, else fail with `no_side_clears_bar`.
+   If $x \le x_{lo}$: the best single bid against $c$, else the same failure.
+5. For every bid $B$ and ask $A$ (§2.4): $R = (1 - f)^2\,A/B - 1$ and
+   $J = p_B\,p_A\,R - \eta\,\bigl(p_B\,(1 - p_A) + p_A\,(1 - p_B)\bigr)$; keep the pair with the largest $J$ among
+   those with $R > r_{\min}$ and $J > J_{\min}$.
+6. If a pair was kept: return it. Else try a single leg (§2.5 fallback): the best single ask against $\bar P$ or $c$,
+   or the best single bid against $c$. Else fail with `expected_value_below_floor` when some pair cleared the bar,
+   otherwise with `no_side_clears_bar`.
+
+`build_candidates(book, c)` (§2.2), for every grid distance $\delta$:
+
+1. target $= c\,(1 - \delta)$; $i$ is the first level with $b_i \le$ target.
+2. $B = b_i + \epsilon$ when that level exists, else the target rounded down (a synthetic level when the book ends).
+3. $B = \min(B,\ a_0 - \epsilon)$; keep each price once; distance $= (c - B)/c$; volume ahead $= \sum_{k < i} v^b_k$.
+4. The asks are symmetric: $\ge$ instead of $\le$, $a_j - \epsilon$, and $A = \max(A,\ b_0 + \epsilon)$.
 
 Complexity per round: $O(n \cdot L)$ to build candidates and $O(n^2)$ to score
 pairs with $n \le 11$ grid points and $L \le$ `depth_max + 1` levels.

@@ -2,6 +2,23 @@
 
 Newest first.
 
+## 2026-10-23 — formulas typeset as math on GitHub
+
+### Changed
+- README and PROJECT_GUIDE and `docs/algorithms/ALGORITHM_1_V2.md` §4: every formula block that was monospace text with Unicode symbols is
+  now a LaTeX display block (`$$ … $$`), and the end-of-section algorithm summary is a numbered list
+  with inline math. The pseudocode listing of the specification is now a numbered procedure with the same steps.
+
+### Reason
+The operator: plain-text formula blocks render badly on GitHub; the rest of the documents already use
+MathJax.
+
+### Result
+GitHub renders the formulas like the notation tables and the specification. No code change.
+
+### Files
+`README.md`, `PROJECT_GUIDE.md`, `docs/algorithms/ALGORITHM_1_V2.md`.
+
 ## 2026-10-23 — admin export streams the archive from disk
 
 ### Changed
