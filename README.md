@@ -214,10 +214,13 @@ maximise the expected wealth at the end of a horizon, minus a penalty for carryi
 Stoikov 2008; Cartea, Jaimungal & Penalva 2015, chapter 10). The answer, to first order, is a pair of depths
 with four readable terms:
 
-```text
-ask depth  =  1/κ  +  lean  −  skew  +  risk      (then + fee on each side)
-bid depth  =  1/κ  −  lean  +  skew  +  risk
-```
+$$
+\begin{aligned}
+\text{ask depth} &= \frac{1}{\kappa} + \text{lean} - \text{skew} + \text{risk} \\
+\text{bid depth} &= \frac{1}{\kappa} - \text{lean} + \text{skew} + \text{risk}
+\end{aligned}
+\qquad (\text{then } + f \text{ on each side})
+$$
 
 * **1/κ** is the fee-free optimal half-spread: $\kappa$ measures how fast the chance of a fill decays with
   the depth of the order, so slow decay (patient takers) means tighter quotes;
@@ -241,7 +244,7 @@ are the plain Avellaneda–Stoikov ones.
 | $\tau$ | the horizon of the lean | `algo4_horizon_seconds` (0 = the order lifetime, 3 min) |
 | $m$ | the lean, relative to $S$ | capped by `algo4_lean_clip` (0.005) |
 | $\kappa$ | fill-intensity decay per unit of relative depth | fitted on the fill table; fallback `algo4_kappa` (400) |
-| $x$, $\sigma_q$ | inventory position in the band; the skew at its edges | `inv_min`, `inv_max`; `skew_perc` (0.002) |
+| $q$, $x$, $\sigma_q$ | inventory; its position in the band $[q_{\min}, q_{\max}]$; the skew at its edges | `inv_min`, `inv_max`; `skew_perc` (0.002) |
 | $\rho$ | the risk widening | `algo4_risk_perc` (0) |
 | $f$, $r_{\min}$, $G$ | fee per leg, required net return, $G = (1 + r_{\min})/(1-f)^2 - 1$ | `commission_perc`, `exp_ret_min` |
 
@@ -250,10 +253,13 @@ are the plain Avellaneda–Stoikov ones.
 The strategy keeps the last 30 minutes of mids, one sample every 10 seconds, and fits the exact discretisation
 of the mean-reverting model $dS = \theta(\mu - S)\,dt + \sigma\,dW$:
 
-```text
-S[k+1] = a + b·S[k] + e          (ordinary least squares over consecutive samples)
-θ = −ln b / Δt      μ = a / (1 − b)      half-life = ln 2 / θ      t = (b − 1) / se(b)
-```
+$$
+S_{k+1} = a + b\,S_k + \varepsilon_k \qquad \text{(ordinary least squares over consecutive samples)}
+$$
+
+$$
+\theta = -\frac{\ln b}{\Delta t}, \qquad \mu = \frac{a}{1 - b}, \qquad t_{1/2} = \frac{\ln 2}{\theta}, \qquad t = \frac{b - 1}{\mathrm{se}(b)}
+$$
 
 Fewer than 30 samples (the first five minutes after a start): the round is quoted without the forecast.
 
@@ -268,21 +274,31 @@ else. A fit that fails is still reported; the quotes are then the Avellaneda–S
 
 ## Step 3: the lean
 
-```text
-m = (μ − S) × (1 − exp(−θ τ)) / S        clipped to ± algo4_lean_clip (0.5 %)
-```
+$$
+m = \frac{(\mu - S)\,\bigl(1 - e^{-\theta\tau}\bigr)}{S}
+$$
 
-the expected reversion over the order's lifetime $\tau$ (180 s), as a fraction of the price; zero when the
+clipped to ±0.5 % (`algo4_lean_clip`): the expected reversion over the order's lifetime $\tau$ (180 s), as a
+fraction of the price; zero when the
 forecast is not admissible or `algo4_use_alpha` is off.
 
 ## Step 4: the depths
 
-```text
-κ        from the fill table: ln(−ln(1 − P(d)) / τ) = ln λ − κ d  over its buckets   (fallback algo4_kappa)
-skew     = skew_perc × (2x − 1)                 x = clamp((inv − inv_min) / (inv_max − inv_min), 0, 1)
-ask depth δ⁺ = max(tick/S, 1/κ + m − skew + ρ) + f
-bid depth δ⁻ = max(tick/S, 1/κ − m + skew + ρ) + f
-```
+$$
+\ln\!\left(-\frac{\ln\bigl(1 - P(d)\bigr)}{\tau}\right) = \ln\lambda - \kappa\,d \qquad \text{(fitted over the fill-table buckets)}
+$$
+
+$$
+x = \mathrm{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right), \qquad \text{skew} = \sigma_q\,(2x - 1)
+$$
+
+$$
+\delta^{+} = \max\!\left(\frac{\epsilon}{S},\ \frac{1}{\kappa} + m - \text{skew} + \rho\right) + f, \qquad
+\delta^{-} = \max\!\left(\frac{\epsilon}{S},\ \frac{1}{\kappa} - m + \text{skew} + \rho\right) + f
+$$
+
+($\delta^{+}$ the ask depth, $\delta^{-}$ the bid depth; $\kappa$ falls back to `algo4_kappa` when the table has too few
+buckets.)
 
 On the fill tables of 17 October 2026, $\kappa$ = 727 for USDT/IRT ($1/\kappa$ = 0.138 %) and
 626 for BTC/IRT ($1/\kappa$ = 0.160 %). The fee shift $+f$ on each side is exact: with a proportional fee a
@@ -290,12 +306,18 @@ fill at the ask yields $(1-f)(S + \delta^+) \approx S + \delta^+ - fS$, which sh
 
 ## Step 5: prices on the tick, never crossing, and the fee bar
 
-```text
-A = ceil_to_tick ( max(S (1 + δ⁺), best bid + tick) )
-B = floor_to_tick( min(S (1 − δ⁻), best ask − tick) )
-if A/B ≤ 1 + G:  w = ((1 + G) B − A) / (2 + G) + tick;  A += w, B −= w, re-round     (symmetric widening)
-send only if (1 − f)² A/B − 1 > exp_ret_min and B < A
-```
+$$
+A = \mathrm{ceil}_\epsilon\!\bigl(\max(S\,(1 + \delta^{+}),\ b_0 + \epsilon)\bigr), \qquad
+B = \mathrm{floor}_\epsilon\!\bigl(\min(S\,(1 - \delta^{-}),\ a_0 - \epsilon)\bigr)
+$$
+
+$$
+\text{if } \frac{A}{B} \le 1 + G: \quad w = \frac{(1 + G)\,B - A}{2 + G} + \epsilon, \quad A \leftarrow A + w, \quad B \leftarrow B - w \quad \text{(re-rounded; symmetric widening)}
+$$
+
+$$
+\text{send only if } (1 - f)^2\,\frac{A}{B} - 1 > r_{\min} \ \text{ and } \ B < A
+$$
 
 The widening keeps the lean and the skew and only raises the spread to the bar. With the demo's fee 0.08 %
 and target 0.02 % the bar is $G$ = 0.180 %; the fitted $1/\kappa$ plus the fee shift clears it without widening.
@@ -309,16 +331,20 @@ within the band, and replaces a resting order that the new price has left outsid
 
 ## MM_algo3 summary
 
-```text
-inputs : book {bids, asks, lastTradePrice}, inventory q, cfg, the strategy's own window and clock
-S  = (b0 + a0) / 2;  append (t, S) to the window every 10 s, keep 30 min;  fit a, b, s_e;  θ, μ, half-life, t
-admissible = 0 < b < 1 and t < −2.86 and 60 s ≤ half-life ≤ 900 s
-m  = admissible ? clip((μ − S)(1 − e^(−θτ)) / S, ±0.5 %) : 0
-x  = clamp((q − inv_min)/(inv_max − inv_min), 0, 1);   skew = skew_perc (2x − 1);   κ = fill-table fit or algo4_kappa
-δ⁺ = max(tick/S, 1/κ + m − skew + ρ) + f;   δ⁻ = max(tick/S, 1/κ − m + skew + ρ) + f
-A  = S(1 + δ⁺), B = S(1 − δ⁻);  clip to the touch;  round A up, B down;  widen symmetrically to the fee bar
-keep the resting pair if inside the requote band;  return {B, A, levels, centre, net return, estimates, reason}
-```
+1. **Inputs:** the book (bids, asks, last trade price), the inventory $q$, the settings, and the strategy's own
+   window and clock.
+2. **Window and fit:** $S = (b_0 + a_0)/2$; append $(t, S)$ to the window every 10 s and keep 30 min; fit $a$, $b$,
+   $s_\varepsilon$ and derive $\theta$, $\mu$, $t_{1/2}$ and the $t$-statistic.
+3. **Admissible:** $0 < b < 1$, $t < -2.86$ and $60\ \text{s} \le t_{1/2} \le 900\ \text{s}$.
+4. **Lean:** $m = (\mu - S)(1 - e^{-\theta\tau})/S$ clipped at ±0.5 % when admissible, else $m = 0$.
+5. **Skew and $\kappa$:** $x = \mathrm{clamp}((q - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1)$, $\text{skew} = \sigma_q\,(2x - 1)$;
+   $\kappa$ from the fill-table fit or `algo4_kappa`.
+6. **Depths:** $\delta^{+} = \max(\epsilon/S,\ 1/\kappa + m - \text{skew} + \rho) + f$ and
+   $\delta^{-} = \max(\epsilon/S,\ 1/\kappa - m + \text{skew} + \rho) + f$.
+7. **Prices:** $A = S(1 + \delta^{+})$ and $B = S(1 - \delta^{-})$; clip to the touch; round $A$ up and $B$ down; widen
+   symmetrically to the fee bar.
+8. **Hysteresis and output:** keep the resting pair while it is inside the requote band; return the bid $B$, the ask
+   $A$, the levels, the centre, the net return, the estimates and the reason.
 
 ## Output of MM_algo3
 

@@ -4,6 +4,23 @@ Newest first. Commit hashes are on this branch; it was cut from `MM_algo2` at `c
 23 October 2026, whose history (the 20 October engine rules, the demo lanes, the admin and
 dashboard work) it carries.
 
+## 2026-10-23 — formulas typeset as math on GitHub
+
+### Changed
+- README and PROJECT_GUIDE: every formula block that was monospace text with Unicode symbols is
+  now a LaTeX display block (`$$ … $$`), and the end-of-section algorithm summary is a numbered list
+  with inline math.
+
+### Reason
+The operator: plain-text formula blocks render badly on GitHub; the rest of the documents already use
+MathJax.
+
+### Result
+GitHub renders the formulas like the notation tables and the specification. No code change.
+
+### Files
+`README.md`, `PROJECT_GUIDE.md`.
+
 ## 2026-10-23 — admin export streams the archive from disk
 
 ### Changed

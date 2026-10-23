@@ -312,40 +312,46 @@ decides the bid price and the ask price; the engine decides the sizes ([section 
 
 ### Step 1: the price window and the fit
 
-```
-keep the last 30 minutes of mids, one sample every 10 s
-S[k+1] = a + b S[k] + e     by least squares over consecutive samples
-theta = -ln b / dt    mu = a / (1 - b)    half-life = ln 2 / theta    t = (b - 1) / se(b)
-```
+Keep the last 30 minutes of mids, one sample every 10 s, and fit by least squares over consecutive samples:
+
+$$
+S_{k+1} = a + b\,S_k + \varepsilon_k, \qquad \theta = -\frac{\ln b}{\Delta t}, \qquad \mu = \frac{a}{1 - b}, \qquad t_{1/2} = \frac{\ln 2}{\theta}, \qquad t = \frac{b - 1}{\mathrm{se}(b)}
+$$
 
 Fewer than 30 samples (the first five minutes after a start): the round is quoted without the forecast.
 
 ### Step 2: is the forecast admissible?
 
-```
-admissible  =  0 < b < 1  and  t < -2.86  and  60 s <= half-life <= 900 s
-```
+$$
+\text{admissible} \iff 0 < b < 1 \quad\text{and}\quad t < -2.86 \quad\text{and}\quad 60\ \text{s} \le t_{1/2} \le 900\ \text{s}
+$$
 
 The second test is the Dickey–Fuller 5 % critical value: on 200 simulated random walks of 180 samples it admits
 4.5 % (the design note's t < −2 would admit 25.5 %). A fit that fails is reported but not used.
 
 ### Step 3: the lean
 
-```
-m = (mu - S) (1 - exp(-theta tau)) / S        tau = the order lifetime (180 s);  clipped to +-0.5 %
-```
+$$
+m = \frac{(\mu - S)\,\bigl(1 - e^{-\theta\tau}\bigr)}{S}, \qquad \tau = \text{the order lifetime (180 s)}, \qquad \text{clipped to } \pm 0.5\,\%
+$$
 
 Zero when the forecast is not admissible or `algo4_use_alpha` is off. Price below its mean: $m > 0$, the bid
 comes closer and the ask goes farther.
 
 ### Step 4: the depths
 
-```
-kappa      = fit on the fill table  ln(-ln(1 - P(d)) / tau) = ln lambda - kappa d   (else algo4_kappa)
-skew       = skew_perc (2x - 1)
-ask depth  = max(tick/S, 1/kappa + m - skew + rho) + fee
-bid depth  = max(tick/S, 1/kappa - m + skew + rho) + fee
-```
+$$
+\ln\!\left(-\frac{\ln\bigl(1 - P(d)\bigr)}{\tau}\right) = \ln\lambda - \kappa\,d \qquad \text{(fitted on the fill table; else the setting)}
+$$
+
+$$
+\text{skew} = \sigma_q\,(2x - 1), \qquad
+\delta^{+} = \max\!\left(\frac{\epsilon}{S},\ \frac{1}{\kappa} + m - \text{skew} + \rho\right) + f, \qquad
+\delta^{-} = \max\!\left(\frac{\epsilon}{S},\ \frac{1}{\kappa} - m + \text{skew} + \rho\right) + f
+$$
+
+($\delta^{+}$ the ask depth, $\delta^{-}$ the bid depth, $x$ the inventory position in the band, $\sigma_q$ = `skew_perc`,
+$\rho$ = `algo4_risk_perc`, $f$ the fee, $\epsilon$ the tick; the fallback for $\kappa$ is `algo4_kappa`.)
 
 $1/\kappa$ is the fee-free optimal half-spread of the control problem (0.138 % on USDT and
 0.160 % on BTC from the tables of 17 October); the lean and the skew move the centre, the width
@@ -353,12 +359,20 @@ $2/\kappa + 2\rho + 2f$ depends on neither.
 
 ### Step 5: prices on the tick, never crossing, and the fee bar
 
-```
-A = ceil_to_tick ( max(S (1 + ask depth), best bid + tick) )
-B = floor_to_tick( min(S (1 - bid depth), best ask - tick) )
-if A/B <= 1 + G:  widen both by w = ((1 + G) B - A) / (2 + G) + tick, re-round      G = (1 + exp_ret_min)/(1 - fee)^2 - 1
-send only if (1 - fee)^2 A/B - 1 > exp_ret_min
-```
+$$
+A = \mathrm{ceil}_\epsilon\!\bigl(\max(S\,(1 + \delta^{+}),\ b_0 + \epsilon)\bigr), \qquad
+B = \mathrm{floor}_\epsilon\!\bigl(\min(S\,(1 - \delta^{-}),\ a_0 - \epsilon)\bigr)
+$$
+
+$$
+\text{if } \frac{A}{B} \le 1 + G: \quad w = \frac{(1 + G)\,B - A}{2 + G} + \epsilon, \quad A \leftarrow A + w, \quad B \leftarrow B - w \quad \text{(re-rounded)}, \qquad G = \frac{1 + r_{\min}}{(1 - f)^2} - 1
+$$
+
+$$
+\text{send only if } (1 - f)^2\,\frac{A}{B} - 1 > r_{\min}
+$$
+
+($b_0$, $a_0$ the best bid and ask, $r_{\min}$ = `exp_ret_min`.)
 
 ### Step 6: keep a pair that barely moved
 
@@ -444,11 +458,13 @@ Example with `order_size` 10, a band of 0 to 100, inventory 50 and no fills:
 
 ### Limits applied after the rule
 
-```
-sell = min(sell target, inventory − amount in open sells − inv_min)
-buy  = min(buy target, (cash − cash in open buys) / bid price)
-buy is sent only if  open buys + inventory + buy ≤ inv_max
-```
+$$
+\begin{aligned}
+\text{sell} &= \min\bigl(\text{sell target},\ \text{inventory} - \text{amount in open sells} - \text{inv}_{\min}\bigr) \\
+\text{buy} &= \min\bigl(\text{buy target},\ (\text{cash} - \text{cash in open buys}) / \text{bid price}\bigr) \\
+\text{buy is sent only if} &\quad \text{open buys} + \text{inventory} + \text{buy} \le \text{inv}_{\max}
+\end{aligned}
+$$
 
 Then, for each side separately:
 
