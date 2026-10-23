@@ -839,6 +839,15 @@ class SimpleMarketMaker:
                 # Always record matched history
                 filled_history.setdefault(clid, []).append(matched)
     
+        # The live worker loads this table with ``pd.read_csv``; since pandas 3
+        # a column of client order ids is typed ``str`` and refuses the matched
+        # amount (a float) written below. Keep both status columns object typed
+        # so an id can become an amount (the BTC live worker exited on this
+        # TypeError on 17 October 2026).
+        for column in ("Buy Status", "Sell Status"):
+            if column in order_df.columns and order_df[column].dtype != object:
+                order_df[column] = order_df[column].astype(object)
+
         # First update cells (by side), then decide removals
         to_remove_buy: Set[str] = set()
         to_remove_sell: Set[str] = set()

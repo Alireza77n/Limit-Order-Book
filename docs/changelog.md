@@ -2,6 +2,29 @@
 
 Newest first.
 
+## 2026-10-23 — live fill tracking survives pandas 3
+
+### Changed
+- `engine.py::SimpleMarketMaker.update_filled_amounts` casts the `Buy Status` and `Sell Status`
+  columns to object dtype before it writes a matched amount over a client order id. New
+  `tests/test_engine_filled_amounts.py` (3 tests) loads the table with `pandas.read_csv`, as the
+  live worker does, and reproduced the error before the fix.
+
+### Reason
+Since pandas 3 (the live venv runs 3.0.6 on Python 3.14, the demo image 3.0.6 on Python 3.11) a
+column of client order ids read from CSV is typed `str`; writing the float matched amount raised
+`TypeError: Invalid value '2.1e-05' for dtype 'str'` and ended the BTC live worker on 17 October
+2026 11:34 UTC (`/var/log/market-maker-forward/btc-live.log`); the exit-time reconciliation failed
+on the same error ("Bulk cancel failed"). The demo lanes build their table with `dtype=object` and
+were not affected.
+
+### Result
+Live fill tracking writes the amount; the engine suites pass. No live worker was started or
+stopped. The same fix is on every branch (`MM_algo1v2`, `MM_algo2`, `MM_algo3`).
+
+### Files
+`market_maker/engine.py`, `market_maker/tests/test_engine_filled_amounts.py`.
+
 ## 2026-10-22
 
 ### Changed
