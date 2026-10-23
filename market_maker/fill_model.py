@@ -92,6 +92,37 @@ class FillTable:
             buckets=buckets,
         )
 
+    def fit_intensity(self, min_samples: int) -> Optional[Dict[str, float]]:
+        """The fill-intensity parameters of the table: with
+        P(fill within tau) = 1 - exp(-lambda e^{-kappa d} tau), the regression
+        ln(-ln(1 - P) / tau) = ln lambda - kappa d over every side and bucket
+        with at least ``min_samples`` observations and 0 < P < 1 gives
+        ``kappa`` (decay per unit of relative distance, minus the slope) and
+        ``lambda`` (fills per second at zero distance). None when fewer than
+        two distinct distances qualify or the slope is not negative."""
+        tau = float(self.horizon_seconds or 0.0)
+        if tau <= 0:
+            return None
+        xs, ys = [], []
+        for bucket in self.buckets:
+            for p, n in ((bucket.p_bid, bucket.n_bid), (bucket.p_ask, bucket.n_ask)):
+                if n >= min_samples and 0.0 < p < 1.0:
+                    xs.append(bucket.distance)
+                    ys.append(math.log(-math.log(1.0 - p) / tau))
+        if len(xs) < 2 or len(set(xs)) < 2:
+            return None
+        xbar, ybar = sum(xs) / len(xs), sum(ys) / len(ys)
+        sxx = sum((x - xbar) ** 2 for x in xs)
+        sxy = sum((x - xbar) * (y - ybar) for x, y in zip(xs, ys))
+        if sxx <= 0:
+            return None
+        slope = sxy / sxx
+        kappa = -slope
+        if not (math.isfinite(kappa) and kappa > 0):
+            return None
+        return {"lambda": math.exp(ybar - slope * xbar), "kappa": kappa,
+                "points": float(len(xs)), "horizon_seconds": tau}
+
     def lookup(self, distance: float, side: str, min_samples: int) -> Optional[float]:
         """Linear interpolation between bucket centres; ``None`` when the
         nearest buckets do not carry ``min_samples`` observations."""
@@ -233,6 +264,14 @@ class FillModel:
             if value is not None:
                 return "table"
         return "formula"
+
+    def intensity(self) -> Optional[Dict[str, float]]:
+        """``FillTable.fit_intensity`` of the fresh table (lambda, kappa), or
+        None when there is no usable table."""
+        self.reload_if_changed()
+        if not self._table_is_fresh():
+            return None
+        return self._table.fit_intensity(int(getattr(self.cfg, "fill_table_min_samples", 50)))
 
     def describe(self) -> Dict[str, Any]:
         """Status for diagnostics / the dashboard; no secrets, JSON-safe."""

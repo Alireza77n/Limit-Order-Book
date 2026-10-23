@@ -41,7 +41,10 @@ EXPECTED_CONFIG_FIELDS = {
     "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
     "algorithm", "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
     "algo3_min_volume_orders", "algo3_imbalance_clip",
-    "requote_band_perc", "trend_window_seconds", "trend_pause_perc", "algo1_enabled", "algo3_enabled",
+    "requote_band_perc", "trend_window_seconds", "trend_pause_perc", "algo1_enabled", "algo3_enabled", "algo4_enabled",
+    "algo4_use_alpha", "algo4_window_seconds", "algo4_sample_seconds", "algo4_horizon_seconds",
+    "algo4_halflife_min_seconds", "algo4_halflife_max_seconds", "algo4_kappa", "algo4_risk_perc",
+    "algo4_lean_clip", "algo4_sigma_pause",
 }
 REMOVED_CONFIG_FIELDS = {
     "max_rounds", "demo_level1_fast_fill_enabled",
@@ -1109,8 +1112,8 @@ def test_config_page_offers_the_algorithms_as_a_drop_down(client):
     select = re.search(r'<select id="algorithm" name="algorithm"[^>]*>(.*?)</select>', body, re.S)
     assert select, "the Algorithm field must be a drop-down"
     options = re.findall(r'<option value="([^"]+)"\s*(selected)?\s*>', select.group(1))
-    assert [value for value, _ in options] == ["algo1", "algo3"]
-    assert dict(options) == {"algo1": "selected", "algo3": ""}   # the profile default is selected
+    assert [value for value, _ in options] == ["algo1", "algo3", "algo4"]
+    assert dict(options) == {"algo1": "selected", "algo3": "", "algo4": ""}   # the profile default is selected
     assert ">MM_algo1v2 — Algorithm 1, version 2: distance grid, fill probabilities and expected value (algo1)<" in select.group(1)
     assert ">MM_algo2 — order-book imbalance, microprice and a fixed spread (algo3)<" in select.group(1)
     for field in ("algo3_depth_k", "algo3_beta", "algo3_half_spread"):
@@ -1141,7 +1144,7 @@ def test_config_json_schema_lists_the_algorithm_choices(client):
     _login(client)
     schema = client.get("/admin/config/btc").get_json()["schema"]
     assert schema["algorithm"]["type"] == "str"
-    assert schema["algorithm"]["choices"] == ["algo1", "algo3"]
+    assert schema["algorithm"]["choices"] == ["algo1", "algo3", "algo4"]
 
 
 def test_live_config_page_offers_the_algorithm_and_saves_it(forward_app, fake_agent):
@@ -1173,7 +1176,7 @@ def test_overview_shows_the_algorithm_of_each_pair_and_the_drop_down(forward_app
                     pair="usdt", profiles=TRADING_PROFILES)
     status = client.get("/admin/").get_json()
     # demo: the lanes switched on (both by default); live: the saved algorithm
-    assert status["algorithms"] == {"demo": {"btc": "algo1,algo3", "usdt": "algo1"},
+    assert status["algorithms"] == {"demo": {"btc": "algo1,algo3,algo4", "usdt": "algo1,algo4"},
                                     "live": {"btc": "algo1", "usdt": "algo3"}}
     body = _html(client.get("/admin/", headers=HTML))
     assert "Algorithm in force" not in body and ">change<" not in body     # the old card is gone
@@ -1316,10 +1319,10 @@ def test_algorithm_page_json_reports_the_same_state(forward_app, monkeypatch, tm
 
     assert state["algorithm"] == "algo3" and state["demo_session_id"] == "demo-test-1"
     btc_demo, usdt_demo = state["demo"]
-    assert (btc_demo["pair"], btc_demo["algorithm"], btc_demo["enabled_labels"]) == ("btc", "algo3", ["MM_algo2"])
+    assert (btc_demo["pair"], btc_demo["algorithm"], btc_demo["enabled_labels"]) == ("btc", "algo3,algo4", ["MM_algo2", "MM_algo3"])
     assert btc_demo["lanes"]["algo3"] == {"enabled": True, "state": "running", "session_label": "MM_algo2 · demo-test-1"}
     assert btc_demo["lanes"]["algo1"]["state"] == "off"
-    assert usdt_demo["algorithm"] == "algo1,algo3" and usdt_demo["lanes"]["algo1"]["state"] == "starting"
+    assert usdt_demo["algorithm"] == "algo1,algo3,algo4" and usdt_demo["lanes"]["algo1"]["state"] == "starting"
     btc, usdt = state["live"]
     assert (usdt["running"], usdt["running_algorithm"], usdt["next_algorithm"], usdt["session_id"]) == (
         True, "algo1", "algo3", "1792069104.17595")

@@ -26,7 +26,10 @@ EXPECTED_FIELDS = {
     "fill_kappa", "fill_lambda_tau", "fill_queue_volume_ref",
     "algorithm", "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
     "algo3_min_volume_orders", "algo3_imbalance_clip",
-    "requote_band_perc", "trend_window_seconds", "trend_pause_perc", "algo1_enabled", "algo3_enabled",
+    "requote_band_perc", "trend_window_seconds", "trend_pause_perc", "algo1_enabled", "algo3_enabled", "algo4_enabled",
+    "algo4_use_alpha", "algo4_window_seconds", "algo4_sample_seconds", "algo4_horizon_seconds",
+    "algo4_halflife_min_seconds", "algo4_halflife_max_seconds", "algo4_kappa", "algo4_risk_perc",
+    "algo4_lean_clip", "algo4_sigma_pause",
 }
 
 

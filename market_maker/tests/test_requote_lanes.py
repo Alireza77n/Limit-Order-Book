@@ -31,18 +31,18 @@ T0 = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
 
 # ---------------------------------------------------------------- settings
 def test_new_fields_exist_with_the_documented_defaults():
-    for field in ("requote_band_perc", "trend_window_seconds", "trend_pause_perc", "algo1_enabled", "algo3_enabled"):
+    for field in ("requote_band_perc", "trend_window_seconds", "trend_pause_perc", "algo1_enabled", "algo3_enabled", "algo4_enabled"):
         assert FIELD_DEFINITIONS[field].mode.value == "hot"
     for pair in ("btc", "usdt"):
         profile = TRADING_PROFILES[pair]
         assert profile["requote_band_perc"] == 0.0003
         assert profile["trend_pause_perc"] == 0.003 and profile["trend_window_seconds"] == 600.0
-        assert profile["algo1_enabled"] is True and profile["algo3_enabled"] is True
+        assert profile["algo1_enabled"] is True and profile["algo3_enabled"] is True and profile["algo4_enabled"] is True
         assert profile["cancel_after_minutes"] == 3
         assert profile["exp_ret_min"] == 0.0002
     from forward_config import FORWARD_FIELDS
     assert {"requote_band_perc", "trend_window_seconds", "trend_pause_perc"} <= FORWARD_FIELDS
-    assert not {"algo1_enabled", "algo3_enabled"} & FORWARD_FIELDS
+    assert not {"algo1_enabled", "algo3_enabled", "algo4_enabled"} & FORWARD_FIELDS
 
 
 # ---------------------------------------------------------------- the band
@@ -320,17 +320,17 @@ def test_lane_runner_starts_and_stops_lanes_as_the_overlay_changes(monkeypatch, 
     write_overrides(overlay_path(tmp_path, "usdt"), {"algo1_enabled": True, "algo3_enabled": True},
                     pair="usdt", profiles=TRADING_PROFILES)
     runner.reconcile()
-    assert sorted(runner.lanes) == ["algo1", "algo3"]
+    assert sorted(runner.lanes) == ["algo1", "algo3", "algo4"]
     assert all(bot.started.wait(2) for bot in built)
     assert all(runner.lanes[lane]["thread"].is_alive() for lane in runner.lanes)
 
     write_overrides(overlay_path(tmp_path, "usdt"), {"algo1_enabled": False, "algo3_enabled": True},
                     pair="usdt", profiles=TRADING_PROFILES)
     runner.reconcile()
-    assert sorted(runner.lanes) == ["algo3"]
+    assert sorted(runner.lanes) == ["algo3", "algo4"]
     assert built[0].stop_event.is_set() and not built[0].started.is_set() or True
     runner.reconcile()                                                      # idempotent
-    assert sorted(runner.lanes) == ["algo3"] and len(built) == 2
+    assert sorted(runner.lanes) == ["algo3", "algo4"] and len(built) == 3
     for lane in list(runner.lanes):
         runner.stop_lane(lane)
     assert not runner.lanes
@@ -342,7 +342,7 @@ def test_lane_runner_run_stops_every_lane_on_shutdown(monkeypatch, tmp_path):
     runner = run.LaneRunner("usdt", poll_seconds=0, sleep=lambda s: (_ for _ in ()).throw(CoordinatedShutdown(15)))
     runner.build = lambda lane: bots.append(_FakeBot(lane)) or bots[-1]
     runner.run()
-    assert len(bots) == 2 and all(bot.stop_event.is_set() for bot in bots)
+    assert len(bots) == 3 and all(bot.stop_event.is_set() for bot in bots)
     assert not runner.lanes
 
 

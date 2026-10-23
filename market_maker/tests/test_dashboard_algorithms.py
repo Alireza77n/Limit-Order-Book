@@ -124,7 +124,7 @@ def test_the_algorithm_tab_comes_first_and_its_list_is_always_in_the_layout():
     tabs = next(c for c in _components(dashboard.app.layout) if getattr(c, "id", None) == "main-tabs")
     assert [t.value for t in tabs.children][0] == "algorithm"
     picker = next(c for c in _components(dashboard.app.layout) if getattr(c, "id", None) == "algorithm-choice")
-    assert [o["value"] for o in picker.options] == ["algo1", "algo3", "all"]
+    assert [o["value"] for o in picker.options] == ["algo1", "algo3", "algo4", "all"]
     assert picker.value == "all"
 
 
@@ -267,7 +267,7 @@ def test_algorithm_3_decision_trace_walks_the_specification_steps():
 def test_the_picker_and_the_headings_show_the_exact_branch_names(mixed_track):
     picker = next(c for c in _components(dashboard.app.layout) if getattr(c, "id", None) == "algorithm-choice")
     names = [o["label"].children[0].children for o in picker.options]
-    assert names == ["MM_algo1v2", "MM_algo2", "All algorithms"]
+    assert names == ["MM_algo1v2", "MM_algo2", "MM_algo3", "All algorithms"]
     # the description heading is not the upper-cased generic heading
     rendered = dashboard.render_tab_content("algorithm", "usdt_demo", "all", 0, 0.0, 0.0, "algo1")
     heading = next(c for c in _components(rendered)
@@ -314,7 +314,8 @@ def test_one_algorithm_offers_only_its_own_demo_lane():
     single-worker history and its own lane only."""
     keys = dashboard.visible_tracks("algo1")
     assert "btc_demo_algo1" in keys and "usdt_demo_algo1" in keys
-    assert "btc_demo_algo3" not in keys and "btc_demo_lanes" not in keys
+    assert "btc_demo_algo3" not in keys and "btc_demo_algo4" not in keys and "btc_demo_lanes" not in keys
+    assert dashboard.visible_tracks("algo4") == [k for k in dashboard.TRACKS if k.endswith(("_real", "_demo_algo4", "_demo"))]
     assert "btc_real" in keys and "btc_demo" in keys
     assert set(dashboard.visible_tracks("all")) == set(dashboard.TRACKS)
     assert set(dashboard.visible_tracks(None)) == set(dashboard.TRACKS)
@@ -327,4 +328,4 @@ def test_the_track_switches_to_the_chosen_algorithms_lane():
     assert dashboard.tracks_for_algorithm("algo3", None, "usdt_demo_algo1")[1] == "usdt_demo_algo3"
     assert dashboard.tracks_for_algorithm("algo3", None, "usdt_demo_algo3")[1] is no_update   # unchanged: not rewritten
     assert dashboard.tracks_for_algorithm("all", None, "btc_demo_algo1")[1] is no_update       # still offered
-    assert dashboard.TRACKS["btc_demo_lanes"]["label"] == "BTC — Demo, both algorithms (compare)"
+    assert dashboard.TRACKS["btc_demo_lanes"]["label"] == "BTC — Demo, all algorithms (compare)"

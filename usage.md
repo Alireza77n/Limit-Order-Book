@@ -58,21 +58,21 @@ start (see [§5](#5-what-demo-mode-does-not-do)). Without both Telegram
 variables, notifications are silently skipped -- they're optional and
 never required to run the bot.
 
-### 1.2 Run: BTC with MM_algo2
+### 1.2 Run: BTC with MM_algo3
 
 ```sh
 cd market_maker
-python run.py --profile btc --mode real --algorithm algo3
+python run.py --profile btc --mode real --algorithm algo4
 ```
 
 **This places real orders with real money** (for paper trading use
-`--mode demo`, §1b). `algo3` is MM_algo2, this branch's algorithm. Without
+`--mode demo`, §1b). `algo4` is MM_algo3, this branch's algorithm. Without
 `--algorithm` the configured `algorithm` setting runs, and its code default
 is `algo1` (MM_algo1v2). The profile: `BTCIRT` pair,
 `inv_max=0.000472`, `order_size=0.000015`, 60s between rounds, up to 500
 rounds (unless `--continuous`), logs to `market_maker/results/btc_track.csv`.
 
-### 1.3 Run: USDT with MM_algo2
+### 1.3 Run: USDT with MM_algo3
 
 ```sh
 cd market_maker
@@ -92,7 +92,7 @@ python run.py --profile btc --mode demo --algorithm algo2
 
 Starts normally, then raises `NotImplementedError` the first time the
 engine asks `Algo2Strategy` for a quote. Expected -- `strategy/algo2.py` is
-an empty placeholder, unrelated to the name MM_algo2 (see README.md's
+an empty placeholder; MM_algo3 with its forecast off is that model (see README.md's
 "Other algorithms in the code").
 
 ### 1.5 All flags
@@ -103,12 +103,12 @@ python run.py --help
 
 ```text
 --profile {btc,usdt}       Currency-pair configuration to run. Required.
---algorithm {algo1,algo2,algo3}
+--algorithm {algo1,algo2,algo3,algo4}
                            Quoting strategy to use. Default: the profile's
                            `algorithm` setting (algo1), as overridden by the saved
-                           Demo or live configuration. algo3 = MM_algo2 (this
-                           branch's algorithm), algo1 = MM_algo1v2, algo2 = the
-                           Avellaneda-Stoikov placeholder (errors).
+                           Demo or live configuration. algo4 = MM_algo3 (this
+                           branch's algorithm), algo3 = MM_algo2, algo1 = MM_algo1v2,
+                           algo2 = the Avellaneda-Stoikov placeholder (errors).
 --exchange {nobitex}       Exchange to trade on (default: nobitex).
 --mode {real,demo}         Required. real: places real orders; the isolated
                            forward runtime uses CSV without MySQL. demo: real
@@ -135,13 +135,13 @@ Optional, off by default. Set both `TELEGRAM_BOT_TOKEN` and
 `TELEGRAM_CHAT_ID` in `.env` to get:
 
 - A **startup message** when `run()` begins: symbol, the algorithm's name
-  (for example MM_algo2), commission rate, session id.
+  (for example MM_algo3), commission rate, session id.
 - Persisted paper-order submission and lifecycle messages. Each round's
   summary message is the parent thread; submitted-order, fill, and
   cancellation updates for that round reply to it when Telegram returns a
   usable message ID (see §6.8 for the exact reason vocabulary).
 - A sustained **no-quote alert** after the configured count or duration,
-  containing the reason, the prices evaluated (for MM_algo2 its one pair),
+  containing the reason, the prices evaluated (for MM_algo3 its one pair),
   commission, `exp_ret_min`, and required threshold. Cooldown and state-change rules
   prevent repeated alert spam; a later valid quote resets the episode and
   can emit a recovery message.
@@ -168,7 +168,7 @@ and retried without mutating paper accounting.
 
 ## 1b. Demo mode (real market data, simulated orders)
 
-`--mode demo` runs the exact same decision logic (MM_algo2, or MM_algo1v2 if
+`--mode demo` runs the exact same decision logic (MM_algo3, or MM_algo2 / MM_algo1v2 if
 that is the configured algorithm) against the exact same real, live Nobitex
 order book -- the only thing that changes is what happens after a quote is
 decided:
@@ -185,7 +185,7 @@ decided:
 - **Transaction cost: simulated realistically.** Each simulated fill's fee
   is `amount * commission_perc` (buys, base currency) or
   `amount * price * commission_perc` (sells, quote currency) -- the same
-  `commission_perc` MM_algo2 uses for its fee bar, not a hardcoded zero. See §1.7 for how costs are reported and
+  `commission_perc` MM_algo3 uses for its fee shift and fee bar, not a hardcoded zero. See §1.7 for how costs are reported and
   accumulated.
 - **Inventory starts from a configurable value, not a hardcoded one.**
   `run.py --mode demo` sets `inv_initial` from each profile's own
@@ -204,9 +204,9 @@ decided:
   Demo CSV files are atomic, bounded dashboard exports rather than an
   unbounded history rewrite. Paper state is persisted separately and old
   terminal orders are archived before hot-state pruning.
-- **Profitability protection remains authoritative.** MM_algo2 only returns
-  pairs whose round trip clears `exp_ret_min` after both fees (its half-spread
-  is derived from that condition, and rounding cannot break it); when the
+- **Profitability protection remains authoritative.** MM_algo3 only returns
+  pairs whose round trip clears `exp_ret_min` after both fees (the pair is
+  widened symmetrically to the bar and re-checked on the exact prices); when the
   book is unusable it returns no quote, Demo records a `no_quote` round with
   the reason and sends no paper order. The monitor never forces a quote.
 
@@ -235,22 +235,24 @@ Its level-1 fast-fill and optional queue model are deterministic operating
 assumptions; they do not model every source of latency, slippage, or queue
 priority on Nobitex.
 
-`algo3` (MM_algo2) and `algo1` (MM_algo1v2) run in both modes; `algo2` still
+`algo4` (MM_algo3), `algo3` (MM_algo2) and `algo1` (MM_algo1v2) run in both modes; `algo2` still
 raises `NotImplementedError` in demo mode exactly as in real mode. In the Docker
 demo stack the algorithm is not a command-line flag: the worker runs every
 algorithm switched on in the pair's Demo configuration (`algo1_enabled`,
-`algo3_enabled`; admin panel → **Algorithm**) at the same time, each in its
+`algo3_enabled`, `algo4_enabled`; admin panel → **Algorithm**) at the same time, each in its
 own lane with its own paper account and result files, and starts or stops a
 lane within seconds of a change. `--algorithm` runs one algorithm alone in the
-single-worker files instead. MM_algo2 is specified in
-`docs/algorithms/MM_algo2.md`.
+single-worker files instead. MM_algo3 is specified in
+`docs/algorithms/MM_algo3.md`.
 
 ---
 
-## 1c. Fill-probability table (MM_algo1v2 only)
+## 1c. Fill-probability table (MM_algo1v2, and MM_algo3's κ)
 
-MM_algo2 does not use fill probabilities. The comparison algorithm, MM_algo1v2,
-scores quotes with a fill probability per distance: it reads
+MM_algo3 reads the same table for one number, the fill-intensity decay κ
+(`FillTable.fit_intensity`, `docs/algorithms/MM_algo3.md` §7.3), and falls back
+to `algo4_kappa` without it. MM_algo1v2 scores quotes with a fill probability
+per distance: it reads
 `fill_table_<pair>.json` from the results directory when the file is fresh
 (default: younger than 48 h) and uses a formula otherwise. The dashboard's Fill
 model tab shows the table. Build it from the CSVs the engine writes (method:
@@ -268,7 +270,7 @@ settings (`fill_table_enabled`, `fill_table_max_age_hours`,
 `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`) and MM_algo1v2's
 other settings (`grid_*`, `one_sided_*`, `cost_basis_reference`, `ev_min`,
 `adverse_selection_perc`) are editable from the admin panel's Config pages for
-demo and live; MM_algo2 does not read them.
+demo and live; MM_algo3 reads only the `fill_table_*` ones (for κ), MM_algo2 none.
 
 ## 2. Automated tests
 
@@ -323,11 +325,12 @@ cannot push the dashboard container over its memory limit; older rows
 stay in the store). The tabs:
 
 * **Algorithm** -- the first tab: the list of algorithms, named after the git
-  branch each was built on (**MM_algo2**, this branch's algorithm;
+  branch each was built on (**MM_algo3**, this branch's algorithm; **MM_algo2**;
   **MM_algo1v2**, Algorithm 1 version 2; and "All algorithms"). Choosing one
   shows its description, the settings in force, its headline numbers and its
-  own charts (MM_algo2: the imbalance over time and where the centre sat
-  relative to the mid; MM_algo1v2: the expected value and the fill
+  own charts (MM_algo3: where the centre sat relative to the mid — the lean plus
+  the skew — and the quoted spread with the net return of the pair; MM_algo2:
+  the imbalance over time and the centre; MM_algo1v2: the expected value and the fill
   probabilities of the quotes sent), and every other tab then shows that
   algorithm's rounds only. "All algorithms" shows them side by side: a
   comparison table, headline bars and each algorithm's running net PnL. The
@@ -345,8 +348,10 @@ stay in the store). The tabs:
   (`<pair>_algo1_diagnostics.jsonl` in the results directory, written every
   round while `algo1_diagnostics_enabled` is on; the name is historical and
   the file holds both algorithms' rounds) and drawn for the algorithm that
-  made it. An MM_algo2 round shows its top-k book levels, the price ladder of
-  touch, mid, microprice, centre and quote, and its step-by-step trace. An
+  made it. An MM_algo3 round shows the mid window with the fitted mean, the
+  price ladder of touch, mid, centre and quote, and its step-by-step trace
+  (fit, admissibility, lean, skew, depths, bar). An MM_algo2 round shows its
+  top-k book levels, the price ladder and its trace. An
   MM_algo1v2 round shows the candidate ladder (price, distance, book level or synthetic,
   volume ahead, fill probability, which ones were sent), the expected-value
   heat map of every bid/ask pair (`J = p_bid · p_ask · R_net`; rejected
@@ -354,25 +359,25 @@ stay in the store). The tabs:
   (inventory → centre → candidates → fill model → bar and EV floor → pair /
   one-sided / none), a round picker that keeps its choice across the 20 s
   refresh, and a strip of the last 80 decisions.
-* **Fill model** -- MM_algo1v2's measured fill-probability table (MM_algo2
-  makes no fill forecast, and the tab says so) against the formula fallback, with sample counts; predicted vs realised fill rate per
+* **Fill model** -- MM_algo1v2's measured fill-probability table (MM_algo3
+  reads it for κ only and makes no fill forecast, and the tab says so) against the formula fallback, with sample counts; predicted vs realised fill rate per
   distance bucket (calibration); adverse selection at 10/30/60/300/600 s;
   table health (file, method, age, samples, own orders, sources); and the
   table itself.
 * **Order book** -- selected depth levels and quoted spreads (`Bid
   Spread`/`Ask Spread` computed from the logged `Best Bid`/`Best Ask` and
   quote prices, plus the relative quoted spread).
-* **Validation** -- the demo-to-real gate of `docs/algorithms/MM_algo2.md`
-  §17 first (each metric with its value, threshold and pass / fail / not
-  measurable yet; the fill-forecast row is not measurable for MM_algo2), then the inventory
+* **Validation** -- the demo-to-real gate (the same for every algorithm) first
+  (each metric with its value, threshold and pass / fail / not
+  measurable yet; the fill-forecast row is not measurable for MM_algo3), then the inventory
   position with the one-sided thresholds, the fill-rate forecast per day,
   and the performance metrics from `validation/` (return, Sharpe, Sortino,
   drawdown, Calmar, win rate, profit factor, inventory statistics).
 * **Rounds** -- a sortable, filterable table of every round, newest first,
   including the eleven decision columns the engine writes (`Quote Mode`,
   `Selection Reason`, `Centre`, `Bid/Ask Distance`, `Bid/Ask Fill Prob`,
-  `Expected Value`, `Reference Price`, `Imbalance`, `Microprice`; MM_algo2
-  leaves the fill-probability, expected-value and reference columns empty)
+  `Expected Value`, `Reference Price`, `Imbalance`, `Microprice`; MM_algo3
+  leaves the fill-probability, expected-value, reference, imbalance and microprice columns empty)
   and the `Strategy` column.
 * **PnL attribution** -- did the result come from our quotes or from the
   price? Every round's change in wealth `W_t = cash_t + inv_t · mid_t` is
@@ -584,9 +589,9 @@ rows per symbol store, 1,000 hot terminal paper orders, and 10,000,000
 bytes per archive segment. Adjust the corresponding `MMConfig` fields in
 `market_maker/config.py` if another operational envelope is required.
 
-A `no_quote` round means the strategy returned nothing. MM_algo2 does so only
-when the order book is unusable (missing, crossed, or shallower than
-`algo3_depth_k` levels; `docs/algorithms/MM_algo2.md` §7.4); MM_algo1v2 also
+A `no_quote` round means the strategy returned nothing. MM_algo3 does so only
+when the order book is unusable (missing or crossed), during a volatility
+pause, or when no pair clears the fee bar (`docs/algorithms/MM_algo3.md` §12); MM_algo1v2 also
 when no candidate clears its profitability threshold or expected-value floor.
 An unreadable book (for example an HTTP 403) records no round at all. The
 dashboard exposes the consecutive count, duration, reason, alert state, and the
@@ -755,7 +760,7 @@ The per-pair configuration surface contains these fields:
 
 | Field (46 per pair) | Application mode |
 |---|---|
-| `algorithm` (live only: `algo3` = MM_algo2, `algo1` = MM_algo1v2); demo lanes `algo1_enabled`, `algo3_enabled`; MM_algo2's `algo3_depth_k`, `algo3_decay_rho`, `algo3_beta`, `algo3_half_spread`, `algo3_min_volume_orders`, `algo3_imbalance_clip`; shared: `skew_perc`, `hysteresis_ticks`, `refresh_seconds`, `requote_band_perc`, `trend_window_seconds`, `trend_pause_perc`, `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio`; MM_algo1v2 only: `grid_min_perc`, `grid_ratio`, `grid_max_perc`, `one_sided_lo`, `one_sided_hi`, `cost_basis_reference`, `ev_min`, `adverse_selection_perc`, `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | Hot (43 fields) — applied at a worker round boundary; a change of `algo1_enabled` / `algo3_enabled` starts or stops that lane at the worker's next check |
+| `algorithm` (live only: `algo4` = MM_algo3, `algo3` = MM_algo2, `algo1` = MM_algo1v2); demo lanes `algo1_enabled`, `algo3_enabled`, `algo4_enabled`; MM_algo3's `algo4_use_alpha`, `algo4_window_seconds`, `algo4_sample_seconds`, `algo4_horizon_seconds`, `algo4_halflife_min_seconds`, `algo4_halflife_max_seconds`, `algo4_kappa`, `algo4_risk_perc`, `algo4_lean_clip`, `algo4_sigma_pause`; MM_algo2's `algo3_depth_k`, `algo3_decay_rho`, `algo3_beta`, `algo3_half_spread`, `algo3_min_volume_orders`, `algo3_imbalance_clip`; shared: `skew_perc`, `hysteresis_ticks`, `refresh_seconds`, `requote_band_perc`, `trend_window_seconds`, `trend_pause_perc`, `order_size`, `inventory_sizing_enabled`, `inventory_sizing_strength`, `inventory_sizing_min_fraction`, `inv_max`, `inv_min`, `cancel_after_minutes`, `depth_max`, `time_step`, `exp_ret_min`, `buy_locked_cash_limit_enabled`, `buy_locked_cash_limit_ratio`, `sell_locked_inventory_limit_enabled`, `sell_locked_inventory_limit_ratio`; MM_algo1v2 only: `grid_min_perc`, `grid_ratio`, `grid_max_perc`, `one_sided_lo`, `one_sided_hi`, `cost_basis_reference`, `ev_min`, `adverse_selection_perc`, `fill_table_enabled`, `fill_table_max_age_hours`, `fill_table_min_samples`, `fill_kappa`, `fill_lambda_tau`, `fill_queue_volume_ref` | Hot (54 fields) — applied at a worker round boundary; a change of `algo1_enabled` / `algo3_enabled` / `algo4_enabled` starts or stops that lane at the worker's next check |
 | `demo_inv_initial`, `cash_initial`, `commission_perc` | New session (3 fields) — saved now, applied by **New session** |
 
 No current field requires a restart. Desired overlays are pair-isolated and

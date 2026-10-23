@@ -1,0 +1,130 @@
+{
+  "buckets": [
+    {
+      "distance": 0.001,
+      "n_ask": 6151,
+      "n_ask_own": 161,
+      "n_ask_path": 5990,
+      "n_bid": 6227,
+      "n_bid_own": 237,
+      "n_bid_path": 5990,
+      "p_ask": 0.15304925818770992,
+      "p_bid": 0.2036072897523743
+    },
+    {
+      "distance": 0.0015,
+      "n_ask": 6183,
+      "n_ask_own": 193,
+      "n_ask_path": 5990,
+      "n_bid": 6651,
+      "n_bid_own": 661,
+      "n_bid_path": 5990,
+      "p_ask": 0.07893932566394954,
+      "p_bid": 0.10064865407253662
+    },
+    {
+      "distance": 0.002,
+      "n_ask": 6731,
+      "n_ask_own": 741,
+      "n_ask_path": 5990,
+      "n_bid": 6553,
+      "n_bid_own": 563,
+      "n_bid_path": 5990,
+      "p_ask": 0.06730147342257557,
+      "p_bid": 0.07365230331521419
+    },
+    {
+      "distance": 0.003,
+      "n_ask": 6135,
+      "n_ask_own": 145,
+      "n_ask_path": 5990,
+      "n_bid": 6072,
+      "n_bid_own": 82,
+      "n_bid_path": 5990,
+      "p_ask": 0.051729276502659016,
+      "p_bid": 0.023937201945477868
+    },
+    {
+      "distance": 0.004,
+      "n_ask": 5995,
+      "n_ask_own": 5,
+      "n_ask_path": 5990,
+      "n_bid": 5990,
+      "n_bid_own": 0,
+      "n_bid_path": 5990,
+      "p_ask": 0.026389923664549012,
+      "p_bid": 0.019157859775377234
+    },
+    {
+      "distance": 0.006,
+      "n_ask": 5990,
+      "n_ask_own": 0,
+      "n_ask_path": 5990,
+      "n_bid": 6812,
+      "n_bid_own": 822,
+      "n_bid_path": 5990,
+      "p_ask": 0.006477705076316873,
+      "p_bid": 0.001691680880512658
+    },
+    {
+      "distance": 0.008,
+      "n_ask": 5990,
+      "n_ask_own": 0,
+      "n_ask_path": 5990,
+      "n_bid": 5992,
+      "n_bid_own": 2,
+      "n_bid_path": 5990,
+      "p_ask": 0.0019076425954872823,
+      "p_bid": 0.001691680880512658
+    },
+    {
+      "distance": 0.012,
+      "n_ask": 5990,
+      "n_ask_own": 0,
+      "n_ask_path": 5990,
+      "n_bid": 5990,
+      "n_bid_own": 0,
+      "n_bid_path": 5990,
+      "p_ask": 0.00023397460131395332,
+      "p_bid": 0.00012750529671977468
+    },
+    {
+      "distance": 0.016,
+      "n_ask": 5990,
+      "n_ask_own": 0,
+      "n_ask_path": 5990,
+      "n_bid": 5990,
+      "n_bid_own": 0,
+      "n_bid_path": 5990,
+      "p_ask": 0.0,
+      "p_bid": 0.0
+    },
+    {
+      "distance": 0.024,
+      "n_ask": 5990,
+      "n_ask_own": 0,
+      "n_ask_path": 5990,
+      "n_bid": 5990,
+      "n_bid_own": 0,
+      "n_bid_path": 5990,
+      "p_ask": 0.0,
+      "p_bid": 0.0
+    }
+  ],
+  "first_sample": "2026-10-11T02:47:29",
+  "half_life_days": 3.0,
+  "horizon_seconds": 600.0,
+  "last_sample": "2026-10-17T06:28:04",
+  "method": "price_path+own_orders",
+  "own_orders": 3612,
+  "pair": "BTC",
+  "queue_factor": 1.0,
+  "samples": 10417,
+  "sources": [
+    "btc_track.csv",
+    "btc_track_demo.csv",
+    "btc_track_demo.csv"
+  ],
+  "updated_at": "2026-10-17T03:00:06.861675+00:00",
+  "window_days": 14.0
+}

@@ -47,6 +47,7 @@ class MMConfig:
     # paper account and result files. Ignored by a live worker.
     algo1_enabled: bool = True
     algo3_enabled: bool = True
+    algo4_enabled: bool = True
     # The lane this configuration belongs to (the algorithm key), set by
     # run.py's make_cfg(..., lane=...) for a demo lane; None otherwise.
     lane: Optional[str] = None
@@ -166,6 +167,29 @@ class MMConfig:
     algo3_half_spread: float = 0.0
     algo3_min_volume_orders: float = 20.0
     algo3_imbalance_clip: float = 0.8
+    # Algorithm 4 (strategy/algo4.py, shown as MM_algo3): a mean-reverting
+    # (Ornstein-Uhlenbeck) forecast of the mid fitted on the last
+    # algo4_window_seconds of samples taken every algo4_sample_seconds; the
+    # forecast is used only when admissible (unit root rejected, half-life
+    # within [algo4_halflife_min_seconds, algo4_halflife_max_seconds]), else
+    # the quotes are the Avellaneda-Stoikov ones (algo4_use_alpha = False
+    # forces that). The lean is the expected reversion over
+    # algo4_horizon_seconds (0 = the order lifetime), clipped to
+    # algo4_lean_clip of the price. 1/algo4_kappa is the fee-free optimal
+    # half-spread when the fill table cannot be fitted (400 = 0.25 % of the
+    # price); algo4_risk_perc widens both depths; algo4_sigma_pause stops
+    # quoting while the fit's per-sample residual exceeds that fraction of
+    # the price (0 = off).
+    algo4_use_alpha: bool = True
+    algo4_window_seconds: float = 1800.0
+    algo4_sample_seconds: float = 10.0
+    algo4_horizon_seconds: float = 0.0
+    algo4_halflife_min_seconds: float = 60.0
+    algo4_halflife_max_seconds: float = 900.0
+    algo4_kappa: float = 400.0
+    algo4_risk_perc: float = 0.0
+    algo4_lean_clip: float = 0.005
+    algo4_sigma_pause: float = 0.0
     fill_table_path: Optional[str] = None
     demo_state_path: Optional[str] = None
     demo_fee_state_path: Optional[str] = None
@@ -308,6 +332,7 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         algorithm="algo1",
         algo1_enabled=True,
         algo3_enabled=True,
+        algo4_enabled=True,
         # Algorithm 3 (strategy/algo3.py); beta stays 0 until it is estimated.
         algo3_depth_k=3,
         algo3_decay_rho=0.5,
@@ -315,6 +340,17 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         algo3_half_spread=0.0,
         algo3_min_volume_orders=20.0,
         algo3_imbalance_clip=0.8,
+        # Algorithm 4 (strategy/algo4.py, shown as MM_algo3).
+        algo4_use_alpha=True,
+        algo4_window_seconds=1800.0,
+        algo4_sample_seconds=10.0,
+        algo4_horizon_seconds=0.0,
+        algo4_halflife_min_seconds=60.0,
+        algo4_halflife_max_seconds=900.0,
+        algo4_kappa=400.0,
+        algo4_risk_perc=0.0,
+        algo4_lean_clip=0.005,
+        algo4_sigma_pause=0.0,
         # The demo matcher's "level-1 fast fill" assumed a level-1 quote sat
         # at the touch; v2 quotes by distance, so fills come from the price
         # path only (price_touch), consistent with the fill model.
@@ -392,6 +428,7 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         algorithm="algo1",
         algo1_enabled=True,
         algo3_enabled=True,
+        algo4_enabled=True,
         # Algorithm 3 (strategy/algo3.py); beta stays 0 until it is estimated.
         algo3_depth_k=3,
         algo3_decay_rho=0.5,
@@ -399,6 +436,17 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         algo3_half_spread=0.0,
         algo3_min_volume_orders=20.0,
         algo3_imbalance_clip=0.8,
+        # Algorithm 4 (strategy/algo4.py, shown as MM_algo3).
+        algo4_use_alpha=True,
+        algo4_window_seconds=1800.0,
+        algo4_sample_seconds=10.0,
+        algo4_horizon_seconds=0.0,
+        algo4_halflife_min_seconds=60.0,
+        algo4_halflife_max_seconds=900.0,
+        algo4_kappa=400.0,
+        algo4_risk_perc=0.0,
+        algo4_lean_clip=0.005,
+        algo4_sigma_pause=0.0,
         demo_level1_fast_fill_enabled=False,
         # Per-round decision diagnostics for the dashboard's Quote-decision tab
         # (bounded to the newest algo1_diagnostics_keep_rounds documents).

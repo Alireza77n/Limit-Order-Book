@@ -43,7 +43,10 @@ EXPECTED = {
     "algo3_depth_k": "hot", "algo3_decay_rho": "hot", "algo3_beta": "hot", "algo3_half_spread": "hot",
     "algo3_min_volume_orders": "hot", "algo3_imbalance_clip": "hot",
     "requote_band_perc": "hot", "trend_window_seconds": "hot", "trend_pause_perc": "hot",
-    "algo1_enabled": "hot", "algo3_enabled": "hot",
+    "algo1_enabled": "hot", "algo3_enabled": "hot", "algo4_enabled": "hot",
+    "algo4_use_alpha": "hot", "algo4_window_seconds": "hot", "algo4_sample_seconds": "hot", "algo4_horizon_seconds": "hot",
+    "algo4_halflife_min_seconds": "hot", "algo4_halflife_max_seconds": "hot", "algo4_kappa": "hot", "algo4_risk_perc": "hot",
+    "algo4_lean_clip": "hot", "algo4_sigma_pause": "hot",
 }
 
 HIDDEN_SAFE_DEFAULT_FIELDS = {

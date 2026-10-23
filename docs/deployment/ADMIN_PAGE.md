@@ -87,16 +87,17 @@ active session and while the live workers run.
 
 ## Demo configuration synchronization
 
-> **Current field list:** `demo_config.FIELD_DEFINITIONS` is the source of truth (46 fields per pair in
-> the `MM_algo2` code, 43 hot; the table below is the original nine-field release). The first field on both
-> config pages is **`algorithm`**, a drop-down offering **MM_algo2** (this branch's algorithm, value `algo3`)
-> and **MM_algo1v2** (Algorithm 1 version 2, value `algo1`); it is read at start by a live worker (the forward
-> agent starts `run.py --algorithm <value>`) and ignored by the demo worker, which since 20 October 2026 runs
-> every algorithm switched on by **`algo1_enabled`** / **`algo3_enabled`** at the same time, each in its own
+> **Current field list:** `demo_config.FIELD_DEFINITIONS` is the source of truth (57 fields per pair in
+> the `MM_algo3` code, 54 hot; the table below is the original nine-field release). The first field on both
+> config pages is **`algorithm`**, a drop-down offering **MM_algo3** (this branch's algorithm, value `algo4`),
+> **MM_algo2** (value `algo3`) and **MM_algo1v2** (Algorithm 1 version 2, value `algo1`); it is read at start
+> by a live worker (the forward agent starts `run.py --algorithm <value>`) and ignored by the demo worker,
+> which since 20 October 2026 runs every algorithm switched on by **`algo1_enabled`** / **`algo3_enabled`** /
+> **`algo4_enabled`** at the same time, each in its own
 > *lane* with its own paper account, result files and runtime snapshot (`runtime_config_<pair>_<lane>.json`).
 > The **Algorithm** page (`/admin/algorithm`, second menu item) is the simpler way to switch: a drop-down of
 > the algorithm names, then a Demo table (per pair: worker, the chosen algorithm's name with its lane state —
-> Running, Starting, Off, On with the worker stopped — its session as `MM_algo2 · <session id>`, the other
+> Running, Starting, Off, On with the worker stopped — its session as `MM_algo3 · <session id>`, the other
 > lanes also running,
 > and *Activate* / *Switch off*, which flip the lane's flag through `apply_config`; the worker starts or stops
 > the lane within seconds and the other lanes are untouched) and a Live table (per pair: worker, algorithm of
@@ -106,8 +107,8 @@ active session and while the live workers run.
 > *Start a new demo session*. The Sessions page labels a session with the algorithms it ran, the Balances
 > page shows one paper account per lane, and the Orders page carries the algorithm of each order. The Overview and Live Forward pages carry the same drop-down, and Overview shows what each pair
 > runs. The Docker stack's admin sets `LOB_FORWARD_ONLY_ADMIN=1`, which only makes it land on the Live Forward
-> page; it still manages the Demo. Only a panel without the Demo control queue shows no Demo table. MM_algo2's own
-> settings (`algo3_*`) are described in `docs/algorithms/MM_algo2.md` §15.
+> page; it still manages the Demo. Only a panel without the Demo control queue shows no Demo table. MM_algo3's own
+> settings (`algo4_*`) are described in `docs/algorithms/MM_algo3.md` §11.
 
 The Admin exposes exactly nine numeric fields for each pair. The six hot
 fields are applied by the running worker at a round boundary; the three

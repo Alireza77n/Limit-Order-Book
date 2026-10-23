@@ -1,84 +1,99 @@
-# Architecture Decisions — branch `MM_algo2`
+# Architecture Decisions — branch `MM_algo3`
 
-Accepted decisions, newest last. Change one by adding a new ADR that supersedes it.
+Accepted decisions, newest last. Change one by adding a new ADR that supersedes it. ADR-001 to
+ADR-012 are inherited from branch `MM_algo2` (this branch was cut from it on 23 October 2026).
 
 ## ADR-001: algorithm keys stay, names are the branch names
 
-Decision: the strategy keys in code and rows stay `algo1` and `algo3`; everything a person sees
-(admin, dashboard, docs) calls them `MM_algo1v2` and `MM_algo2`, the git branch names.
-Reason: the keys are written in every recorded round; renaming them would break history, while the
-operator thinks in branch names. Status: accepted 2026-10-17.
+Decision: the strategy keys in code and rows are `algo1`, `algo3`, `algo4`; everything a person
+sees calls them `MM_algo1v2`, `MM_algo2`, `MM_algo3`, the git branch names. Reason: the keys are
+written in every recorded round; the operator thinks in branch names. Status: accepted 2026-10-17,
+extended 2026-10-23.
 
 ## ADR-002: demo lanes are threads inside one worker per pair
 
 Decision: a pair's demo worker runs every enabled algorithm at once, each in its own lane (thread)
-with its own paper account, result files and runtime snapshot; not one container per algorithm.
-Reason: the server has 2 GB of memory and no swap; a second pair of worker containers would not
-fit. Status: accepted 2026-10-20.
+with its own paper account, result files and runtime snapshot. Reason: the server's memory.
+Status: accepted 2026-10-20.
 
 ## ADR-003: requote band in percent, one order per side
 
 Decision: a resting order is kept while the new price is within
 max(`hysteresis_ticks` × tick, `requote_band_perc` × price) of it and replaced otherwise.
-Reason: the tick-only band (50 rial) was nothing on BTC; orders stacked (up to 11 on BTC, 26 on
-USDT) and most fills were of stale orders. The replay cut the demo loss by about two thirds.
-Status: accepted 2026-10-20 (`docs/algorithms/MM_algo2.md` §19).
+Status: accepted 2026-10-20.
 
 ## ADR-004: orders live 3 minutes
 
-Decision: `cancel_after_minutes` = 3 (was 10). Reason: an order that no longer follows the quote
-should not rest for ten minutes; little effect once replacement is on. Status: accepted 2026-10-20.
-
-## ADR-005: target 0.20 % until real fills are measured
-
-Decision: `exp_ret_min` = 0.002 in both profiles. Reason: the operator's requirement; the demo's
-touch-only fill rule cannot measure fills, so the bar stays high until a real account does.
-Status: accepted 2026-10-20; revisit with real fills.
-
-## ADR-012: target 0.02 % (supersedes ADR-005)
-
-Decision: `exp_ret_min` = 0.0002 in both profiles and in both pairs' demo overlays. Reason: at
-0.20 % the lanes' first 25 minutes on 22 October placed a buy in 16 of 27 BTC rounds and 25 of
-161 USDT rounds (MM_algo2) and in 1 and 0 (MM_algo1v2); the operator decided the demo must trade.
-The fee bar now sets MM_algo2's half-spread on its own. Status: accepted 2026-10-22.
+Decision: `cancel_after_minutes` = 3. Status: accepted 2026-10-20.
 
 ## ADR-006: trend pause on by default
 
-Decision: `trend_pause_perc` = 0.003 over `trend_window_seconds` = 600: no buy after the mid fell
-0.3 % within 10 minutes (no sell after such a rise). Reason: the operator wants the bot not to keep
-buying into a fall. The replay of 15–17 October is neutral (at most 0.06 of a point either way);
-the setting is on all the same and `0` switches it off. Status: accepted 2026-10-20.
+Decision: `trend_pause_perc` = 0.003 over `trend_window_seconds` = 600 (no buy after the mid fell
+0.3 % within 10 minutes, no sell after such a rise). Status: accepted 2026-10-20.
 
 ## ADR-007: the `algorithm` field is for live workers only
 
-Decision: a live worker reads `algorithm` when it starts; the demo ignores it and runs the lanes
-switched on by `algo1_enabled` / `algo3_enabled`. Reason: lanes replace switching on the demo.
-Status: accepted 2026-10-20.
+Decision: the demo runs the lanes switched on by `<key>_enabled`. Status: accepted 2026-10-20.
 
 ## ADR-008: each branch documents its own algorithm
 
-Decision: `MM_algo2` documents MM_algo2; MM_algo1v2's behaviour, numbers and changes live on
-branch `MM_algo1v2`; nothing about it is documented on this branch (the catalog's doc link for
-`algo1` points at that branch on GitHub).
-Reason: the operator's rule. Status: accepted 2026-10-17, reaffirmed 2026-10-20 and 2026-10-22 (the
-one-page pointer removed).
+Decision: `MM_algo3` documents MM_algo3; MM_algo2's and MM_algo1v2's behaviour, numbers and
+changes live on their branches; the catalog's doc links for `algo3` and `algo1` point at those
+branches on GitHub. Reason: the operator's rule. Status: accepted 2026-10-17, applied to this
+branch 2026-10-23.
 
 ## ADR-009: the demo fills by price touch only
 
-Decision: a paper order fills when the opposite best price reaches it; no trade feed is modelled.
-Reason: Nobitex's public API gives the book, not the trades. Consequence: demo fill counts are a
-lower bound for a resting order and an upper bound for adverse selection; real fills need a real
-account. Status: accepted (limitation documented, `MM_algo2.md` §18).
+Decision: a paper order fills when the opposite best price reaches it. Consequence: fill counts
+are a lower bound; real fills need a real account. Status: accepted.
 
 ## ADR-010: deploy gate and demo containers
 
-Decision: a deploy runs only after the archive's sha256 is verified and the full test suite passes
-on the server (at least 500 passed); the demo worker containers are recreated by hand after worker
-code changes. Reason: the 2026-10-15 partial-upload incident; Compose's `paper` profile.
-Status: accepted 2026-10-15/17.
+Decision: a deploy verifies the archive's sha256 and runs with the test suite skipped on the
+server (`SKIP_TESTS=1`, the suite runs on the operator's PC); the demo worker containers are
+recreated by hand after worker code changes. Status: accepted 2026-10-15, amended 2026-10-22.
 
 ## ADR-011: the dashboard refresh never rewrites a valid choice
 
 Decision: periodic callbacks return `no_update` for a picker whose value is still valid.
-Reason: a refresh request carries the earlier value as State; writing it back undid a choice
-made while the request was pending (the session picker "jumped back"). Status: accepted 2026-10-20.
+Status: accepted 2026-10-20.
+
+## ADR-012: target 0.02 %
+
+Decision: `exp_ret_min` = 0.0002 in both profiles. Status: accepted 2026-10-22.
+
+## ADR-013: MM_algo3 is the design note's Algorithm 4, key `algo4`, as a third lane
+
+Decision: the mean-reverting stochastic-control market maker is `strategy/algo4.py`
+(`Algo4Strategy`, key `algo4`, shown as MM_algo3) and runs as a third demo lane next to MM_algo2
+and MM_algo1v2 (`algo4_enabled`); the `algo2` Avellaneda–Stoikov stub stays as it is.
+Reason: the note's numbering gives the key, the branch gives the name (ADR-001); a lane makes the
+three comparable on the same market. Status: accepted 2026-10-23.
+
+## ADR-014: the unit-root test uses the Dickey–Fuller 5 % critical value
+
+Decision: the forecast is admissible only when the t-statistic of b − 1 is below −2.86, not the
+note's −2. Reason: measured on 200 simulated random walks of 180 samples, −2 admits 25.5 % of them
+as mean-reverting, −2.86 admits 4.5 % (`docs/algorithms/MM_algo3.md` §7.2). Status: accepted
+2026-10-23.
+
+## ADR-015: the warm-up quotes without the forecast
+
+Decision: with fewer than 30 samples the round is quoted as the Avellaneda–Stoikov pair instead of
+not at all. Reason: a restarted worker would otherwise sit out 30 minutes; the pair needs no
+forecast. Status: accepted 2026-10-23.
+
+## ADR-016: κ from the fill table, the skew and the risk term in relative units
+
+Decision: κ is fitted on the pair's fresh fill table (`FillTable.fit_intensity`), `algo4_kappa`
+is the fallback; the inventory term is the shared `skew_perc` and the widening `algo4_risk_perc`,
+both as fractions of the price. Reason: one setting serves both pairs; the table is the project's
+measured fill evidence; the skew is the one the other algorithms use. Status: accepted 2026-10-23.
+
+## ADR-017: the forecast stays on by default despite no measured skill
+
+Decision: `algo4_use_alpha` = true. Reason: on the recorded demo mids the lean has no skill
+(correlation with the next move −0.03 / −0.00); the design note's rule for that case is to run with
+the forecast off, but the demo lane is the agreed test — the whole algorithm runs, its estimates
+are visible on the dashboard, and the comparison with the other lanes decides. Revisit after the
+demo. Status: accepted 2026-10-23.

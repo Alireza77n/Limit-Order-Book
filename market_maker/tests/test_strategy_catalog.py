@@ -16,6 +16,7 @@ from session import WorkerLease
 from strategy.algo1 import Algo1Strategy
 from strategy.algo2 import Algo2Strategy
 from strategy.algo3 import Algo3Strategy
+from strategy.algo4 import Algo4Strategy
 from strategy.catalog import (
     ALGORITHMS,
     DEFAULT_ALGORITHM,
@@ -33,16 +34,17 @@ NOW = datetime(2026, 10, 17, 12, 0, tzinfo=timezone.utc)
 
 # ---------- the catalog ----------
 
-def test_catalog_lists_algorithm_1_and_algorithm_3():
-    assert list(ALGORITHMS) == ["algo1", "algo3"]
+def test_catalog_lists_algorithms_1_3_and_4():
+    assert list(ALGORITHMS) == ["algo1", "algo3", "algo4"]
     assert ALGORITHMS["algo1"].cls is Algo1Strategy and ALGORITHMS["algo3"].cls is Algo3Strategy
-    assert [info.number for info in ALGORITHMS.values()] == [1, 3]
-    assert SELECTABLE_ALGORITHMS == ("algo1", "algo3")
+    assert ALGORITHMS["algo4"].cls is Algo4Strategy and ALGORITHMS["algo4"].label == "MM_algo3"
+    assert [info.number for info in ALGORITHMS.values()] == [1, 3, 4]
+    assert SELECTABLE_ALGORITHMS == ("algo1", "algo3", "algo4")
     assert DEFAULT_ALGORITHM == "algo1"
 
 
 def test_cli_choices_keep_the_algorithm_2_stub():
-    assert set(STRATEGIES) == {"algo1", "algo2", "algo3"}
+    assert set(STRATEGIES) == {"algo1", "algo2", "algo3", "algo4"}
     assert STRATEGIES["algo2"] is Algo2Strategy
     assert run.STRATEGIES is STRATEGIES
 

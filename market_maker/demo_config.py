@@ -42,7 +42,7 @@ class FieldDefinition:
 
 # The algorithms the configuration may select (strategy/catalog.py's
 # SELECTABLE_ALGORITHMS; pinned equal by tests/test_strategy_catalog.py).
-ALGORITHM_CHOICES: Tuple[str, ...] = ("algo1", "algo3")
+ALGORITHM_CHOICES: Tuple[str, ...] = ("algo1", "algo3", "algo4")
 
 
 @dataclass(frozen=True)
@@ -55,9 +55,10 @@ class RuntimeReloadResult:
 
 FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     # ---- Which algorithm runs (strategy/catalog.py); first, so the config pages show it on top ----
-    "algorithm": FieldDefinition(str, None, None, ApplicationMode.HOT, "Live worker: the quoting algorithm it runs, read when it is started. algo1: distance grid, fill probabilities and expected value. algo3: order-book imbalance, microprice and a fixed spread. The Demo worker ignores it: it runs every algorithm enabled below, each in its own lane.", choices=ALGORITHM_CHOICES),
+    "algorithm": FieldDefinition(str, None, None, ApplicationMode.HOT, "Live worker: the quoting algorithm it runs, read when it is started. algo1: distance grid, fill probabilities and expected value. algo3: order-book imbalance, microprice and a fixed spread. algo4: mean-reverting signal and optimal quotes (stochastic control). The Demo worker ignores it: it runs every algorithm enabled below, each in its own lane.", choices=ALGORITHM_CHOICES),
     "algo1_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Demo only: run MM_algo1v2 (algo1) on this pair in its own lane, with its own paper account and result files. The lane starts or stops at the worker's next check."),
     "algo3_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Demo only: run MM_algo2 (algo3) on this pair in its own lane, with its own paper account and result files. The lane starts or stops at the worker's next check."),
+    "algo4_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Demo only: run MM_algo3 (algo4) on this pair in its own lane, with its own paper account and result files. The lane starts or stops at the worker's next check."),
     "order_size": FieldDefinition(float, 0, None, ApplicationMode.HOT, "Base amount per order. With inventory sizing on, each side is scaled around this amount (0 to 2x at strength 1)."),
     "inventory_sizing_enabled": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Scale buy and sell sizes linearly with inventory: buy more when inventory is low, sell more when it is high. Off sends a fixed order_size on both sides."),
     "inventory_sizing_strength": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Slope k of the linear rule. 0 keeps a fixed order_size; 1 makes the buy reach zero at inv_max and the sell reach zero at inv_min."),
@@ -102,6 +103,17 @@ FIELD_DEFINITIONS: Mapping[str, FieldDefinition] = MappingProxyType({
     "algo3_beta": FieldDefinition(float, 0, 0.05, ApplicationMode.HOT, "Lean of the quote centre per unit of imbalance, as a fraction of price (0 = microprice centre only, until beta is estimated from data)."),
     "algo3_half_spread": FieldDefinition(float, 0, 0.5, ApplicationMode.HOT, "Half-spread around the centre, as a fraction of price. 0 = the smallest half-spread that clears the fee bar, plus one tick."),
     "algo3_min_volume_orders": FieldDefinition(float, 0, None, ApplicationMode.HOT, "A top of book thinner than this many order sizes carries no signal: imbalance 0, centre at the mid. 0 = always trust the book."),
+    # ---- Algorithm 4 (strategy/algo4.py, shown as MM_algo3) ----
+    "algo4_use_alpha": FieldDefinition(bool, None, None, ApplicationMode.HOT, "Use the mean-reversion forecast. Off = the Avellaneda-Stoikov quotes alone (no lean)."),
+    "algo4_window_seconds": FieldDefinition(float, 60, 86400, ApplicationMode.HOT, "Length of the mid-price window the Ornstein-Uhlenbeck model is fitted on, in seconds (1800 = 30 minutes)."),
+    "algo4_sample_seconds": FieldDefinition(float, 1, 3600, ApplicationMode.HOT, "Spacing of the mid-price samples in the window, in seconds; at most one sample per round."),
+    "algo4_horizon_seconds": FieldDefinition(float, 0, 86400, ApplicationMode.HOT, "Horizon of the forecast and of the lean, in seconds; 0 = the order lifetime (cancel_after_minutes)."),
+    "algo4_halflife_min_seconds": FieldDefinition(float, 0, 86400, ApplicationMode.HOT, "Shortest half-life of the reversion the forecast is trusted with; a faster fit is treated as noise and the lean is zero."),
+    "algo4_halflife_max_seconds": FieldDefinition(float, 0, 86400, ApplicationMode.HOT, "Longest half-life the forecast is trusted with; a slower fit is treated as a trend and the lean is zero."),
+    "algo4_kappa": FieldDefinition(float, 0.0001, 100000, ApplicationMode.HOT, "Fill-intensity decay per unit of relative depth, used when the fill table cannot be fitted; 1/kappa is the fee-free optimal half-spread (400 = 0.25 % of the price)."),
+    "algo4_risk_perc": FieldDefinition(float, 0, 0.1, ApplicationMode.HOT, "Risk widening of both depths as a fraction of the price (the (l + phi tau) term); 0 = none."),
+    "algo4_lean_clip": FieldDefinition(float, 0, 0.05, ApplicationMode.HOT, "Largest lean of the quotes toward the estimated mean, as a fraction of the price (0.005 = 0.5 %)."),
+    "algo4_sigma_pause": FieldDefinition(float, 0, 0.5, ApplicationMode.HOT, "No quote while the fit's per-sample residual exceeds this fraction of the price (a volatility burst); 0 = off."),
     "algo3_imbalance_clip": FieldDefinition(float, 0, 1, ApplicationMode.HOT, "Largest imbalance the lean may use (0.8 = one spoofed level cannot push the lean to its maximum)."),
 })
 

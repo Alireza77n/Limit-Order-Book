@@ -99,7 +99,7 @@ def _build_tracks() -> Dict[str, Dict[str, Any]]:
                 "path": path, "status": "demo", "lane": lane,
             }
         tracks[f"{pair}_demo_lanes"] = {
-            "label": f"{name} — Demo, both algorithms (compare)",
+            "label": f"{name} — Demo, all algorithms (compare)",
             "path": tuple(lane_paths), "status": "demo", "lane": None,
         }
         tracks[f"{pair}_demo"] = {
@@ -445,8 +445,11 @@ def track_settings(track_key: str) -> Dict[str, Any]:
         "fill_table_min_samples", "fill_queue_volume_ref",
         "algo3_depth_k", "algo3_decay_rho", "algo3_beta", "algo3_half_spread",
         "algo3_min_volume_orders", "algo3_imbalance_clip",
+        "algo4_use_alpha", "algo4_window_seconds", "algo4_sample_seconds", "algo4_horizon_seconds",
+        "algo4_halflife_min_seconds", "algo4_halflife_max_seconds", "algo4_kappa", "algo4_risk_perc",
+        "algo4_lean_clip", "algo4_sigma_pause",
         "requote_band_perc", "trend_window_seconds", "trend_pause_perc",
-        "algo1_enabled", "algo3_enabled",
+        "algo1_enabled", "algo3_enabled", "algo4_enabled",
     )
     settings = {key: profile.get(key) for key in keys}
     overlay: Dict[str, Any] = {}
@@ -1454,6 +1457,122 @@ def _centre_shift_chart(df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def _algo4_centre_chart(df: pd.DataFrame) -> go.Figure:
+    """MM_algo3: where the centre sat relative to the mid, i.e. the lean toward
+    the estimated mean plus the inventory skew, as % of price."""
+    df = _with_breaks(df)
+    mid = _col(df, "Mid Price")
+    if mid.isna().all():
+        mid = (_col(df, "Best Bid") + _col(df, "Best Ask")) / 2.0
+    centre = (_col(df, "Centre") / mid - 1.0) * 100
+    if centre.notna().sum() == 0:
+        return _empty_fig(f"No {algorithm_label('algo4')} rounds with a quote yet")
+    fig = go.Figure(go.Scatter(x=df["Timestamp"], y=centre, mode="lines", name="centre − mid (lean + skew)",
+                               line=dict(color=ASK_COLOR, width=2), connectgaps=False))
+    fig.add_hline(y=0, line=dict(color=BASELINE, width=1))
+    fig = _style(fig, "Where the centre sat — lean toward the estimated mean plus the inventory skew (% of price)")
+    fig.update_yaxes(ticksuffix=" %")
+    return fig
+
+
+def _algo4_spread_chart(df: pd.DataFrame) -> go.Figure:
+    """MM_algo3: the width of the quoted pair, 2/κ + 2 risk + 2 fee, and the net return it yields."""
+    df = _with_breaks(df)
+    spread = _col(df, "Relative Quoted Spread") * 100
+    net = _col(df, "Net Return") * 100
+    if spread.notna().sum() == 0:
+        return _empty_fig("No quoted rounds yet")
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=df["Timestamp"], y=spread, mode="lines", name="quoted spread (A − B) / mid",
+                             line=dict(color=BID_COLOR, width=2), connectgaps=False))
+    fig.add_trace(go.Scatter(x=df["Timestamp"], y=net, mode="lines", name="net return of the pair",
+                             line=dict(color=MUTED, width=1.5), connectgaps=False))
+    fig = _style(fig, "Quoted spread and net return per round (% of price)")
+    fig.update_yaxes(ticksuffix=" %")
+    return fig
+
+
+def _algo4_window_chart(document: Dict[str, Any]) -> go.Figure:
+    """The mid-price window the Ornstein-Uhlenbeck model was fitted on, with
+    the estimated mean and the current mid."""
+    window = document.get("window") or {}
+    estimate = document.get("estimate") or {}
+    samples = window.get("samples") or []
+    if not samples:
+        return _empty_fig("No mid-price samples yet (warming up)")
+    xs = [float(s[0]) for s in samples]
+    ys = [float(s[1]) for s in samples]
+    fig = go.Figure(go.Scatter(x=xs, y=ys, mode="lines+markers", name="mid", line=dict(color=TEXT_PRIMARY, width=1.5),
+                               marker=dict(size=4)))
+    if estimate.get("mu") is not None:
+        fig.add_hline(y=float(estimate["mu"]), line=dict(color=STATUS_WARN, width=2, dash="dash"),
+                      annotation_text=f"μ̂ {float(estimate['mu']):,.0f}", annotation_position="top left")
+    if document.get("mid_price") is not None:
+        fig.add_trace(go.Scatter(x=[0.0], y=[float(document["mid_price"])], mode="markers", name="mid now",
+                                 marker=dict(color=ASK_COLOR, size=9)))
+    status = estimate.get("reason") or "—"
+    title = (f"The window: {int(window.get('points') or 0)} mids over {float(window.get('seconds') or 0) / 60:.0f} min — "
+             f"b̂ {float(estimate['b']):.4f}, t {float(estimate['t_stat']):.2f}, half-life {float(estimate['half_life'] or 0):.0f} s → {status}"
+             if estimate.get("b") is not None and estimate.get("t_stat") is not None else f"The window — {status}")
+    fig = _style(fig, title, height=380)
+    fig.update_xaxes(title_text="seconds before this round")
+    fig.update_yaxes(tickformat=",")
+    return fig
+
+
+def _algo4_decision_trace(document: Dict[str, Any], settings: Dict[str, Any]) -> html.Div:
+    """MM_algo3's decision as the steps of docs/algorithms/MM_algo3.md (sections 5-7)."""
+    def line(ok, text):
+        mark = "✓" if ok else ("•" if ok is None else "✗")
+        color = STATUS_GOOD if ok else (STATUS_WARN if ok is None else STATUS_CRITICAL)
+        return html.Div([html.Span(mark, style={"color": color, "fontWeight": 700, "marginRight": "0.5rem"}), html.Span(text)],
+                        style={"fontFamily": FONT_FAMILY, "fontSize": "0.88rem", "marginBottom": "0.35rem"})
+
+    def num(key, digits=0):
+        value = document.get(key)
+        return "—" if value is None else f"{float(value):,.{digits}f}"
+
+    def pct(value, digits=3, signed=True):
+        return "—" if value is None else f"{float(value) * 100:{'+' if signed else ''}.{digits}f}%"
+
+    estimate = document.get("estimate") or {}
+    window = document.get("window") or {}
+    ok = document.get("quote_mode") == "pair"
+    reason = document.get("selection_reason") or "—"
+    if estimate.get("b") is not None:
+        fit_text = (f"window {int(window.get('points') or 0)} mids / {float(window.get('seconds') or 0) / 60:.0f} min: "
+                    f"b̂ {float(estimate['b']):.4f}, t(b̂ − 1) {float(estimate['t_stat']):.2f}, "
+                    f"μ̂ {float(estimate['mu']):,.0f} ({pct(document.get('mu_shift'))} vs mid), half-life {float(estimate['half_life'] or 0):.0f} s "
+                    f"→ {estimate.get('reason')}" if estimate.get("mu") is not None
+                    else f"window {int(window.get('points') or 0)} mids: b̂ {float(estimate['b']):.4f} → {estimate.get('reason')}")
+    else:
+        fit_text = f"window {int(window.get('points') or 0)} mids → {estimate.get('reason') or 'no fit yet'}"
+    items = [
+        line(True, f"round {document.get('round')} · session {document.get('session_id')} · mid {num('mid_price')} · spread {num('spread')}"),
+        line(bool(estimate.get("ok")) if estimate else None, fit_text),
+        line(True, f"lean m = (μ̂ − S)(1 − e^(−θ̂τ)), τ = {float(document.get('horizon_seconds') or 0):.0f} s → {pct(document.get('lean'))} of the price"
+                   + (" (clipped)" if document.get("lean_clipped") else "") + ("" if document.get("forecast_used") else " (forecast not used: 0)")),
+        line(True, f"inventory x = {float(document.get('inventory_position') or 0):.2f} → skew {pct(document.get('skew'))} · risk widening {pct(document.get('risk_perc'), signed=False)}"),
+        line(True, f"1/κ = {pct(document.get('base_depth'), signed=False)} (κ {float(document.get('kappa') or 0):,.0f} from the {document.get('kappa_source')}) · fee shift {pct(document.get('commission_perc'), signed=False)} "
+                   f"→ depths bid {pct(document.get('depth_bid'), signed=False)} / ask {pct(document.get('depth_ask'), signed=False)}"),
+        line(None if not document.get("raw_bid") else True,
+             f"raw bid {num('raw_bid')} / ask {num('raw_ask')} → on the tick {num('selected_bid_price') if ok else num('raw_bid')} / {num('selected_ask_price') if ok else num('raw_ask')}"
+             + (" (bid clipped at the touch)" if document.get("clipped_bid") else "") + (" (ask clipped at the touch)" if document.get("clipped_ask") else "")
+             + (f" (widened {pct(document.get('widening'), signed=False)} each side for the fee bar)" if document.get("widening") else "")),
+        line(ok, f"fee check: R_net {pct(document.get('net_return'))} vs required {pct(document.get('min_required_return'), signed=False)} → {'quote sent' if ok else 'no quote: ' + reason}"),
+    ]
+    if document.get("sigma_rel") is not None:
+        items.insert(2, line(reason != "volatility_pause",
+                             f"volatility guard: residual {pct(document.get('sigma_rel'), 4, signed=False)} of the price vs pause {pct(document.get('sigma_pause'), 4, signed=False)}"
+                             + (" (off)" if not document.get("sigma_pause") else "")))
+    hysteresis = document.get("hysteresis") or {}
+    if hysteresis.get("resting_bid") is not None:
+        items.append(line(True, f"resting pair {float(hysteresis['resting_bid']):,.0f} / {float(hysteresis['resting_ask']):,.0f}, "
+                                f"{float(hysteresis.get('resting_age_seconds') or 0):.0f} s old; kept while both prices stay within "
+                                f"the requote band and it is younger than {hysteresis.get('refresh_seconds')} s"))
+    return html.Div(items)
+
+
 def _expected_value_chart(df: pd.DataFrame) -> go.Figure:
     """Algorithm 1's score of the quote it sent, per round."""
     df = _with_breaks(df)
@@ -2356,6 +2475,14 @@ def _render_overview_tab(df: pd.DataFrame, comparing: bool, settings: Dict[str, 
 
 def _decision_panels(document: Dict[str, Any], settings: Dict[str, Any]) -> html.Div:
     """One round's decision, laid out for the algorithm that made it."""
+    if _document_algorithm(document) == "algo4":
+        return html.Div([
+            html.Div([
+                _card(dcc.Graph(figure=_algo4_window_chart(document), config={"displaylogo": False})),
+                _card(dcc.Graph(figure=_algo3_ladder_chart(document), config={"displaylogo": False})),
+                _card(_h3("Decision trace", f"{algorithm_label('algo4')}, this round"), _algo4_decision_trace(document, settings)),
+            ], style={"display": "grid", "gridTemplateColumns": "1.2fr 1fr 1.1fr", "gap": "1rem"}),
+        ])
     if _document_algorithm(document) == "algo3":
         return html.Div([
             html.Div([
@@ -2378,6 +2505,10 @@ def _decision_header_text(algorithm: str, settings: Dict[str, Any]) -> str:
     fee = float(settings.get("commission_perc") or 0) * 100
     required = float(settings.get("exp_ret_min") or 0) * 100
     gross = float(settings.get("gross_bar") or 0) * 100
+    if algorithm == "algo4":
+        return (f"fee {fee:.2f}% · required net {required:.2f}% · gross bar {gross:.3f}% · "
+                f"κ {settings.get('algo4_kappa')} (1/κ {100.0 / float(settings.get('algo4_kappa') or 1):.3f}%) · window {float(settings.get('algo4_window_seconds') or 0) / 60:.0f} min · "
+                f"half-life {settings.get('algo4_halflife_min_seconds')}–{settings.get('algo4_halflife_max_seconds')} s · lifetime {settings.get('cancel_after_minutes')} min")
     if algorithm == "algo3":
         return (f"fee {fee:.2f}% · required net {required:.2f}% · gross bar {gross:.3f}% · "
                 f"h_min {float(settings.get('algo3_h_min') or 0) * 100:.4f}% · k {settings.get('algo3_depth_k')} · "
@@ -2629,6 +2760,8 @@ def _algorithm_tiles(row: Dict[str, Any]) -> html.Div:
 def _algorithm_charts(key: str, part: pd.DataFrame, settings: Dict[str, Any]) -> html.Div:
     if key == "algo3":
         specific = [_imbalance_chart(part), _centre_shift_chart(part)]
+    elif key == "algo4":
+        specific = [_algo4_centre_chart(part), _algo4_spread_chart(part)]
     else:
         specific = [_expected_value_chart(part), _fill_probability_chart(part)]
     return html.Div([
