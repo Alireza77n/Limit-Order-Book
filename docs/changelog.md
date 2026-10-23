@@ -2,6 +2,34 @@
 
 Newest first.
 
+## 2026-10-23 — a failed order-status lookup no longer ends the live worker
+
+### Changed
+- `engine.py::SimpleMarketMaker.update_inventory_and_cash`: when a status lookup raises (the
+  client fails closed on a timeout or an incomplete page), the round keeps inventory and cash
+  unchanged, logs `live_status_lookup_failed` and goes on; matched amounts and fees are
+  cumulative, so the next successful round applies the missing delta once.
+- `engine.py::SimpleMarketMaker._cancel_owned_stale_orders`: a failed lookup or cancel logs
+  `live_stale_cancel_failed` and leaves the orders for the next round.
+- `engine.py::SimpleMarketMaker._open_order_totals_or_none` wraps `get_open_order_totals` in the
+  live quote step: on a failed or incomplete exposure lookup the round sends nothing
+  (`live_exposure_lookup_failed`) instead of raising. The lookup itself still fails closed.
+- Tests: `tests/test_engine_status_lookup_failure.py` (6 tests).
+
+### Reason
+Both live units exited with code 1 on 23 October 2026 (USDT 09:46 UTC, BTC 10:27 UTC): one
+Nobitex request in `update_inventory_and_cash` timed out after 20 s (`RuntimeError: order status
+lookup failed: ... Read timed out`), nothing caught it, and systemd recorded the failure (journal
+of `market-maker-forward-live-*.service`). The orderbook fetch already tolerated such errors; the
+status lookups did not.
+
+### Result
+A transient API failure costs one round, not the worker. Engine suites: 117 passed. No live
+worker was started or stopped; the two failed units stay as the operator left them.
+
+### Files
+`market_maker/engine.py`, `market_maker/tests/test_engine_status_lookup_failure.py`.
+
 ## 2026-10-23 — live fill tracking survives pandas 3
 
 ### Changed
