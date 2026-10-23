@@ -48,6 +48,7 @@ from demo_config import (
     has_previous,
     load_desired_config,
     overlay_path,
+    desired_digest,
     read_runtime_snapshot,
     runtime_snapshot_path,
     validate_overrides,
@@ -885,11 +886,38 @@ def _form_value(definition, values):
         return None
 
 
+def _pair_runtime_snapshot(app: Flask, pair: str, desired) -> Optional[Dict[str, Any]]:
+    """The pair's runtime truth. Since the demo lanes (20 October 2026) every
+    lane publishes runtime_config_<pair>_<lane>.json and the pair-level file
+    is the single-worker era's, so it goes stale: the Config page showed
+    "Runtime status unknown/stale" with no applied values while every lane
+    had applied the overlay. Among the switched-on lanes, a snapshot that
+    still differs from the desired digest wins (the pair is applied only when
+    every lane is), else the newest one; the pair file is read only when no
+    lane has ever published."""
+    state_dir = app.config["STATE_DIR"]
+    enabled = [lane for lane in SELECTABLE_ALGORITHMS if desired.get(f"{lane}_enabled")]
+    snapshots = []
+    for lane in enabled or SELECTABLE_ALGORITHMS:
+        snapshot = read_runtime_snapshot(state_dir, pair, lane)
+        if snapshot:
+            snapshots.append(snapshot)
+    if not snapshots:
+        if any(runtime_snapshot_path(state_dir, pair, lane).exists() for lane in SELECTABLE_ALGORITHMS):
+            return None
+        return read_runtime_snapshot(state_dir, pair)
+    wanted = desired_digest(dict(desired))
+    behind = [item for item in snapshots if item.get("desired_digest") != wanted]
+    if behind:
+        return max(behind, key=lambda item: str(item.get("updated_at") or ""))
+    return max(snapshots, key=lambda item: str(item.get("updated_at") or ""))
+
+
 def _config_view(app: Flask, pair: str, path) -> dict:
     desired = _effective_config_values(pair, path)
     runtime_error = None
     try:
-        snapshot = read_runtime_snapshot(app.config["STATE_DIR"], pair)
+        snapshot = _pair_runtime_snapshot(app, pair, desired)
     except OverlayLoadError as exc:
         snapshot = None
         runtime_error = str(exc)
