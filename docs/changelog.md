@@ -4,6 +4,26 @@ Newest first. Commit hashes are on this branch; it was cut from `MM_algo2` at `c
 23 October 2026, whose history (the 20 October engine rules, the demo lanes, the admin and
 dashboard work) it carries.
 
+## 2026-10-23 — the Config page reads the lane snapshots
+
+### Changed
+- `admin_app.py::_pair_runtime_snapshot`: the Config page and its JSON take the pair's runtime truth
+  from the lane snapshots `runtime_config_<pair>_<lane>.json` (the lane that still differs from the
+  desired digest when any does, else the newest one; switched-off lanes are ignored); the pair-level
+  file `runtime_config_<pair>.json` is read only when no lane has ever published. Three tests.
+
+### Reason
+Since the demo lanes (20 October) every lane publishes its own snapshot and the pair-level file
+stayed at 19 October, so the Config page showed "Runtime status unknown/stale" with an empty
+Applied column while every lane had applied the overlay; the pages-mode smoke test caught it on
+23 October (`config JSON usdt`).
+
+### Result
+The Applied column and the status follow the running lanes.
+
+### Files
+`market_maker/admin_app.py`, `market_maker/tests/test_admin_actions.py`.
+
 ## 2026-10-23 — formulas typeset as math on GitHub
 
 ### Changed

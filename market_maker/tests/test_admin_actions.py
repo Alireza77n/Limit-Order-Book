@@ -738,3 +738,78 @@ def test_delete_sessions_bulk_partial_failure_reports_502_but_processes_every_se
     })
     assert response.status_code == 502
     assert len(calls) == 2  # both were attempted despite the first result
+
+
+def test_config_json_reads_the_lane_snapshots_not_the_single_worker_file(client, app, monkeypatch):
+    """Since the demo lanes every lane publishes runtime_config_<pair>_<lane>.json;
+    the pair-level file is the single-worker era's and must not decide the status
+    (the Config page showed "unknown/stale" for days while the lanes had applied)."""
+    from strategy.catalog import SELECTABLE_ALGORITHMS
+
+    state_dir = Path(app.config["STATE_DIR"])
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    stale = dict(desired, order_size=desired["order_size"] + 1)
+    (state_dir / "runtime_config_btc.json").write_text(
+        json.dumps(_runtime_snapshot(stale, session_id="session-0", updated_at="2026-10-19T14:48:00+00:00")))
+    for index, lane in enumerate(SELECTABLE_ALGORITHMS):
+        (state_dir / f"runtime_config_btc_{lane}.json").write_text(
+            json.dumps(_runtime_snapshot(desired, updated_at=f"2026-10-23T14:19:0{index}+00:00")))
+    (state_dir / "stack_session.json").write_text(json.dumps({"session_id": "session-1"}))
+    monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
+    _login(client)
+
+    body = client.get("/admin/config/btc").get_json()
+
+    assert body["status"]["state"] == "applied"
+    assert body["applied"] == desired
+
+
+def test_config_json_is_not_applied_while_one_lane_still_runs_the_old_values(client, app, monkeypatch):
+    from strategy.catalog import SELECTABLE_ALGORITHMS
+
+    state_dir = Path(app.config["STATE_DIR"])
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    old = dict(desired, order_size=desired["order_size"] + 1)
+    lanes = list(SELECTABLE_ALGORITHMS)
+    for lane in lanes:
+        (state_dir / f"runtime_config_btc_{lane}.json").write_text(
+            json.dumps(_runtime_snapshot(desired, updated_at="2026-10-23T14:19:09+00:00")))
+    (state_dir / f"runtime_config_btc_{lanes[0]}.json").write_text(
+        json.dumps(_runtime_snapshot(old, updated_at="2026-10-23T14:19:00+00:00")))
+    (state_dir / "stack_session.json").write_text(json.dumps({"session_id": "session-1"}))
+    monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
+    _login(client)
+
+    body = client.get("/admin/config/btc").get_json()
+
+    assert body["status"]["state"] != "applied"
+    assert body["applied"]["order_size"] == old["order_size"]
+
+
+def test_config_json_ignores_lanes_that_are_switched_off(client, app, monkeypatch):
+    from strategy.catalog import SELECTABLE_ALGORITHMS
+
+    if len(SELECTABLE_ALGORITHMS) < 2:
+        pytest.skip("one lane only on this branch")
+    from demo_config import overlay_path, write_overrides
+
+    state_dir = Path(app.config["STATE_DIR"])
+    off = SELECTABLE_ALGORITHMS[-1]
+    overrides = {f"{off}_enabled": False}
+    write_overrides(overlay_path(state_dir, "btc"), overrides, pair="btc", profiles=TRADING_PROFILES)
+    desired = load_desired_config("btc", state_dir, TRADING_PROFILES)
+    old = dict(desired, order_size=desired["order_size"] + 1)
+    for lane in SELECTABLE_ALGORITHMS[:-1]:
+        (state_dir / f"runtime_config_btc_{lane}.json").write_text(
+            json.dumps(_runtime_snapshot(desired, updated_at="2026-10-23T14:19:09+00:00")))
+    (state_dir / f"runtime_config_btc_{off}.json").write_text(
+        json.dumps(_runtime_snapshot(old, updated_at="2026-10-23T15:00:00+00:00")))
+    (state_dir / "stack_session.json").write_text(json.dumps({"session_id": "session-1"}))
+    monkeypatch.setattr(admin_app_module, "_worker_running", lambda _app, _pair: True)
+    _login(client)
+
+    body = client.get("/admin/config/btc").get_json()
+
+    assert body["status"]["state"] == "applied"
+    assert body["applied"] == desired
+
