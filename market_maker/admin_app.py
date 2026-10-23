@@ -20,6 +20,7 @@ import io
 import json
 import os
 import secrets
+import tempfile
 import zipfile
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -27,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
-from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session as flask_session, url_for
+from flask import Flask, after_this_request, flash, jsonify, redirect, render_template, request, send_file, session as flask_session, url_for
 from werkzeug.security import check_password_hash
 
 from control_queue import (
@@ -629,6 +630,40 @@ def _list_backups(app: Flask):
     return listing
 
 
+def _zip_backup_response(backup_dir: Path, download_name: str):
+    """Zip the files of one backup directory into a temporary file on disk
+    and stream that file. The archive used to be built in an ``io.BytesIO``:
+    with a 150 MB SQLite store in the snapshot the admin process reached its
+    384 MiB container limit and was OOM-killed on every export (three times
+    on 23 October 2026). On disk the memory stays flat whatever the size."""
+    handle = tempfile.NamedTemporaryFile(prefix="lob-export-", suffix=".zip", delete=False)
+    handle.close()
+    archive_path = Path(handle.name)
+    try:
+        with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for file_path in sorted(backup_dir.iterdir()):
+                if file_path.is_file():
+                    archive.write(file_path, arcname=file_path.name)
+    except Exception:
+        archive_path.unlink(missing_ok=True)
+        raise
+
+    @after_this_request
+    def _remove_archive(response):
+        # The response holds the open file; on Linux the unlinked file stays
+        # readable until it is closed, so the download completes.
+        try:
+            archive_path.unlink()
+        except OSError:
+            pass
+        return response
+
+    return send_file(
+        archive_path, mimetype="application/zip", as_attachment=True,
+        download_name=download_name,
+    )
+
+
 def _backup_preview(app: Flask, name: str):
     backup_dir = Path(app.config["BACKUPS_DIR"]) / name
     if not backup_dir.is_dir():
@@ -1183,16 +1218,7 @@ def _register_routes(app: Flask) -> None:
         backup_dir = Path(app.config["BACKUPS_DIR"]) / name
         if not backup_dir.is_dir():
             return ("backup not found", 404)
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w") as archive:
-            for file_path in sorted(backup_dir.iterdir()):
-                if file_path.is_file():
-                    archive.write(file_path, arcname=file_path.name)
-        buffer.seek(0)
-        return send_file(
-            buffer, mimetype="application/zip", as_attachment=True,
-            download_name=f"{name}.zip",
-        )
+        return _zip_backup_response(backup_dir, f"{name}.zip")
 
     @app.route("/admin/reset", methods=["POST"])
     @login_required
@@ -1387,16 +1413,7 @@ def _register_routes(app: Flask) -> None:
                 return _error_page(500, "Export snapshot failed.")
             return ("export snapshot failed", 500)
         backup_dir = Path(app.config["BACKUPS_DIR"]) / backup_name
-        buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w") as archive:
-            for file_path in sorted(backup_dir.iterdir()):
-                if file_path.is_file():
-                    archive.write(file_path, arcname=file_path.name)
-        buffer.seek(0)
-        return send_file(
-            buffer, mimetype="application/zip", as_attachment=True,
-            download_name=f"{backup_name}.zip",
-        )
+        return _zip_backup_response(backup_dir, f"{backup_name}.zip")
 
     @app.route("/admin/orders")
     @login_required

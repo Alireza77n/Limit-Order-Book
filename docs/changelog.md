@@ -2,6 +2,27 @@
 
 Newest first.
 
+## 2026-10-23 — admin export streams the archive from disk
+
+### Changed
+- `admin_app.py::_zip_backup_response`: `/admin/export` and `/admin/backups/<name>/download` zip
+  the snapshot into a temporary file on disk (deflated) and stream it; the file is removed after
+  the response. Before, the archive was built in an `io.BytesIO`.
+
+### Reason
+A snapshot now holds a 150 MB SQLite store and more; building the zip in memory took the admin
+process over its 384 MiB container limit and the kernel OOM-killed it on every export (three times
+on 23 October 2026 during the pages-mode smoke test, `docker events` shows `oom` then `die 137`).
+Every kill restarted the admin container and dropped the connection ("Remote end closed connection
+without response").
+
+### Result
+Memory stays flat whatever the snapshot size; the smoke test's `/admin/export` passes again. Each
+export still creates a new snapshot directory under `runtime/backups/` (unchanged).
+
+### Files
+`market_maker/admin_app.py`.
+
 ## 2026-10-23 — a failed order-status lookup no longer ends the live worker
 
 ### Changed
