@@ -321,40 +321,43 @@ it is recorded and charted, and $V_b + V_a$ decides the thin-book test.
 
 ### Step 2: the microprice
 
-```
-microprice = (a0 x v_b0 + b0 x v_a0) / (v_b0 + v_a0)  =  mid + (spread / 2) x I0
-```
+$$
+\text{microprice} = \frac{a_0\,v^b_0 + b_0\,v^a_0}{v^b_0 + v^a_0} = m + \frac{s}{2}\,I_0
+$$
 
 $I_0$ is the imbalance of the best level alone. The microprice always lies between the best bid and the best
 ask, nearer the side with less volume.
 
 ### Step 3: the quote centre
 
-```
-x = clamp( (inv - inv_min) / (inv_max - inv_min), 0, 1 )
-c = microprice x (1 + beta x I) x (1 - skew_perc x (2x - 1))
-```
+$$
+x = \mathrm{clamp}\!\left(\frac{q - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\right), \qquad
+c = \text{microprice} \times (1 + \beta\,I) \times \bigl(1 - \sigma_q\,(2x - 1)\bigr)
+$$
+
+($q$ the inventory inside its band $[q_{\min}, q_{\max}]$, $\sigma_q$ = `skew_perc`, $\beta$ = `algo3_beta`.)
 
 A half-full band leaves the centre at the microprice; a full band moves it `skew_perc` (0.2 %) down, so
 selling becomes more likely; an empty band moves it 0.2 % up.
 
 ### Step 4: the half-spread from the fee bar
 
-```
-G     = (1 + exp_ret_min) / (1 - fee)^2 - 1
-h_min = G / (2 + G)                       0.0850 % in demo, 0.2553 % live
-h     = max(algo3_half_spread, h_min + tick / c)
-```
+$$
+G = \frac{1 + r_{\min}}{(1 - f)^2} - 1, \qquad h_{\min} = \frac{G}{2 + G}, \qquad h = \max\!\left(h_0,\ h_{\min} + \frac{\epsilon}{c}\right)
+$$
+
+($h_{\min}$ = 0.0900 % in demo (fee 0.08 %, target 0.02 %) and 0.2553 % live (fee 0.25 %, target 0.01 %);
+$h_0$ = `algo3_half_spread`, $r_{\min}$ = `exp_ret_min`, $f$ the fee, $\epsilon$ the tick.)
 
 With $B = c(1-h)$ and $A = c(1+h)$, a completed round trip returns $(1-f)^2(1+h)/(1-h) - 1$, which is above
 `exp_ret_min` exactly when $h > h_{\min}$. The centre, and with it the signal and the inventory, cancels out.
 
 ### Step 5: prices on the tick, never crossing
 
-```
-B = floor_to_tick( min(c (1 - h), best ask - tick) )
-A = ceil_to_tick ( max(c (1 + h), best bid + tick) )
-```
+$$
+B = \mathrm{floor}_\epsilon\!\bigl(\min(c\,(1 - h),\ a_0 - \epsilon)\bigr), \qquad
+A = \mathrm{ceil}_\epsilon\!\bigl(\max(c\,(1 + h),\ b_0 + \epsilon)\bigr)
+$$
 
 The clip and the rounding only lower the bid and raise the ask, so every pair sent still clears the bar. The
 code re-checks it on the exact prices anyway (`net_return_below_bar`, which cannot fire while $h > h_{\min}$).
@@ -441,11 +444,13 @@ Example with `order_size` 10, a band of 0 to 100, inventory 50 and no fills:
 
 ### Limits applied after the rule
 
-```
-sell = min(sell target, inventory − amount in open sells − inv_min)
-buy  = min(buy target, (cash − cash in open buys) / bid price)
-buy is sent only if  open buys + inventory + buy ≤ inv_max
-```
+$$
+\begin{aligned}
+\text{sell} &= \min\bigl(\text{sell target},\ \text{inventory} - \text{amount in open sells} - \text{inv}_{\min}\bigr) \\
+\text{buy} &= \min\bigl(\text{buy target},\ (\text{cash} - \text{cash in open buys}) / \text{bid price}\bigr) \\
+\text{buy is sent only if} &\quad \text{open buys} + \text{inventory} + \text{buy} \le \text{inv}_{\max}
+\end{aligned}
+$$
 
 Then, for each side separately:
 

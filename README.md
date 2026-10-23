@@ -328,19 +328,20 @@ before, the band was 50 rial on both pairs and orders piled up for 10 minutes â€
 
 ## MM_algo2 summary
 
-```text
-inputs : the order book {bids, asks} (best first), the inventory q, the settings
-if the book has no usable best price, a crossed top or fewer than k levels a side: no quote (reason)
-V_b, V_a  = sum over levels i < k of rho^i * volume;      I = (V_b - V_a) / (V_b + V_a)
-if V_b + V_a < V_min:  I = 0;  start = mid         else:  I = clip(I, -I_max, I_max);  start = microprice
-x = clamp((q - q_min) / (q_max - q_min), 0, 1)
-c = start * (1 + beta * I) * (1 - skew * (2x - 1))
-h = max(algo3_half_spread, G / (2 + G) + tick / c)
-B = floor_tick(min(c(1 - h), a0 - tick));   A = ceil_tick(max(c(1 + h), b0 + tick))
-if (1 - f)^2 * A / B - 1 <= r_min: no quote                      (cannot happen while h > h_min)
-if both prices are within 5 ticks of the last pair and it is under 300 s old: send the last pair again
-return {bid B, ask A, levels, returns, centre, imbalance, microprice, reason}
-```
+1. **Inputs:** the order book (bids and asks, best first), the inventory $q$ and the settings.
+2. **Guard:** no usable best price, a crossed top or fewer than $k$ levels a side: no quote, with the reason.
+3. **Imbalance:** $V_b = \sum_{i<k} \rho^{\,i} v^b_i$ and $V_a = \sum_{i<k} \rho^{\,i} v^a_i$, $I = (V_b - V_a)/(V_b + V_a)$.
+   If $V_b + V_a < V_{\min}$: $I = 0$ and the start is the mid; else $I = \mathrm{clip}(I, -I_{\max}, I_{\max})$ and the
+   start is the microprice.
+4. **Centre:** $x = \mathrm{clamp}((q - q_{\min})/(q_{\max} - q_{\min}),\ 0,\ 1)$ and
+   $c = \text{start} \times (1 + \beta I) \times (1 - \sigma_q (2x - 1))$.
+5. **Half-spread:** $h = \max\bigl(h_0,\ G/(2 + G) + \epsilon/c\bigr)$ with $h_0$ = `algo3_half_spread`.
+6. **Prices:** $B = \mathrm{floor}_\epsilon(\min(c(1 - h),\ a_0 - \epsilon))$ and $A = \mathrm{ceil}_\epsilon(\max(c(1 + h),\ b_0 + \epsilon))$.
+7. **Bar:** if $(1 - f)^2 A/B - 1 \le r_{\min}$: no quote (cannot happen while $h > h_{\min}$).
+8. **Hysteresis:** if both prices are within the requote band of the last pair ($n$ ticks or $\omega$ of the price,
+   whichever is wider) and it is younger than $T$: send the last pair again.
+9. **Output:** the bid $B$, the ask $A$, the levels, the returns, the centre, the imbalance, the microprice and the
+   reason.
 
 ## Output of MM_algo2
 

@@ -2,6 +2,23 @@
 
 Newest first. Commit hashes are on this branch.
 
+## 2026-10-23 — formulas typeset as math on GitHub
+
+### Changed
+- README and PROJECT_GUIDE: every formula block that was monospace text with Unicode symbols is
+  now a LaTeX display block (`$$ … $$`), and the end-of-section algorithm summary is a numbered list
+  with inline math. The guide's demo fee-bar half-spread now reads 0.0900 % (fee 0.08 %, target 0.02 % since 22 October); 0.0850 % was the value at the 0.01 % target.
+
+### Reason
+The operator: plain-text formula blocks render badly on GitHub; the rest of the documents already use
+MathJax.
+
+### Result
+GitHub renders the formulas like the notation tables and the specification. No code change.
+
+### Files
+`README.md`, `PROJECT_GUIDE.md`.
+
 ## 2026-10-23 — admin export streams the archive from disk
 
 ### Changed
