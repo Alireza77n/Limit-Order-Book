@@ -245,20 +245,41 @@ class SimpleMarketMaker:
         self, max_age_minutes: float, df: Optional[pd.DataFrame] = None
     ) -> Set[str]:
         owned = self._active_order_ids()
-        cancelled = self.exchange.cancel_old_orders(
-            max_age_minutes=max_age_minutes,
-            df=df,
-            tracked_orders=self.tracked_orders,
-            pair=self.cfg.pair,
-            owned_client_order_ids=owned,
-            max_pages=100,
-        )
+        try:
+            cancelled = self.exchange.cancel_old_orders(
+                max_age_minutes=max_age_minutes,
+                df=df,
+                tracked_orders=self.tracked_orders,
+                pair=self.cfg.pair,
+                owned_client_order_ids=owned,
+                max_pages=100,
+            )
+        except Exception as exc:  # noqa: BLE001 -- a failed lookup or cancel leaves the orders for the next round
+            print(json.dumps({
+                "event": "live_stale_cancel_failed",
+                "error": f"{type(exc).__name__}: {exc}", "symbol": self.pair,
+            }, sort_keys=True), flush=True)
+            return set()
         return self._prune_cancelled_active_ids(cancelled)
 
     
 
 
    
+
+    def _open_order_totals_or_none(self):
+        """``get_open_order_totals``, or None after a logged failure (a timed-out
+        or incomplete lookup). The lookup fails closed on purpose: an unknown
+        exposure must not look like zero, so the caller quotes nothing this
+        round instead of ending the worker."""
+        try:
+            return self.get_open_order_totals()
+        except Exception as exc:  # noqa: BLE001 -- fail closed for the round, not for the process
+            print(json.dumps({
+                "event": "live_exposure_lookup_failed",
+                "error": f"{type(exc).__name__}: {exc}", "symbol": self.pair,
+            }, sort_keys=True), flush=True)
+            return None
 
     def get_open_order_totals(self) -> Tuple[Dict[str, float], Dict[str, float]]:
         """
@@ -942,11 +963,23 @@ class SimpleMarketMaker:
         """
         statuses = ("open", "close") if statuse == "all" else (statuse,)
         by_client_id: Dict[str, Dict[str, Any]] = {}
-        for status in statuses:
-            for order in self.get_status_orders(status):
-                client_id = str(order.get("clientOrderId") or "")
-                if client_id:
-                    by_client_id[client_id] = order
+        try:
+            for status in statuses:
+                for order in self.get_status_orders(status):
+                    client_id = str(order.get("clientOrderId") or "")
+                    if client_id:
+                        by_client_id[client_id] = order
+        except Exception as exc:  # noqa: BLE001 -- the lookup fails closed; the round must not end the worker
+            # One timed-out Nobitex request ended both live workers on 23 October
+            # 2026 (USDT 09:46 UTC, BTC 10:27 UTC). Keep inventory and cash as they
+            # are: matched amounts and fees are cumulative, so the next successful
+            # round applies the missing delta once.
+            print(json.dumps({
+                "event": "live_status_lookup_failed", "step": "inventory_update",
+                "error": f"{type(exc).__name__}: {exc}", "symbol": self.pair,
+            }, sort_keys=True), flush=True)
+            self.last_round_fee_irt = 0.0
+            return inv_coin, inv_cash
         orders = list(by_client_id.values())
         print("Closed orders considered for update:", orders)
 
@@ -2137,8 +2170,14 @@ class SimpleMarketMaker:
                     bid_lvl = self._quote_side_level(res, "bid level")
                     ask_lvl = self._quote_side_level(res, "ask level")
 
-                    # Current locked totals (and resting prices) from our open orders
-                    buy_locked, sell_locked = self.get_open_order_totals()
+                    # Current locked totals (and resting prices) from our open orders;
+                    # a failed lookup ends the round (nothing is sent), not the worker.
+                    totals = self._open_order_totals_or_none()
+                    if totals is None:
+                        order_df.to_csv(csv_path, index=False)
+                        time.sleep(self.cfg.time_step)
+                        continue
+                    buy_locked, sell_locked = totals
                     resting = getattr(self, "_resting_orders", {"buy": [], "sell": []})
                     # One order per side (replacement) and the trend pause, as
                     # in the demo loop; a cancellation changes the locked totals.
@@ -2150,7 +2189,12 @@ class SimpleMarketMaker:
                             if side in paused_sides or (price is not None and abs(float(record[0]) - float(price)) > band + 1e-9):
                                 replaced |= self._cancel_live_order(record)
                     if replaced:
-                        buy_locked, sell_locked = self.get_open_order_totals()
+                        totals = self._open_order_totals_or_none()
+                        if totals is None:
+                            order_df.to_csv(csv_path, index=False)
+                            time.sleep(self.cfg.time_step)
+                            continue
+                        buy_locked, sell_locked = totals
                         resting = getattr(self, "_resting_orders", {"buy": [], "sell": []})
                     if "sell" in paused_sides:
                         ask_price = None
