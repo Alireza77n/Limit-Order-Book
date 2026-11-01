@@ -99,7 +99,7 @@ services:
     cpus: "0.50"
     # The production Python worker exceeds 128 MiB RSS under normal market
     # polling; keep it bounded but above the measured steady-state footprint.
-    mem_limit: 256m
+    mem_limit: 320m
     healthcheck:
       test:
         - CMD
@@ -127,7 +127,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
+          memory: 320M
           pids: 128
 
   usdt-demo:
@@ -155,9 +155,10 @@ services:
     pids_limit: 128
     cpus: "0.50"
     # The USDT worker's steady-state Python RSS exceeds 128 MiB on the
-    # production image; 256 MiB avoids an OOM restart loop while remaining
-    # tightly bounded.
-    mem_limit: 256m
+    # production image; 256 MiB avoided an OOM restart loop until 1 November
+    # 2026, when the btc and usdt workers (three lanes each, a week of store)
+    # were killed at 256 MiB by a spike; 320 MiB since then.
+    mem_limit: 320m
     healthcheck:
       test:
         - CMD
@@ -185,7 +186,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
+          memory: 320M
           pids: 128
 
   eth-demo:
@@ -213,7 +214,7 @@ services:
     pids_limit: 128
     cpus: "0.50"
     # Added 1 November 2026 (ADR-018); sized like the USDT worker.
-    mem_limit: 256m
+    mem_limit: 320m
     healthcheck:
       test:
         - CMD
@@ -241,7 +242,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
+          memory: 320M
           pids: 128
 
   xaut-demo:
@@ -269,7 +270,7 @@ services:
     pids_limit: 128
     cpus: "0.50"
     # Added 1 November 2026 (ADR-018); sized like the USDT worker.
-    mem_limit: 256m
+    mem_limit: 320m
     healthcheck:
       test:
         - CMD
@@ -297,7 +298,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
+          memory: 320M
           pids: 128
 
   trx-demo:
@@ -325,7 +326,7 @@ services:
     pids_limit: 128
     cpus: "0.50"
     # Added 1 November 2026 (ADR-018); sized like the USDT worker.
-    mem_limit: 256m
+    mem_limit: 320m
     healthcheck:
       test:
         - CMD
@@ -353,7 +354,7 @@ services:
       resources:
         limits:
           cpus: "0.50"
-          memory: 256M
+          memory: 320M
           pids: 128
 
   dashboard:

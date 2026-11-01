@@ -25,6 +25,12 @@ dashboard work) it carries.
   more worker locks for `session-init`. `test_deployment_contract.py` checks the five demo
   services; the memory budget assertion is 2048 MiB.
 
+- Second commit the same day: the demo workers' memory limit is 320 MiB (was 256). At 10:49 UTC the
+  btc and usdt workers, three lanes each with a week of result store, were both killed by the
+  cgroup limit during a spike (dmesg "Memory cgroup out of memory", anon-rss 224 and 229 MB) and
+  restarted by Docker in the same session; `docker update --memory 320m` was applied live first.
+  The contract test's budget assertion is 2432 MiB.
+
 ### Reason
 The operator asked to extend the demo to three more markets; ETH, XAUT and TRX were chosen on
 the Nobitex 24 h statistics of 1 November 2026 (volume, spread wide enough for the algorithm's

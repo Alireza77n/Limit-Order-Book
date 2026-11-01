@@ -246,11 +246,11 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         # 2026-10-11 fix; the UI containers decode result rows into pandas
         # object frames for every page and were OOM-killed at 192 MB on a
         # 5,700-row store, so they get 384 MB.
-        "btc-demo": ("unless-stopped", "30s", 128, 256),
-        "usdt-demo": ("unless-stopped", "30s", 128, 256),
-        "eth-demo": ("unless-stopped", "30s", 128, 256),
-        "xaut-demo": ("unless-stopped", "30s", 128, 256),
-        "trx-demo": ("unless-stopped", "30s", 128, 256),
+        "btc-demo": ("unless-stopped", "30s", 128, 320),
+        "usdt-demo": ("unless-stopped", "30s", 128, 320),
+        "eth-demo": ("unless-stopped", "30s", 128, 320),
+        "xaut-demo": ("unless-stopped", "30s", 128, 320),
+        "trx-demo": ("unless-stopped", "30s", 128, 320),
         "dashboard": ("unless-stopped", "20s", 128, 384),
         "admin": ("unless-stopped", "20s", 128, 384),
     }
@@ -268,9 +268,9 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         assert "healthcheck:" in block
 
     # Five demo workers (1 November 2026) plus the two UI containers on a
-    # 4 GB host: the limits add up to 2 GB; the workers use about 200 MB each.
+    # 4 GB host: the limits add up to 2.4 GB; the workers use 80–210 MB each.
     long_running_memory_mib = sum(expected[name][3] for name in SERVICES[1:])
-    assert long_running_memory_mib <= 2048
+    assert long_running_memory_mib <= 2432
 
 
 def test_mounts_are_limited_to_separate_results_and_state_roots():
