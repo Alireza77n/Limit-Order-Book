@@ -25,7 +25,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "market_maker"
 sys.path.insert(0, str(PACKAGE))
-PAIRS = {"btc": "BTCIRT", "usdt": "USDTIRT"}
+from config import TRADING_PROFILES  # noqa: E402
+
+PAIRS = {pair: str(TRADING_PROFILES[pair]["pair"]) for pair in TRADING_PROFILES}
+WALLET_CURRENCIES = ("rls",) + tuple(dict.fromkeys(str(TRADING_PROFILES[pair]["currency_1"]) for pair in TRADING_PROFILES))
 POLL_SECONDS = 0.25
 STOP_TIMEOUT = 35.0
 
@@ -232,10 +235,14 @@ def _read_wallet_balances():
         trading_enabled=False,
     )
     balances = {}
-    for currency in ("rls", "btc", "usdt"):
+    for currency in WALLET_CURRENCIES:
         value = client.wallet_balance(currency)
         if value is None or not math.isfinite(value) or value < 0:
-            raise RuntimeError(f"Could not read a valid {currency.upper()} balance from Nobitex")
+            if currency in ("rls", "btc", "usdt"):
+                raise RuntimeError(f"Could not read a valid {currency.upper()} balance from Nobitex")
+            # A market added later may have no wallet on the account yet.
+            balances[currency] = None
+            continue
         balances[currency] = value
     return {
         "balances": balances,

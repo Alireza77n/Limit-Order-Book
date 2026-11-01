@@ -26,10 +26,12 @@
         <li><a href="{{ url_for('admin_algorithm_page') }}" class="{% if request.endpoint == 'admin_algorithm_page' %}active{% endif %}">Algorithm</a></li>
         <li><a href="{{ url_for('admin_workers_page') }}" class="{% if request.endpoint == 'admin_workers_page' %}active{% endif %}">Workers</a></li>
         <li><a href="{{ url_for('admin_forward_page') }}" class="{% if request.endpoint == 'admin_forward_page' %}active{% endif %}">Live Forward Test</a></li>
-        <li><a href="{{ url_for('admin_forward_config', pair='btc') }}" class="{% if request.endpoint == 'admin_forward_config' and request.view_args.pair == 'btc' %}active{% endif %}">Live Config BTC</a></li>
-        <li><a href="{{ url_for('admin_forward_config', pair='usdt') }}" class="{% if request.endpoint == 'admin_forward_config' and request.view_args.pair == 'usdt' %}active{% endif %}">Live Config USDT</a></li>
-        <li><a href="{{ url_for('admin_config', pair='btc') }}" class="{% if request.endpoint == 'admin_config' and request.view_args.pair == 'btc' %}active{% endif %}">Config BTC</a></li>
-        <li><a href="{{ url_for('admin_config', pair='usdt') }}" class="{% if request.endpoint == 'admin_config' and request.view_args.pair == 'usdt' %}active{% endif %}">Config USDT</a></li>
+        {% for nav_pair in pairs %}
+        <li><a href="{{ url_for('admin_forward_config', pair=nav_pair) }}" class="{% if request.endpoint == 'admin_forward_config' and request.view_args.pair == nav_pair %}active{% endif %}">Live Config {{ nav_pair.upper() }}</a></li>
+        {% endfor %}
+        {% for nav_pair in pairs %}
+        <li><a href="{{ url_for('admin_config', pair=nav_pair) }}" class="{% if request.endpoint == 'admin_config' and request.view_args.pair == nav_pair %}active{% endif %}">Config {{ nav_pair.upper() }}</a></li>
+        {% endfor %}
         <li><a href="{{ url_for('admin_orders') }}" class="{% if request.endpoint == 'admin_orders' %}active{% endif %}">Orders</a></li>
         <li><a href="{{ url_for('admin_balances') }}" class="{% if request.endpoint == 'admin_balances' %}active{% endif %}">Balances</a></li>
         <li><a href="{{ url_for('admin_sessions') }}" class="{% if request.endpoint == 'admin_sessions' %}active{% endif %}">Sessions</a></li>

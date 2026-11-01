@@ -97,3 +97,19 @@ Decision: `algo4_use_alpha` = true. Reason: on the recorded demo mids the lean h
 the forecast off, but the demo lane is the agreed test — the whole algorithm runs, its estimates
 are visible on the dashboard, and the comparison with the other lanes decides. Revisit after the
 demo. Status: accepted 2026-10-23.
+
+## ADR-018: three more demo markets, ETH, XAUT and TRX
+
+Decision: the demo lanes run on five IRT markets, the original BTC and USDT plus ETH, XAUT and
+TRX, each as its own worker and profile (`config.TRADING_PROFILES`), with the same strategy
+defaults as USDT and sizes of about 3 million rial per order. Reason: the Nobitex 24 h statistics
+of 1 November 2026 (228 rial markets): ETH (59 bn toman/day, spread 0.115 %) is the second major
+asset and its spread is wider than the algorithm's optimal depth, so the quotes sit at the touch
+more often than on USDT; XAUT (82 bn, 0.047 %) is tokenised gold with very low volatility, the
+best case for a mean-reverting signal and almost no inventory risk; TRX (135 bn, 0.019 %) has
+BTC-size volume with a stable price. Rejected: ZEC (volume from a one-day pump), BEAMX, PROM, G,
+DOOD and the meme coins (10–20 % daily moves make the inventory one-sided), SOL and BNB (less
+volume than ETH, wider and noisier). Consequences: three more containers (256 MiB each) on a
+4 GB, 2-CPU host, so the new workers step every 30 s; no fill table until the cron has their
+own rounds; the choice is re-examined after two weeks of demo data with the replay of
+`Report_investor/proposal_20261025`. Status: accepted 2026-11-01.

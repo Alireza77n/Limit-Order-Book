@@ -1,6 +1,6 @@
 # Live forward-test setup
 
-This package adds a separate live-forward control plane for the existing BTC/IRT and USDT/IRT profiles. It does not alter the Demo worker commands. The admin site is bound to `127.0.0.1:18653`; the read-only chart dashboard is bound to `127.0.0.1:18652`.
+This package adds a separate live-forward control plane for the profiles in `config.TRADING_PROFILES` (BTC/IRT, USDT/IRT and, since 1 November 2026, ETH/IRT, XAUT/IRT, TRX/IRT). It does not alter the Demo worker commands. The admin site is bound to `127.0.0.1:18653`; the read-only chart dashboard is bound to `127.0.0.1:18652`.
 
 ## Install beside the existing service
 
@@ -45,9 +45,9 @@ Then use `http://127.0.0.1:18653/admin/login` for control and `http://127.0.0.1:
 4. Open **Live Forward Test**, choose one pair, and type the exact phrase shown (for example `START BTCIRT LIVE`). This starts only that profile with the algorithm saved for it, on its Live Config page or with *Activate* on the **Algorithm** page (**MM_algo3**, value `algo4`, this branch's algorithm; **MM_algo2**, value `algo3`; or **MM_algo1v2**, value `algo1`, which is also used when no algorithm was saved), Nobitex, `--mode real`, and continuous operation. A running worker keeps the algorithm it started with.
 5. Use Stop to send SIGTERM. The engine's shutdown path attempts to cancel open orders owned by that worker before exiting. Confirm order status on Nobitex after stopping.
 6. Review output at the Charts page and logs in `/var/log/market-maker-forward/`.
-7. Every start creates a new live session (its id is the start time as a Unix timestamp). The admin **Sessions** page lists them all with the running worker's session marked Active, and can delete a closed one once the live workers are stopped: the forward agent backs both pairs' round-history CSVs up to `results/backups/delete-live-session-<stamp>/` and removes that session's rows.
+7. Every start creates a new live session (its id is the start time as a Unix timestamp). The admin **Sessions** page lists them all with the running worker's session marked Active, and can delete a closed one once the live workers are stopped: the forward agent backs every market's round-history CSV up to `results/backups/delete-live-session-<stamp>/` and removes that session's rows.
 
-Only BTC/IRT and USDT/IRT are wired to this panel. The UI does not accept arbitrary symbols, algorithms, API endpoints, or credentials. A changed config is saved separately from Demo and requires a worker restart. The engine's existing order ownership checks scope shutdown cancellation to orders tracked by this worker; verify the exchange order list after a stop.
+Only the markets of `config.TRADING_PROFILES` are wired to this panel; the three markets added on 1 November 2026 have live pages but have never run live. The UI does not accept arbitrary symbols, algorithms, API endpoints, or credentials. A changed config is saved separately from Demo and requires a worker restart. The engine's existing order ownership checks scope shutdown cancellation to orders tracked by this worker; verify the exchange order list after a stop.
 
 ## Isolation details
 

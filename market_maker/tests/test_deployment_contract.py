@@ -18,11 +18,15 @@ COMPOSE_PATH = ROOT / "deploy/docker-compose.production.yml"
 LOCAL_COMPOSE_PATH = ROOT / "docker-compose.yml"
 DOCKERFILE_PATH = ROOT / "Dockerfile"
 ENV_PATH = ROOT / "deploy/demo.env"
-SERVICES = ("session-init", "btc-demo", "usdt-demo", "dashboard", "admin")
+DEMO_SERVICES = ("btc-demo", "usdt-demo", "eth-demo", "xaut-demo", "trx-demo")
+SERVICES = ("session-init",) + DEMO_SERVICES + ("dashboard", "admin")
 CONTAINER_NAMES = {
     "session-init": "lob-session-init",
     "btc-demo": "lob-btc-demo",
     "usdt-demo": "lob-usdt-demo",
+    "eth-demo": "lob-eth-demo",
+    "xaut-demo": "lob-xaut-demo",
+    "trx-demo": "lob-trx-demo",
     "dashboard": "lob-dashboard",
     "admin": "lob-admin",
 }
@@ -32,6 +36,9 @@ COMMANDS = {
         "--path", "/app/runtime/state/stack_session.json",
         "--worker-lock", "/app/runtime/state/.worker_btcirt.lock",
         "--worker-lock", "/app/runtime/state/.worker_usdtirt.lock",
+        "--worker-lock", "/app/runtime/state/.worker_ethirt.lock",
+        "--worker-lock", "/app/runtime/state/.worker_xautirt.lock",
+        "--worker-lock", "/app/runtime/state/.worker_trxirt.lock",
     ],
     "btc-demo": [
         "python", "demo_entrypoint.py", "python", "run.py", "--profile", "btc",
@@ -39,6 +46,18 @@ COMMANDS = {
     ],
     "usdt-demo": [
         "python", "demo_entrypoint.py", "python", "run.py", "--profile", "usdt",
+        "--mode", "demo", "--continuous",
+    ],
+    "eth-demo": [
+        "python", "demo_entrypoint.py", "python", "run.py", "--profile", "eth",
+        "--mode", "demo", "--continuous",
+    ],
+    "xaut-demo": [
+        "python", "demo_entrypoint.py", "python", "run.py", "--profile", "xaut",
+        "--mode", "demo", "--continuous",
+    ],
+    "trx-demo": [
+        "python", "demo_entrypoint.py", "python", "run.py", "--profile", "trx",
         "--mode", "demo", "--continuous",
     ],
     "dashboard": ["python", "demo_entrypoint.py", "python", "dashboard.py"],
@@ -176,7 +195,7 @@ def test_dashboard_and_admin_are_the_only_services_with_loopback_ports():
 
     assert _list(blocks["dashboard"], "    ports:") == ["127.0.0.1:8652:8050"]
     assert _list(blocks["admin"], "    ports:") == ["127.0.0.1:8653:8051"]
-    for name in ("session-init", "btc-demo", "usdt-demo"):
+    for name in ("session-init",) + DEMO_SERVICES:
         assert "\n    ports:" not in blocks[name]
     assert "privileged:" not in text
     assert "network_mode: host" not in text
@@ -229,6 +248,9 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         # 5,700-row store, so they get 384 MB.
         "btc-demo": ("unless-stopped", "30s", 128, 256),
         "usdt-demo": ("unless-stopped", "30s", 128, 256),
+        "eth-demo": ("unless-stopped", "30s", 128, 256),
+        "xaut-demo": ("unless-stopped", "30s", 128, 256),
+        "trx-demo": ("unless-stopped", "30s", 128, 256),
         "dashboard": ("unless-stopped", "20s", 128, 384),
         "admin": ("unless-stopped", "20s", 128, 384),
     }
@@ -245,8 +267,10 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         assert f"pids: {pids}" in block
         assert "healthcheck:" in block
 
+    # Five demo workers (1 November 2026) plus the two UI containers on a
+    # 4 GB host: the limits add up to 2 GB; the workers use about 200 MB each.
     long_running_memory_mib = sum(expected[name][3] for name in SERVICES[1:])
-    assert long_running_memory_mib <= 1536
+    assert long_running_memory_mib <= 2048
 
 
 def test_mounts_are_limited_to_separate_results_and_state_roots():
@@ -255,7 +279,7 @@ def test_mounts_are_limited_to_separate_results_and_state_roots():
     assert _list(blocks["session-init"], "    volumes:") == [
         "../runtime/state:/app/runtime/state"
     ]
-    for name in ("btc-demo", "usdt-demo"):
+    for name in DEMO_SERVICES:
         assert _list(blocks[name], "    volumes:") == [
             "../runtime/results:/app/runtime/results",
             "../runtime/state:/app/runtime/state",
@@ -300,8 +324,7 @@ def test_healthchecks_are_guarded_and_worker_health_requires_an_active_lock():
         assert "CMD-SHELL" not in block
 
     for name, lock_name in (
-        ("btc-demo", ".worker_btcirt.lock"),
-        ("usdt-demo", ".worker_usdtirt.lock"),
+        (service, f".worker_{service[:-len('-demo')]}irt.lock") for service in DEMO_SERVICES
     ):
         block = blocks[name]
         assert lock_name in block
@@ -375,7 +398,7 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
     assert str(admin_ports[0]["published"]) == "8653"
     assert admin_ports[0]["target"] == 8051
     assert admin_ports[0]["protocol"] == "tcp"
-    for name in ("session-init", "btc-demo", "usdt-demo"):
+    for name in ("session-init",) + DEMO_SERVICES:
         assert "ports" not in services[name]
 
     assert set(model["networks"]) == {"limit-order-book-internal"}
@@ -395,6 +418,18 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
             (ROOT / "runtime/state", "/app/runtime/state", False),
         ],
         "usdt-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "eth-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "xaut-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "trx-demo": [
             (ROOT / "runtime/results", "/app/runtime/results", False),
             (ROOT / "runtime/state", "/app/runtime/state", False),
         ],
@@ -420,6 +455,9 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
         "session-init": (0.25, 64, 64, "no", None, "10s", "5s", "2s"),
         "btc-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
         "usdt-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "eth-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "xaut-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "trx-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
         "dashboard": (0.5, 192, 128, "unless-stopped", "20s", "30s", "10s", "20s"),
         "admin": (0.5, 192, 128, "unless-stopped", "20s", "30s", "10s", "20s"),
     }

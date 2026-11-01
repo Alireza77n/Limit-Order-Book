@@ -456,3 +456,33 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         output_csv=os.path.join(RESULTS_DIR, "usdt_track.csv"),
     ),
 }
+
+
+def _market_profile(code: str, *, order_size: float, inv_max: float, time_step: int) -> Dict[str, Any]:
+    """A profile for one more IRT market, built from the USDT profile's
+    strategy settings (the same defaults for every algorithm) with only the
+    market identity and the size figures changed. order_size and inv_max are
+    in the market's own coin; they match the USDT and BTC defaults in rial
+    terms (about 3 million rial per order, about 100 million rial of
+    inventory at the 1 November 2026 prices). The Demo overlay
+    (demo_config_<pair>.json) sizes the demo lanes on top of this."""
+    profile = dict(TRADING_PROFILES["usdt"])
+    profile.update(
+        algorithm_id=f"1{code}",
+        pair=f"{code.upper()}IRT",
+        currency_1=code,
+        inv_max=inv_max,
+        inv_initial=0.0,
+        order_size=order_size,
+        time_step=time_step,
+        output_csv=os.path.join(RESULTS_DIR, f"{code}_track.csv"),
+    )
+    return profile
+
+
+# Added 1 November 2026 (ADR-018): the three markets the demo lanes extend to.
+# Prices on that day: ETH about 6.2 billion rial, XAUT about 10.6 billion
+# rial, TRX about 850 thousand rial.
+TRADING_PROFILES["eth"] = _market_profile("eth", order_size=0.0005, inv_max=0.016, time_step=30)
+TRADING_PROFILES["xaut"] = _market_profile("xaut", order_size=0.0003, inv_max=0.0094, time_step=30)
+TRADING_PROFILES["trx"] = _market_profile("trx", order_size=3.5, inv_max=118.0, time_step=30)

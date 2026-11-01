@@ -190,7 +190,7 @@ decided:
 - **Inventory starts from a configurable value, not a hardcoded one.**
   `run.py --mode demo` sets `inv_initial` from each profile's own
   `demo_inv_initial` (an `MMConfig` field, default `0.0`) -- paper trading
-  starts flat by default, but BTC and USDT can each be tuned independently
+  starts flat by default, but every market can be tuned independently
   by editing `TRADING_PROFILES["btc"]["demo_inv_initial"]` /
   `TRADING_PROFILES["usdt"]["demo_inv_initial"]` **in `config.py`** (not
   `run.py` -- all per-pair values, including this one, live in one place).
@@ -458,7 +458,7 @@ existed, and as an honest limitations list:
 ## 6. Docker
 
 Docker Compose runs the whole operational Demo stack: one session
-initializer, continuous BTC and USDT paper workers, the read-only Dashboard,
+initializer, one continuous paper worker per market (btc, usdt, eth, xaut, trx), the read-only Dashboard,
 and the authenticated Admin panel. All services use the root `Dockerfile`.
 The web services receive the results tree read-only; Admin has one additional
 narrow writable mount for its control-command queue.

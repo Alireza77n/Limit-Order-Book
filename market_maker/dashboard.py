@@ -83,7 +83,7 @@ def _build_tracks() -> Dict[str, Dict[str, Any]]:
     time, each with its own paper account), the two lanes side by side, and
     the history of the single-algorithm demo worker (until 20 October 2026)."""
     tracks: Dict[str, Dict[str, Any]] = {}
-    for pair in ("btc", "usdt"):
+    for pair in TRADING_PROFILES:
         name = pair.upper()
         tracks[f"{pair}_real"] = {
             "label": f"{name} — Live Forward Test",

@@ -1,4 +1,4 @@
-# Runs both currency pairs in demo (paper-trading) mode plus the history
+# Runs every market (btc, usdt, eth, xaut, trx) in demo (paper-trading) mode plus the history
 # dashboard and the admin control panel, all sharing one results/ volume so
 # the dashboard/admin see both bots' live output. See usage.md §7 for the
 # full walkthrough.
@@ -23,7 +23,7 @@ services:
   session-init:
     build: .
     command:
-      ["python", "session.py", "stack-init", "--path", "/app/market_maker/results/stack_session.json", "--worker-lock", "/app/market_maker/results/.worker_btcirt.lock", "--worker-lock", "/app/market_maker/results/.worker_usdtirt.lock"]
+      ["python", "session.py", "stack-init", "--path", "/app/market_maker/results/stack_session.json", "--worker-lock", "/app/market_maker/results/.worker_btcirt.lock", "--worker-lock", "/app/market_maker/results/.worker_usdtirt.lock", "--worker-lock", "/app/market_maker/results/.worker_ethirt.lock", "--worker-lock", "/app/market_maker/results/.worker_xautirt.lock", "--worker-lock", "/app/market_maker/results/.worker_trxirt.lock"]
     volumes:
       - ./market_maker/results:/app/market_maker/results
     restart: "no"
@@ -52,6 +52,69 @@ services:
   usdt-demo:
     build: .
     command: ["python", "run.py", "--profile", "usdt", "--mode", "demo", "--continuous"]
+    env_file:
+      - path: market_maker/.env
+        required: false
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  eth-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "eth", "--mode", "demo", "--continuous"]
+    env_file:
+      - path: market_maker/.env
+        required: false
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  xaut-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "xaut", "--mode", "demo", "--continuous"]
+    env_file:
+      - path: market_maker/.env
+        required: false
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  trx-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "trx", "--mode", "demo", "--continuous"]
     env_file:
       - path: market_maker/.env
         required: false

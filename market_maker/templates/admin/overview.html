@@ -22,11 +22,12 @@
       </div>
     </div>
   </div>
+  {% for pair in pairs %}
   <div class="card">
     <div class="card-body">
-      <div class="kv-label">BTC Worker</div>
+      <div class="kv-label">{{ pair.upper() }} Worker</div>
       <div class="kv-value">
-        {% if workers.btc %}
+        {% if workers[pair] %}
           <span class="status-badge status-running">Running</span>
         {% else %}
           <span class="status-badge status-stopped">Stopped</span>
@@ -34,18 +35,7 @@
       </div>
     </div>
   </div>
-  <div class="card">
-    <div class="card-body">
-      <div class="kv-label">USDT Worker</div>
-      <div class="kv-value">
-        {% if workers.usdt %}
-          <span class="status-badge status-running">Running</span>
-        {% else %}
-          <span class="status-badge status-stopped">Stopped</span>
-        {% endif %}
-      </div>
-    </div>
-  </div>
+  {% endfor %}
 </div>
 
 <div class="card mb-lg">
@@ -57,12 +47,12 @@
     <div class="table-wrapper mt-md">
       <table class="table" aria-label="Algorithm of each pair">
         <thead>
-          <tr><th>Runs now</th><th>BTCIRT</th><th>USDTIRT</th></tr>
+          <tr><th>Runs now</th>{% for pair in pairs %}<th>{{ pair_symbols[pair] }}</th>{% endfor %}</tr>
         </thead>
         <tbody>
           <tr>
             <td>Demo lanes on</td>
-            {% for pair in ['btc', 'usdt'] %}
+            {% for pair in pairs %}
             <td>
               {% if algorithms.demo[pair] is none %}<span class="status-badge algo-name" data-demo-algorithm="{{ pair }}:unknown">unavailable</span>
               {% elif not algorithms.demo[pair] %}<span class="status-badge status-stopped" data-demo-algorithm="{{ pair }}:none">none</span>
@@ -72,7 +62,7 @@
           </tr>
           <tr>
             <td>Live, next start</td>
-            {% for pair in ['btc', 'usdt'] %}
+            {% for pair in pairs %}
             <td><span class="status-badge algo-name" data-live-algorithm="{{ pair }}:{{ algorithms.live[pair] or 'unknown' }}">{{ algorithm_labels.get(algorithms.live[pair], algorithms.live[pair] or "unavailable") }}</span></td>
             {% endfor %}
           </tr>
@@ -95,18 +85,18 @@
       {% endif %}
       Forward workers use separate controls, configuration, locks, and results.
     </p>
-    <div class="grid grid-2">
-      <div><strong>BTC/IRT:</strong>
-        {% if forward_workers.btc %}<span class="status-badge status-running">Running</span>{% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
+    <div class="grid grid-3">
+      {% for pair in pairs %}
+      <div><strong>{{ pair.upper() }}/IRT:</strong>
+        {% if forward_workers[pair] %}<span class="status-badge status-running">Running</span>{% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
       </div>
-      <div><strong>USDT/IRT:</strong>
-        {% if forward_workers.usdt %}<span class="status-badge status-running">Running</span>{% else %}<span class="status-badge status-stopped">Stopped</span>{% endif %}
-      </div>
+      {% endfor %}
     </div>
     <div class="btn-group" style="margin-top: var(--spacing-md);">
       <a href="{{ url_for('admin_forward_page') }}" class="btn btn-primary">Live Forward Controls</a>
-      <a href="{{ url_for('admin_forward_config', pair='btc') }}" class="btn btn-secondary">BTC Live Config</a>
-      <a href="{{ url_for('admin_forward_config', pair='usdt') }}" class="btn btn-secondary">USDT Live Config</a>
+      {% for pair in pairs %}
+      <a href="{{ url_for('admin_forward_config', pair=pair) }}" class="btn btn-secondary">{{ pair.upper() }} Live Config</a>
+      {% endfor %}
     </div>
   </div>
 </div>
@@ -162,8 +152,9 @@
       <div class="btn-group" style="flex-direction: column; gap: var(--spacing-sm);">
         <a href="{{ url_for('admin_workers_page') }}" class="btn btn-primary">Worker Controls</a>
         <a href="{{ url_for('admin_forward_page') }}" class="btn btn-secondary">Live Forward Test</a>
-        <a href="{{ url_for('admin_config', pair='btc') }}" class="btn btn-secondary">Configure BTC</a>
-        <a href="{{ url_for('admin_config', pair='usdt') }}" class="btn btn-secondary">Configure USDT</a>
+        {% for pair in pairs %}
+        <a href="{{ url_for('admin_config', pair=pair) }}" class="btn btn-secondary">Configure {{ pair.upper() }}</a>
+        {% endfor %}
         <a href="{{ url_for('admin_backups') }}" class="btn btn-secondary">Backups</a>
         <a href="{{ url_for('admin_recover') }}" class="btn btn-secondary">Recovery</a>
       </div>

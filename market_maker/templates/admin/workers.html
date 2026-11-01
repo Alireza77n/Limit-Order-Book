@@ -8,8 +8,8 @@
     <h2>Worker Status</h2>
   </div>
   <div class="card-body">
-    <div class="grid grid-2">
-      {% for pair in ['btc', 'usdt'] %}
+    <div class="grid grid-3">
+      {% for pair in pairs %}
       <div class="card" style="margin-bottom: 0;">
         <div class="card-header">
           <h3 style="margin: 0; text-transform: uppercase;">{{ pair }}</h3>
@@ -58,25 +58,25 @@
 
 <div class="card mb-lg">
   <div class="card-header">
-    <h2>Both Workers</h2>
+    <h2>All Workers</h2>
   </div>
   <div class="card-body">
-    <p class="text-muted mb-md">Control both BTC and USDT workers simultaneously.</p>
+    <p class="text-muted mb-md">Control the demo workers of every market at once.</p>
     <div class="btn-group">
-      <form method="post" action="{{ url_for('admin_workers', action='start') }}" class="inline-form" data-confirm="Start both workers?">
+      <form method="post" action="{{ url_for('admin_workers', action='start') }}" class="inline-form" data-confirm="Start all workers?">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pair" value="both">
-        <button type="submit" class="btn btn-primary">Start Both</button>
+        <button type="submit" class="btn btn-primary">Start All</button>
       </form>
-      <form method="post" action="{{ url_for('admin_workers', action='stop') }}" class="inline-form" data-confirm="Stop both workers?">
+      <form method="post" action="{{ url_for('admin_workers', action='stop') }}" class="inline-form" data-confirm="Stop all workers?">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pair" value="both">
-        <button type="submit" class="btn btn-danger">Stop Both</button>
+        <button type="submit" class="btn btn-danger">Stop All</button>
       </form>
-      <form method="post" action="{{ url_for('admin_workers', action='restart') }}" class="inline-form" data-confirm="Restart both workers?">
+      <form method="post" action="{{ url_for('admin_workers', action='restart') }}" class="inline-form" data-confirm="Restart all workers?">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pair" value="both">
-        <button type="submit" class="btn btn-warning">Restart Both</button>
+        <button type="submit" class="btn btn-warning">Restart All</button>
       </form>
     </div>
   </div>
@@ -89,20 +89,17 @@
   <div class="card-body">
     <p class="text-muted mb-md">Cancel active paper orders for selected pair(s). Only works if worker is running.</p>
     <div class="btn-group">
-      <form method="post" action="{{ url_for('admin_cancel_orders') }}" class="inline-form" data-confirm="Cancel BTC paper orders?">
+      {% for pair in pairs %}
+      <form method="post" action="{{ url_for('admin_cancel_orders') }}" class="inline-form" data-confirm="Cancel {{ pair.upper() }} paper orders?">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="pair" value="btc">
-        <button type="submit" class="btn btn-secondary" {% if not workers.btc %}disabled{% endif %}>Cancel BTC Orders</button>
+        <input type="hidden" name="pair" value="{{ pair }}">
+        <button type="submit" class="btn btn-secondary" {% if not workers[pair] %}disabled{% endif %}>Cancel {{ pair.upper() }} Orders</button>
       </form>
-      <form method="post" action="{{ url_for('admin_cancel_orders') }}" class="inline-form" data-confirm="Cancel USDT paper orders?">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <input type="hidden" name="pair" value="usdt">
-        <button type="submit" class="btn btn-secondary" {% if not workers.usdt %}disabled{% endif %}>Cancel USDT Orders</button>
-      </form>
-      <form method="post" action="{{ url_for('admin_cancel_orders') }}" class="inline-form" data-confirm="Cancel all paper orders for both pairs?">
+      {% endfor %}
+      <form method="post" action="{{ url_for('admin_cancel_orders') }}" class="inline-form" data-confirm="Cancel all paper orders of every market?">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="pair" value="both">
-        <button type="submit" class="btn btn-secondary" {% if not (workers.btc or workers.usdt) %}disabled{% endif %}>Cancel Both</button>
+        <button type="submit" class="btn btn-secondary" {% if not workers.values()|select|list %}disabled{% endif %}>Cancel All</button>
       </form>
     </div>
   </div>

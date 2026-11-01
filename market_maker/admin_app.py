@@ -67,8 +67,12 @@ from validation.validation_engine import create_validation_engine
 from validation.reports import generate_validation_report, format_metric_card
 
 SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
-PAIRS = ("btc", "usdt")
-PAIR_LOCK_SUFFIX = {"btc": "btcirt", "usdt": "usdtirt"}
+# Every market in config.TRADING_PROFILES, in its order (btc, usdt, eth, xaut, trx
+# since 1 November 2026); the lock suffix is the symbol run.py leases on.
+PAIRS = tuple(TRADING_PROFILES)
+PAIR_LOCK_SUFFIX = {pair: str(TRADING_PROFILES[pair]["pair"]).lower() for pair in PAIRS}
+PAIR_CURRENCY = {pair: str(TRADING_PROFILES[pair]["currency_1"]) for pair in PAIRS}
+WALLET_CURRENCIES = ("rls",) + tuple(dict.fromkeys(PAIR_CURRENCY.values()))
 
 
 def create_app(config: Optional[dict] = None) -> Flask:
@@ -94,6 +98,16 @@ def create_app(config: Optional[dict] = None) -> Flask:
     app.config.update(cfg)
     app.secret_key = cfg["SECRET_KEY"]
     app.permanent_session_lifetime = SESSION_IDLE_TIMEOUT
+
+    @app.context_processor
+    def _pairs_for_templates():
+        # The templates loop over the markets instead of naming btc and usdt.
+        return {
+            "pairs": list(PAIRS),
+            "pair_symbols": {pair: str(TRADING_PROFILES[pair]["pair"]) for pair in PAIRS},
+            "pair_currencies": PAIR_CURRENCY,
+            "wallet_currencies": WALLET_CURRENCIES,
+        }
 
     _register_auth(app)
     _register_routes(app)
@@ -264,6 +278,9 @@ def read_forward_wallet_snapshot(app: Flask, pair: str):
     if not isinstance(detail, dict) or not isinstance(detail.get("balances"), dict):
         return None, "The wallet agent returned an invalid balance snapshot."
     balances = detail["balances"]
+    # The cash wallet and the two original markets must be present; a wallet
+    # the forward agent does not read yet (a market added later) is shown as
+    # unavailable rather than failing the whole snapshot.
     if any(
         currency not in balances
         or isinstance(balances[currency], bool)
@@ -271,6 +288,10 @@ def read_forward_wallet_snapshot(app: Flask, pair: str):
         for currency in ("rls", "btc", "usdt")
     ):
         return None, "The wallet agent returned an incomplete balance snapshot."
+    for currency in WALLET_CURRENCIES:
+        value = balances.get(currency)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            balances[currency] = None
     return detail, None
 
 
@@ -335,8 +356,7 @@ def _worker_running(app: Flask, pair: str) -> bool:
 
 
 def _forward_worker_running(app: Flask, pair: str) -> bool:
-    suffix = {"btc": "btcirt", "usdt": "usdtirt"}[pair]
-    lock_path = Path(app.config["FORWARD_LOCK_DIR"]) / f".worker_live_{suffix}.lock"
+    lock_path = Path(app.config["FORWARD_LOCK_DIR"]) / f".worker_live_{PAIR_LOCK_SUFFIX[pair]}.lock"
     if not lock_path.exists():
         return False
     try:
@@ -1221,7 +1241,7 @@ def _register_routes(app: Flask) -> None:
         elif action not in ("activate", "deactivate") or (target == "live" and not enabled):
             problem = "Invalid action (expected activate, or deactivate for a demo lane)."
         elif pair not in PAIRS:
-            problem = "Invalid pair (expected btc or usdt)."
+            problem = "Invalid pair (expected one of " + ", ".join(PAIRS) + ")."
         elif target == "demo" and not _demo_managed(app):
             problem = "This panel does not manage the Demo stack."
         if problem:
@@ -1342,7 +1362,7 @@ def _register_routes(app: Flask) -> None:
             return _error_page(400, "Unknown forward-test action.")
         pair = request.form.get("pair")
         if pair not in PAIRS:
-            return _error_page(400, "Invalid pair (expected btc or usdt).")
+            return _error_page(400, "Invalid pair (expected one of " + ", ".join(PAIRS) + ").")
         if action == "start":
             if not app.config["FORWARD_TRADING_ENABLED"]:
                 return _error_page(503, "Live forward trading is disabled by FORWARD_TRADING_ENABLED.")
@@ -1827,6 +1847,7 @@ def _register_routes(app: Flask) -> None:
                 "admin/balances.html", balances=display_balances, is_starting=is_starting,
                 lane_balances=lane_balances, algorithm_labels=_algorithm_labels(),
                 fee_scopes=_fee_scopes_summary(app),
+                starting_cash={pair: TRADING_PROFILES[pair]["cash_initial"] for pair in PAIRS},
                 starting_cash_btc=TRADING_PROFILES["btc"]["cash_initial"],
                 starting_cash_usdt=TRADING_PROFILES["usdt"]["cash_initial"],
                 csrf_token=get_csrf_token(), session_id=_session_id(app),
@@ -1875,7 +1896,7 @@ def _register_routes(app: Flask) -> None:
         """API endpoint for validation metrics.
 
         Query params:
-            - pair: btc or usdt (default: btc)
+            - pair: one of the markets (btc, usdt, eth, xaut, trx; default: btc)
             - session: session_id or "all" (default: current active session)
             - track: real or demo (default: demo)
             - risk_free_rate: annual risk-free rate, decimal (default: 0.0)

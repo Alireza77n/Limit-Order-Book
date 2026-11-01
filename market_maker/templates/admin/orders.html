@@ -17,8 +17,9 @@
   <div class="card-header d-flex justify-between align-center flex-wrap gap-sm">
     <h2>{% if view == 'decisions' %}Paper Orders &amp; Round Decisions{% else %}Paper Orders{% endif %}</h2>
     <div class="btn-group">
-      <a href="{{ url_for('admin_orders', pair='btc', view=view) }}" class="btn {% if selected_pair == 'btc' %}btn-primary{% else %}btn-secondary{% endif %}">BTC</a>
-      <a href="{{ url_for('admin_orders', pair='usdt', view=view) }}" class="btn {% if selected_pair == 'usdt' %}btn-primary{% else %}btn-secondary{% endif %}">USDT</a>
+      {% for pair in pairs %}
+      <a href="{{ url_for('admin_orders', pair=pair, view=view) }}" class="btn {% if selected_pair == pair %}btn-primary{% else %}btn-secondary{% endif %}">{{ pair.upper() }}</a>
+      {% endfor %}
     </div>
   </div>
   <div class="card-body">

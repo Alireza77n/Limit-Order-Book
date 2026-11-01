@@ -7,8 +7,8 @@ authority for the Demo stack: it polls `runtime/control/commands/`, matches
 each file's `action` against the fixed `HANDLERS` dict below, and writes a
 result file. No handler ever builds a shell string or argv from
 caller-supplied text -- worker actions are looked up in a hardcoded dict
-(`WORKER_ARGV`), and `pair` values are restricted to the closed set
-{"btc", "usdt"}.
+(`WORKER_ARGV`), and `pair` values are restricted to the closed set of
+markets in config.TRADING_PROFILES (btc, usdt, eth, xaut, trx).
 
 Not installed/deployed by this session -- see docs/deployment/ADMIN_PAGE.md.
 """
@@ -64,7 +64,7 @@ class WorkerStatusError(RuntimeError):
     """Worker liveness could not be established authoritatively."""
 
 
-PAIRS = ("btc", "usdt")
+PAIRS = tuple(TRADING_PROFILES)          # every market in config.TRADING_PROFILES
 COMPOSE_ARGV_PREFIX = [
     "docker", "compose", "-p", "limit-order-book",
     "-f", "deploy/docker-compose.production.yml",
@@ -74,11 +74,11 @@ LOCAL_COMPOSE_ARGV_PREFIX = [
     "docker", "compose", "-p", "limit-order-book",
     "-f", "docker-compose.yml",
 ]
-SERVICE_NAME = {"btc": "btc-demo", "usdt": "usdt-demo"}
+SERVICE_NAME = {pair: f"{pair}-demo" for pair in PAIRS}
 # Lock file suffix matches session.py/run.py: WorkerLease is created with
 # identity f"{cfg.pair}-demo" against lease_path .worker_<pair.lower()>.lock,
 # and cfg.pair is "BTCIRT"/"USDTIRT" (see config.TRADING_PROFILES).
-LOCK_SUFFIX = {"btc": "btcirt", "usdt": "usdtirt"}
+LOCK_SUFFIX = {pair: str(TRADING_PROFILES[pair]["pair"]).lower() for pair in PAIRS}
 
 # Fixed argv per (action, pair) -- 6 arrays total, no string interpolation.
 WORKER_COMMAND_SUFFIX: Dict[str, List[str]] = {

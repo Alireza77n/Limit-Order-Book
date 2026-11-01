@@ -4,6 +4,43 @@ Newest first. Commit hashes are on this branch; it was cut from `MM_algo2` at `c
 23 October 2026, whose history (the 20 October engine rules, the demo lanes, the admin and
 dashboard work) it carries.
 
+## 2026-11-01 — three more markets for the demo lanes: ETH, XAUT, TRX
+
+### Changed
+- `config.py`: `TRADING_PROFILES` gains `eth`, `xaut`, `trx` (symbols ETHIRT, XAUTIRT, TRXIRT), built
+  by `config.py::_market_profile` from the USDT profile's strategy settings with their own
+  `order_size`, `inv_max` (about 3 million and 100 million rial at the 1 November prices) and
+  `time_step` 30 s. Nothing changes for btc and usdt.
+- Every list of pairs is derived from `TRADING_PROFILES` instead of naming btc and usdt:
+  `admin_app.py::PAIRS` / `PAIR_LOCK_SUFFIX` / `PAIR_CURRENCY` / `WALLET_CURRENCIES` (plus a
+  template context processor exposing `pairs`, `pair_symbols`, `pair_currencies`,
+  `wallet_currencies`), `control_queue.py::PAIRS`, `dashboard.py::_build_tracks`,
+  `deploy/control_agent.py::PAIRS` / `SERVICE_NAME` / `LOCK_SUFFIX`,
+  `deploy/forward_control_agent.py::PAIRS` / `WALLET_CURRENCIES`. The wallet snapshot tolerates a
+  market without a wallet on the account (value `null`, shown as "unavailable").
+- The admin templates loop over `pairs` (overview, workers, balances, forward, forward_config,
+  sessions, logs, orders, base navigation); "Both" became "All".
+- `docker-compose.yml` and `deploy/docker-compose.production.yml`: services `eth-demo`,
+  `xaut-demo`, `trx-demo` (copies of `usdt-demo`: 256 MiB, 0.5 CPU, `paper` profile) and three
+  more worker locks for `session-init`. `test_deployment_contract.py` checks the five demo
+  services; the memory budget assertion is 2048 MiB.
+
+### Reason
+The operator asked to extend the demo to three more markets; ETH, XAUT and TRX were chosen on
+the Nobitex 24 h statistics of 1 November 2026 (volume, spread wide enough for the algorithm's
+depth, no pump-driven volume): see ADR-018.
+
+### Result
+Five demo workers, each running the three lanes; the three new markets have no fill table yet
+(`fill_model.py` falls back to the formula with `fill_kappa` / `algo4_kappa` = 400 until the
+daily cron builds `fill_table_<symbol>.json` from their own rounds). Nothing live changes.
+
+### Files
+`market_maker/config.py`, `market_maker/admin_app.py`, `market_maker/control_queue.py`,
+`market_maker/dashboard.py`, `market_maker/templates/admin/*.html`, `deploy/control_agent.py`,
+`deploy/forward_control_agent.py`, `docker-compose.yml`, `deploy/docker-compose.production.yml`,
+`market_maker/tests/test_deployment_contract.py`, docs.
+
 ## 2026-10-23 — the Config page reads the lane snapshots
 
 ### Changed

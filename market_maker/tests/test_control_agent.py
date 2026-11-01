@@ -72,20 +72,17 @@ def test_local_new_session_uses_compose_liveness_and_restarts_workers(tmp_path):
     result = ca.handle_new_session(paths, None, None, local_runner)
 
     assert result.ok is True
-    assert result.detail["restarted"] == ["btc", "usdt"]
-    assert calls[:2] == [
-        ca.LOCAL_COMPOSE_ARGV_PREFIX
-        + ["ps", "--status", "running", "--services", "btc-demo"],
-        ca.LOCAL_COMPOSE_ARGV_PREFIX
-        + ["ps", "--status", "running", "--services", "usdt-demo"],
+    assert result.detail["restarted"] == ["btc", "usdt", "eth", "xaut", "trx"]
+    services = [f"{pair}-demo" for pair in ca.PAIRS]
+    assert calls[:5] == [
+        ca.LOCAL_COMPOSE_ARGV_PREFIX + ["ps", "--status", "running", "--services", service]
+        for service in services
     ]
-    assert calls[2:] == [
-        ca.LOCAL_COMPOSE_ARGV_PREFIX + ["stop", "btc-demo"],
-        ca.LOCAL_COMPOSE_ARGV_PREFIX + ["stop", "usdt-demo"],
-        ca.LOCAL_COMPOSE_ARGV_PREFIX
-        + ["up", "-d", "--no-deps", "--no-recreate", "btc-demo"],
-        ca.LOCAL_COMPOSE_ARGV_PREFIX
-        + ["up", "-d", "--no-deps", "--no-recreate", "usdt-demo"],
+    assert calls[5:] == [
+        ca.LOCAL_COMPOSE_ARGV_PREFIX + ["stop", service] for service in services
+    ] + [
+        ca.LOCAL_COMPOSE_ARGV_PREFIX + ["up", "-d", "--no-deps", "--no-recreate", service]
+        for service in services
     ]
 
 
@@ -195,7 +192,7 @@ def test_resolve_worker_argv_fixed_dict_lookup():
 
 
 @pytest.mark.parametrize("action,pair", [
-    ("start_worker", "eth"),
+    ("start_worker", "doge"),
     ("delete_everything", "btc"),
     ("apply_config", "btc"),  # not a worker action
 ])
@@ -727,8 +724,8 @@ def test_destructive_action_restart_failure_is_reported_with_partial_state(
     assert result.detail["phase"] == "start"
     assert result.detail["pair"] == "btc"
     assert result.detail["action"] == "start_worker"
-    assert result.detail["stopped"] == ["btc", "usdt"]
-    assert result.detail["started"] == ["usdt"]
+    assert result.detail["stopped"] == ["btc", "usdt", "eth", "xaut", "trx"]
+    assert result.detail["started"] == ["usdt", "eth", "xaut", "trx"]
     assert result.detail["failures"] == [{
         "pair": "btc",
         "action": "start_worker",

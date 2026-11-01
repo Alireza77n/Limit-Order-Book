@@ -6,7 +6,8 @@ Stable facts for anyone (person or AI session) picking up this branch. History i
 
 ## What this is
 
-A market-making bot for Nobitex (BTC/IRT and USDT/IRT). Every round it reads the order book,
+A market-making bot for Nobitex: five IRT markets since 1 November 2026 (BTC, USDT, ETH, XAUT,
+TRX; `config.TRADING_PROFILES`, ADR-018). Every round it reads the order book,
 lets the chosen algorithm pick a bid and an ask, sizes them by inventory and rests them as limit
 orders. It is judged on a demo (paper trading, real market data) before real money. **This branch
 runs and documents MM_algo3**: a market maker with a mean-reverting price signal and quotes from

@@ -21,7 +21,7 @@ def test_submit_command_rejects_unknown_action(tmp_path):
 
 def test_submit_command_rejects_bad_pair(tmp_path):
     with pytest.raises(QueueValidationError):
-        submit_command(tmp_path, "start_worker", pair="eth", requested_by="admin")
+        submit_command(tmp_path, "start_worker", pair="doge", requested_by="admin")
 
 
 def test_submit_command_rejects_missing_pair_for_pair_action(tmp_path):

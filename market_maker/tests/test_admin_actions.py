@@ -109,7 +109,7 @@ def test_pair_both_enqueues_both_pairs(client, app, fake_agent):
     assert response.status_code == 200
     written = _commands_written(app)
     pairs = sorted(c["pair"] for c in written)
-    assert pairs == ["btc", "usdt"]
+    assert pairs == sorted(["btc", "usdt", "eth", "xaut", "trx"])      # "both" means every market
     assert all(c["action"] == "start_worker" for c in written)
 
 
@@ -125,7 +125,7 @@ def test_single_pair_enqueues_one_command(client, app, fake_agent):
 
 def test_invalid_pair_rejected(client, app, fake_agent):
     token = _login(client)
-    response = client.post("/admin/workers/stop", data={"pair": "eth", "csrf_token": token})
+    response = client.post("/admin/workers/stop", data={"pair": "doge", "csrf_token": token})
     assert response.status_code == 400
     assert _commands_written(app) == []
 
@@ -535,7 +535,7 @@ def test_one_audit_entry_per_completed_action(client, app, fake_agent):
     token = _login(client)
     client.post("/admin/workers/start", data={"pair": "both", "csrf_token": token})
     audit_lines = (Path(app.config["CONTROL_DIR"]) / "audit.log").read_text().splitlines()
-    assert len(audit_lines) == 2  # one per pair-action completed
+    assert len(audit_lines) == 5  # one per pair-action completed (five markets)
 
 
 def test_concurrent_request_while_locked_gets_in_progress_response(client, app, fake_agent):
@@ -570,7 +570,7 @@ def test_status_route_reports_session_and_workers(client, app):
     assert response.status_code == 200
     body = response.get_json()
     assert body["session_id"] == "demo-123"
-    assert body["workers"] == {"btc": False, "usdt": False}
+    assert body["workers"] == {pair: False for pair in ["btc", "usdt", "eth", "xaut", "trx"]}
 
 
 def test_reset_rejected_without_exact_confirm(client, app, fake_agent):

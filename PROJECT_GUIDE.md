@@ -28,8 +28,9 @@ Contents
 
 ## 1. What the project is
 
-A market-making bot for the Nobitex exchange. It trades two pairs, BTC/IRT and
-USDT/IRT. Every round it places one limit buy below the market and one limit
+A market-making bot for the Nobitex exchange. It trades five IRT markets: BTC and
+USDT since the start, ETH, XAUT (tokenised gold) and TRX since 1 November 2026
+(demo lanes only; ADR-018). Every round it places one limit buy below the market and one limit
 sell above it, and earns the difference when both fill.
 
 **The algorithm of this branch is MM_algo3**, which decides those two prices from a mean-reverting model of

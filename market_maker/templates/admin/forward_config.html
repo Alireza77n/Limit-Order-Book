@@ -12,16 +12,22 @@
     <section class="card mb-lg" aria-label="Current Nobitex wallet balances">
       <div class="card-header"><h3>Current Nobitex wallet balances</h3></div>
       <div class="card-body">
-        <p class="text-muted">Read-only balances from the main Nobitex account. RLS is the cash wallet for both IRT pairs. Inv Min and Inv Max below are strategy limits, not the current account inventory. Refresh this page to read balances again.</p>
+        <p class="text-muted">Read-only balances from the main Nobitex account. RLS is the cash wallet for every IRT market. Inv Min and Inv Max below are strategy limits, not the current account inventory. Refresh this page to read balances again.</p>
         {% if wallet_error %}
           <div class="flash flash-warning">Balances unavailable: {{ wallet_error }}</div>
         {% elif wallet_snapshot %}
           <div class="grid grid-3">
-            {% for currency, label in [('rls', 'Cash (RLS)'), ('btc', 'BTC inventory'), ('usdt', 'USDT inventory')] %}
+            {% for currency in wallet_currencies %}
+              {% set label = 'Cash (RLS)' if currency == 'rls' else currency.upper() ~ ' inventory' %}
               <div class="card">
                 <div class="card-body">
-                  <h4>{{ label }}{% if currency == pair %} · selected pair{% endif %}</h4>
-                  <p class="mono">{{ "{:,.8f}".format(wallet_snapshot["balances"][currency]).rstrip("0").rstrip(".") }} {{ currency.upper() }}</p>
+                  <h4>{{ label }}{% if currency == pair_currencies[pair] %} · selected pair{% endif %}</h4>
+                  {% set value = wallet_snapshot["balances"].get(currency) %}
+                  {% if value is none %}
+                  <p class="mono text-muted">unavailable</p>
+                  {% else %}
+                  <p class="mono">{{ "{:,.8f}".format(value).rstrip("0").rstrip(".") }} {{ currency.upper() }}</p>
+                  {% endif %}
                 </div>
               </div>
             {% endfor %}

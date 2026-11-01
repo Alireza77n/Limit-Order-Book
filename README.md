@@ -665,7 +665,7 @@ authenticated admin panel (`python admin_app.py`) adds worker, session, configur
 algorithm of each pair), backup and live-forward control — see usage.md §3 and
 `docs/deployment/ADMIN_PAGE.md`.
 
-`docker compose up -d --build --wait` (repo root) runs a shared session initializer, both pairs in continuous demo mode, the dashboard, and the authenticated Admin service, sharing bind-mounted runtime data. Admin mutations use the separate local host agent (`python3 deploy/control_agent.py --mode local`) rather than a Docker socket — see usage.md §6–7.
+`docker compose up -d --build --wait` (repo root) runs a shared session initializer, every market (btc, usdt, eth, xaut, trx) in continuous demo mode, the dashboard, and the authenticated Admin service, sharing bind-mounted runtime data. Admin mutations use the separate local host agent (`python3 deploy/control_agent.py --mode local`) rather than a Docker socket — see usage.md §6–7.
 
 ---
 

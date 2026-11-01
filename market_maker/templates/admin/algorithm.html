@@ -80,7 +80,7 @@
         </tbody>
       </table>
     </div>
-    <p class="text-muted mt-md">Every algorithm switched on runs at the same time in its own lane of the pair's demo worker, with its own paper account and its own results (dashboard track "Demo {{ name }}"). Switching one on or off never touches the others. All lanes and both pairs share the one Demo session; the dashboard labels a session with its algorithm, e.g. <code>{{ name }} · {{ state.demo_session_id or "demo-…" }}</code>. Start a new demo session to give every lane a fresh paper account from the starting balances; the old session stays in the history.</p>
+    <p class="text-muted mt-md">Every algorithm switched on runs at the same time in its own lane of the pair's demo worker, with its own paper account and its own results (dashboard track "Demo {{ name }}"). Switching one on or off never touches the others. All lanes and every market share the one Demo session; the dashboard labels a session with its algorithm, e.g. <code>{{ name }} · {{ state.demo_session_id or "demo-…" }}</code>. Start a new demo session to give every lane a fresh paper account from the starting balances; the old session stays in the history.</p>
     <form method="post" action="{{ url_for('admin_new_session') }}" class="inline-form"
           data-confirm="Start a new demo session? Running demo workers restart in it and each pair's paper account starts again from its starting balances.">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -160,7 +160,7 @@
         </tbody>
       </table>
     </div>
-    <p class="text-muted mt-md">Activate saves the algorithm in that pair's live configuration (the <code>Algorithm</code> field of Live Config BTC / Live Config USDT); nothing is started or stopped on this page. A stopped worker uses it when it is started on Live Forward Test, which places real orders and needs the typed confirmation there. A running worker keeps the algorithm it started with until it is stopped and started again. Every start of a live worker is a new live session.</p>
+    <p class="text-muted mt-md">Activate saves the algorithm in that pair's live configuration (the <code>Algorithm</code> field of that pair's Live Config page); nothing is started or stopped on this page. A stopped worker uses it when it is started on Live Forward Test, which places real orders and needs the typed confirmation there. A running worker keeps the algorithm it started with until it is stopped and started again. Every start of a live worker is a new live session.</p>
   </div>
 </section>
 {% endif %}

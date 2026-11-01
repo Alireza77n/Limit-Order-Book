@@ -7,8 +7,9 @@
   <div class="card-header d-flex justify-between align-center flex-wrap gap-sm">
     <h2>Application Logs</h2>
     <div class="btn-group">
-      <a href="{{ url_for('admin_logs', pair='btc') }}" class="btn {% if selected_pair == 'btc' %}btn-primary{% else %}btn-secondary{% endif %}">BTC</a>
-      <a href="{{ url_for('admin_logs', pair='usdt') }}" class="btn {% if selected_pair == 'usdt' %}btn-primary{% else %}btn-secondary{% endif %}">USDT</a>
+      {% for pair in pairs %}
+      <a href="{{ url_for('admin_logs', pair=pair) }}" class="btn {% if selected_pair == pair %}btn-primary{% else %}btn-secondary{% endif %}">{{ pair.upper() }}</a>
+      {% endfor %}
     </div>
   </div>
   <div class="card-body">

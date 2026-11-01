@@ -40,6 +40,12 @@ services:
       - /app/runtime/state/.worker_btcirt.lock
       - --worker-lock
       - /app/runtime/state/.worker_usdtirt.lock
+      - --worker-lock
+      - /app/runtime/state/.worker_ethirt.lock
+      - --worker-lock
+      - /app/runtime/state/.worker_xautirt.lock
+      - --worker-lock
+      - /app/runtime/state/.worker_trxirt.lock
     volumes:
       - ../runtime/state:/app/runtime/state
     restart: "no"
@@ -165,6 +171,174 @@ services:
           from session import load_stack_session
 
           lock_file = Path("/app/runtime/state/.worker_usdtirt.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+          pids: 128
+
+  eth-demo:
+    <<: *runtime-common
+    container_name: lob-eth-demo
+    profiles: ["paper"]
+    command:
+      - python
+      - demo_entrypoint.py
+      - python
+      - run.py
+      - --profile
+      - eth
+      - --mode
+      - demo
+      - --continuous
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../runtime/results:/app/runtime/results
+      - ../runtime/state:/app/runtime/state
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 128
+    cpus: "0.50"
+    # Added 1 November 2026 (ADR-018); sized like the USDT worker.
+    mem_limit: 256m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_ethirt.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+          pids: 128
+
+  xaut-demo:
+    <<: *runtime-common
+    container_name: lob-xaut-demo
+    profiles: ["paper"]
+    command:
+      - python
+      - demo_entrypoint.py
+      - python
+      - run.py
+      - --profile
+      - xaut
+      - --mode
+      - demo
+      - --continuous
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../runtime/results:/app/runtime/results
+      - ../runtime/state:/app/runtime/state
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 128
+    cpus: "0.50"
+    # Added 1 November 2026 (ADR-018); sized like the USDT worker.
+    mem_limit: 256m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_xautirt.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+          pids: 128
+
+  trx-demo:
+    <<: *runtime-common
+    container_name: lob-trx-demo
+    profiles: ["paper"]
+    command:
+      - python
+      - demo_entrypoint.py
+      - python
+      - run.py
+      - --profile
+      - trx
+      - --mode
+      - demo
+      - --continuous
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../runtime/results:/app/runtime/results
+      - ../runtime/state:/app/runtime/state
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 128
+    cpus: "0.50"
+    # Added 1 November 2026 (ADR-018); sized like the USDT worker.
+    mem_limit: 256m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_trxirt.lock").open("a+")
           try:
               fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
           except BlockingIOError:

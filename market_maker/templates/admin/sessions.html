@@ -28,7 +28,7 @@
          to avoid nesting a form inside each table row's own delete form. #}
       <form id="bulk-delete-sessions" method="post"
             action="{{ url_for('admin_sessions_delete_bulk') }}"
-            data-confirm="Permanently delete the selected sessions? This removes their ledgers, round history, and fee contribution for both pairs. A backup is taken first.">
+            data-confirm="Permanently delete the selected sessions? This removes their ledgers, round history, and fee contribution for every market. A backup is taken first.">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <input type="hidden" name="confirm" value="DELETE">
       </form>
@@ -51,10 +51,10 @@
               <th></th>
               <th>Session ID</th>
               <th>Status</th>
-              <th>BTC Rounds</th>
-              <th>BTC Last Activity</th>
-              <th>USDT Rounds</th>
-              <th>USDT Last Activity</th>
+              {% for pair in pairs %}
+              <th>{{ pair.upper() }} Rounds</th>
+              <th>{{ pair.upper() }} Last Activity</th>
+              {% endfor %}
               <th>Action</th>
             </tr>
           </thead>
@@ -76,17 +76,17 @@
                     <span class="status-badge status-stopped">Closed</span>
                   {% endif %}
                 </td>
-                <td class="mono text-right">{{ cell(s.pairs.btc.rounds if s.pairs.btc else none) }}</td>
-                <td class="mono">{{ cell(s.pairs.btc.last_timestamp if s.pairs.btc else none) }}</td>
-                <td class="mono text-right">{{ cell(s.pairs.usdt.rounds if s.pairs.usdt else none) }}</td>
-                <td class="mono">{{ cell(s.pairs.usdt.last_timestamp if s.pairs.usdt else none) }}</td>
+                {% for pair in pairs %}
+                <td class="mono text-right">{{ cell(s.pairs[pair].rounds if s.pairs[pair] else none) }}</td>
+                <td class="mono">{{ cell(s.pairs[pair].last_timestamp if s.pairs[pair] else none) }}</td>
+                {% endfor %}
                 <td>
                   {% if s.is_active %}
                     <span class="text-muted">Active — cannot delete</span>
                   {% else %}
                     <form method="post" action="{{ url_for('admin_sessions_delete', session_id=s.session_id) }}"
                           class="inline-form"
-                          data-confirm="Permanently delete session {{ s.session_id }}? This removes its ledgers, round history, and fee contribution for both pairs. A backup is taken first.">
+                          data-confirm="Permanently delete session {{ s.session_id }}? This removes its ledgers, round history, and fee contribution for every market. A backup is taken first.">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                       <input type="hidden" name="confirm" value="DELETE">
                       <button type="submit" class="btn btn-danger btn-sm">Delete</button>
@@ -125,10 +125,10 @@
               <th>Session ID</th>
               <th>Started</th>
               <th>Status</th>
-              <th>BTC Rounds</th>
-              <th>BTC Last Activity</th>
-              <th>USDT Rounds</th>
-              <th>USDT Last Activity</th>
+              {% for pair in pairs %}
+              <th>{{ pair.upper() }} Rounds</th>
+              <th>{{ pair.upper() }} Last Activity</th>
+              {% endfor %}
               <th>Action</th>
             </tr>
           </thead>
@@ -144,10 +144,10 @@
                     <span class="status-badge status-stopped">Closed</span>
                   {% endif %}
                 </td>
-                <td class="mono text-right">{{ cell(s.pairs.btc.rounds if s.pairs.btc else none) }}</td>
-                <td class="mono">{{ cell(s.pairs.btc.last_timestamp if s.pairs.btc else none) }}</td>
-                <td class="mono text-right">{{ cell(s.pairs.usdt.rounds if s.pairs.usdt else none) }}</td>
-                <td class="mono">{{ cell(s.pairs.usdt.last_timestamp if s.pairs.usdt else none) }}</td>
+                {% for pair in pairs %}
+                <td class="mono text-right">{{ cell(s.pairs[pair].rounds if s.pairs[pair] else none) }}</td>
+                <td class="mono">{{ cell(s.pairs[pair].last_timestamp if s.pairs[pair] else none) }}</td>
+                {% endfor %}
                 <td>
                   {% if s.is_active %}
                     <span class="text-muted">Active — cannot delete</span>
@@ -156,7 +156,7 @@
                   {% else %}
                     <form method="post" action="{{ url_for('admin_forward_sessions_delete', session_id=s.session_id) }}"
                           class="inline-form"
-                          data-confirm="Permanently delete live session {{ s.session_id }} from the real-money round history of both pairs? The files are backed up first.">
+                          data-confirm="Permanently delete live session {{ s.session_id }} from the real-money round history of every market? The files are backed up first.">
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                       <input type="hidden" name="confirm" value="DELETE">
                       <button type="submit" class="btn btn-danger btn-sm">Delete</button>

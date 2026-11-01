@@ -44,7 +44,16 @@ PAIR_ACTIONS = (frozenset({
     "start_worker", "stop_worker", "restart_worker",
     "apply_config", "rollback_config", "cancel_orders",
 }) | FORWARD_ACTIONS) - FORWARD_STACK_ACTIONS
-PAIRS = frozenset({"btc", "usdt"})
+
+
+def _profile_pairs():
+    # Every market in config.TRADING_PROFILES (imported here so the queue
+    # module stays usable from the control agents without a package import).
+    from config import TRADING_PROFILES
+    return frozenset(TRADING_PROFILES)
+
+
+PAIRS = _profile_pairs()
 
 
 class QueueValidationError(ValueError):

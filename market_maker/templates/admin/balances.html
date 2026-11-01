@@ -3,8 +3,8 @@
 {% block title %}Balances & Performance{% endblock %}
 
 {% block content %}
-<div class="grid grid-2 mb-lg">
-  {% for pair in ['btc', 'usdt'] %}
+<div class="grid grid-3 mb-lg">
+  {% for pair in pairs %}
   <div class="card">
     <div class="card-header">
       <h2 style="margin: 0; text-transform: uppercase;">{{ pair }} Balances</h2>
@@ -16,7 +16,7 @@
       {% set account = balances[pair] %}
       <div class="kv-list">
         <div class="kv-item">
-          <span class="kv-label">Inventory ({{ 'BTC' if pair == 'btc' else 'USDT' }})</span>
+          <span class="kv-label">Inventory ({{ pair_currencies[pair].upper() }})</span>
           <span class="kv-value mono">{{ '%.8f'|format(account.inventory or 0) }}</span>
         </div>
         <div class="kv-item">
@@ -54,7 +54,7 @@
           <tr><th>Pair</th><th>Algorithm</th><th>Inventory</th><th>Available Cash (IRT)</th><th>Valuation Price (IRT)</th><th>Fees (IRT)</th><th>Portfolio Wealth (IRT)</th></tr>
         </thead>
         <tbody>
-          {% for pair in ['btc', 'usdt'] %}{% for lane, account in lane_balances[pair].items() %}
+          {% for pair in pairs %}{% for lane, account in lane_balances[pair].items() %}
           <tr data-lane-balance="{{ pair }}:{{ lane }}">
             <td><strong>{{ pair.upper() }}</strong></td>
             <td><span class="status-badge algo-name">{{ algorithm_labels.get(lane, lane) }}</span></td>
@@ -115,25 +115,18 @@
   <div class="card-body">
     <p class="text-muted mb-md">Calculated from paper ledger data only. Does not include unrealized PnL or mark-to-market.</p>
     {% if balances.btc and balances.usdt %}
-      <div class="grid grid-2">
+      <div class="grid grid-3">
+        {% for pair in pairs %}{% if balances[pair] %}
         <div>
-          <h4>BTC</h4>
+          <h4>{{ pair.upper() }}</h4>
           <div class="kv-list">
-            <div class="kv-item"><span class="kv-label">Starting Cash</span><span class="kv-value mono">{{ '%.2f'|format(starting_cash_btc or 0) }}</span></div>
-            <div class="kv-item"><span class="kv-label">Current Cash</span><span class="kv-value mono">{{ '%.2f'|format(balances.btc.cash or 0) }}</span></div>
-            <div class="kv-item"><span class="kv-label">Current Inventory Value</span><span class="kv-value mono">{{ '%.2f'|format((balances.btc.inventory or 0) * (balances.btc.valuation_price or 0)) }}</span></div>
-            <div class="kv-item"><span class="kv-label">Total Fees Paid</span><span class="kv-value mono">{{ '%.2f'|format(balances.btc.fees_quote or 0) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Starting Cash</span><span class="kv-value mono">{{ '%.2f'|format(starting_cash[pair] or 0) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Current Cash</span><span class="kv-value mono">{{ '%.2f'|format(balances[pair].cash or 0) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Current Inventory Value</span><span class="kv-value mono">{{ '%.2f'|format((balances[pair].inventory or 0) * (balances[pair].valuation_price or 0)) }}</span></div>
+            <div class="kv-item"><span class="kv-label">Total Fees Paid</span><span class="kv-value mono">{{ '%.2f'|format(balances[pair].fees_quote or 0) }}</span></div>
           </div>
         </div>
-        <div>
-          <h4>USDT</h4>
-          <div class="kv-list">
-            <div class="kv-item"><span class="kv-label">Starting Cash</span><span class="kv-value mono">{{ '%.2f'|format(starting_cash_usdt or 0) }}</span></div>
-            <div class="kv-item"><span class="kv-label">Current Cash</span><span class="kv-value mono">{{ '%.2f'|format(balances.usdt.cash or 0) }}</span></div>
-            <div class="kv-item"><span class="kv-label">Current Inventory Value</span><span class="kv-value mono">{{ '%.2f'|format((balances.usdt.inventory or 0) * (balances.usdt.valuation_price or 0)) }}</span></div>
-            <div class="kv-item"><span class="kv-label">Total Fees Paid</span><span class="kv-value mono">{{ '%.2f'|format(balances.usdt.fees_quote or 0) }}</span></div>
-          </div>
-        </div>
+        {% endif %}{% endfor %}
       </div>
     {% else %}
       <div class="empty-state">Insufficient data for PnL calculation</div>

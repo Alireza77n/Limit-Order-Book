@@ -16,9 +16,9 @@
         {% with picker_id = 'forward' %}{% include "admin/_algorithm_picker.html" %}{% endwith %}
       </div>
     </section>
-    <div class="grid grid-2">
-      {% for pair in ['btc', 'usdt'] %}
-      {% set symbol = 'BTCIRT' if pair == 'btc' else 'USDTIRT' %}
+    <div class="grid grid-3">
+      {% for pair in pairs %}
+      {% set symbol = pair_symbols[pair] %}
       <section class="card" style="margin-bottom:0">
         <div class="card-header"><h3>{{ symbol }}</h3></div>
         <div class="card-body">
