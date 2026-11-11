@@ -235,7 +235,7 @@ $`\lvert V^b-V^a\rvert\le V^b+V^a`$, with equality exactly when $`V^b=0`$ or $`V
 If the top of the book holds little volume, its imbalance says little. With $`V_{\min}=n_V S`$:
 
 ```math
-\text{thin book}\iff V_{\min}>0\ \text{and}\ V^b+V^a<V_{\min}.
+\text{thin book}\iff V_{\min}>0\ \text{and}\ V^b+V^a < V_{\min}.
 ```
 
 On a thin book the strategy sets $`I=0`$ and starts the centre at the mid $`m`$ instead of the microprice.

@@ -71,7 +71,7 @@ Imbalance of the top $`k`$ levels and the microprice ($`b_0,a_0`$ best bid and a
 volumes, $`m`$ the mid, $`s`$ the spread):
 
 ```math
-I=\frac{V^b-V^a}{V^b+V^a},\qquad V^b=\sum_{i<k}\rho^{\,i}v^b_i,\qquad
+I=\frac{V^b-V^a}{V^b+V^a},\qquad V^b=\sum_{i < k}\rho^{\,i}v^b_i,\qquad
 p_{\mathrm{micro}}=\frac{a_0v^b_0+b_0v^a_0}{v^b_0+v^a_0}=m+\frac{s}{2}\,\frac{v^b_0-v^a_0}{v^b_0+v^a_0}.
 ```
 
