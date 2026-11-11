@@ -94,8 +94,8 @@ ROUND of a demo lane (engine.py SimpleMarketMaker._run_demo; live: SimpleMarketM
 ```math
 \begin{aligned}
 &\text{fit:} && S_{k+1} = a + b\,S_k + \varepsilon_k,\qquad \theta = -\frac{\ln b}{\Delta t},\qquad \mu = \frac{a}{1-b},\qquad t_{1/2} = \frac{\ln 2}{\theta}\\
-&\text{admissible:} && 0 < b < 1,\qquad \frac{b-1}{\operatorname{se}(b)} \le -2.86,\qquad t_{\min} \le t_{1/2} \le t_{\max}\\
-&\text{lean:} && m = \operatorname{clip}\Big(\frac{(\mu - S)(1 - e^{-\theta\tau})}{S},\ -L,\ L\Big)\quad\text{(0 when not admissible)}\\
+&\text{admissible:} && 0 < b < 1,\qquad \frac{b-1}{\mathrm{se}(b)} \le -2.86,\qquad t_{\min} \le t_{1/2} \le t_{\max}\\
+&\text{lean:} && m = \mathrm{clip}\Big(\frac{(\mu - S)(1 - e^{-\theta\tau})}{S},\ -L,\ L\Big)\quad\text{(0 when not admissible)}\\
 &\text{depths:} && \delta^{\pm} = \max\Big(\frac{\epsilon}{S},\ \frac1\kappa \pm m \mp \chi\,(2x-1) + \varrho\Big) + f\\
 &\text{prices:} && A = \big\lceil S(1+\delta^+)\big\rceil_\epsilon,\qquad B = \big\lfloor S(1-\delta^-)\big\rfloor_\epsilon\\
 &\text{fee bar:} && (1-f)^2\,\frac AB - 1 > r\ \Longleftrightarrow\ \frac AB > 1 + G,\qquad G = \frac{1+r}{(1-f)^2} - 1

@@ -191,7 +191,7 @@ $`\sigma^2\int_0^h e^{-2\theta v}dv = \sigma^2(1 - e^{-2\theta h})/(2\theta)`$. 
 ```math
 \mathbb{E}[S_{t+h}\mid S_t] = \mu + (S_t-\mu)\,e^{-\theta h},\qquad
 \mathbb{E}[S_{t+h}-S_t\mid S_t] = (\mu - S_t)\big(1-e^{-\theta h}\big),\qquad
-\operatorname{Var}[S_{t+h}\mid S_t] = \frac{\sigma^2}{2\theta}\big(1-e^{-2\theta h}\big).
+\mathrm{Var}[S_{t+h}\mid S_t] = \frac{\sigma^2}{2\theta}\big(1-e^{-2\theta h}\big).
 ```
 
 The expected distance to the mean halves after the half-life $`t_{1/2} = \ln 2/\theta`$.
@@ -209,7 +209,7 @@ S_{k+1} = a + b\,S_k + \varepsilon_k,\qquad b = e^{-\theta\Delta t},\qquad a = \
 Inverting these three relations gives the model's parameters from the regression's:
 
 ```math
-\theta = -\frac{\ln b}{\Delta t},\qquad \mu = \frac{a}{1-b},\qquad \sigma^2 = \frac{2\theta}{1-b^2}\operatorname{Var}\varepsilon,\qquad
+\theta = -\frac{\ln b}{\Delta t},\qquad \mu = \frac{a}{1-b},\qquad \sigma^2 = \frac{2\theta}{1-b^2}\mathrm{Var}\,\varepsilon,\qquad
 t_{1/2} = \frac{\ln 2}{\theta} = -\frac{\Delta t\,\ln 2}{\ln b},
 ```
 
@@ -227,7 +227,7 @@ $`(S_k, S_{k+1})`$ and computes:
 S_{xx} = \sum_{k=1}^{m}(S_k-\bar x)^2,\qquad S_{xy} = \sum_{k=1}^{m}(S_k-\bar x)(S_{k+1}-\bar y),\\
 \hat b &= \frac{S_{xy}}{S_{xx}},\qquad \hat a = \bar y - \hat b\,\bar x,\qquad
 s_\varepsilon^2 = \frac{1}{m-2}\sum_{k=1}^{m}\big(S_{k+1}-\hat a-\hat b\,S_k\big)^2,\\
-\operatorname{se}(\hat b) &= \sqrt{s_\varepsilon^2/S_{xx}},\qquad t = \frac{\hat b - 1}{\operatorname{se}(\hat b)},\qquad
+\mathrm{se}(\hat b) &= \sqrt{s_\varepsilon^2/S_{xx}},\qquad t = \frac{\hat b - 1}{\mathrm{se}(\hat b)},\qquad
 \Delta t = \frac{t_n - t_1}{n-1},\\
 \hat\theta &= -\frac{\ln\hat b}{\Delta t},\qquad \hat\mu = \frac{\hat a}{1-\hat b},\qquad
 \hat t_{1/2} = \frac{\ln 2}{\hat\theta},\qquad \hat\sigma = s_\varepsilon\sqrt{\frac{2\hat\theta}{1-\hat b^2}} .
@@ -235,12 +235,12 @@ s_\varepsilon^2 = \frac{1}{m-2}\sum_{k=1}^{m}\big(S_{k+1}-\hat a-\hat b\,S_k\big
 ```
 
 $`\Delta t`$ is the mean spacing of the window. Round starts jitter, so the spacing is not exactly constant;
-the fit treats it as constant. When $`\operatorname{se}(\hat b) = 0`$ the code sets $`t = -\infty`$ if
+the fit treats it as constant. When $`\mathrm{se}(\hat b) = 0`$ the code sets $`t = -\infty`$ if
 $`\hat b < 1`$ and $`+\infty`$ otherwise.
 
 The statistic $`t`$ is also the Dickey–Fuller statistic. The regression
 $`\Delta S_k = a + \gamma S_k + \varepsilon_k`$ with $`\gamma = b - 1`$ has the same residuals and the same
-standard error, so $`t = \hat\gamma/\operatorname{se}(\hat\gamma)`$.
+standard error, so $`t = \hat\gamma/\mathrm{se}(\hat\gamma)`$.
 
 The fit returns early in three cases:
 
@@ -305,7 +305,7 @@ The horizon is $`\tau`$ = `algo4_horizon_seconds` when positive, else the order 
 on; otherwise $`m = 0`$. With $`L`$ = `algo4_lean_clip` (0.005):
 
 ```math
-m = \frac1S\,\operatorname{clip}\Big((\hat\mu - S)\big(1 - e^{-\hat\theta\tau}\big),\ -LS,\ LS\Big).
+m = \frac1S\,\mathrm{clip}\Big((\hat\mu - S)\big(1 - e^{-\hat\theta\tau}\big),\ -LS,\ LS\Big).
 ```
 
 By section 4.2, $`m`$ is the model's expected relative move of the mid over $`\tau`$:
@@ -540,7 +540,7 @@ For example, the USDT bid side reads $`\hat P`$ = 0.207 at 0.10 %, 0.134 at 0.15
 
 ### 6.2 The depths and the one-tick floor
 
-`Algo4Strategy.evaluate` sets, with $`s = \chi(2x-1)`$ and $`x = \operatorname{clip}\big((q - q_{\min})/(q_{\max} - q_{\min}), 0, 1\big)`$
+`Algo4Strategy.evaluate` sets, with $`s = \chi(2x-1)`$ and $`x = \mathrm{clip}\big((q - q_{\min})/(q_{\max} - q_{\min}), 0, 1\big)`$
 ($`x = \tfrac12`$ when the band is empty):
 
 ```math
@@ -611,12 +611,12 @@ $`\kappa`$ (section 10.2).
 ### 6.5 Hysteresis
 
 The strategy remembers the last pair it returned, $`(B_p, A_p)`$, and the time it was set. The requote band
-at a price $`P`$ is $`\operatorname{band}(P) = \max(\text{hysteresis ticks}\cdot\epsilon,\ \text{band fraction}\cdot P)`$,
+at a price $`P`$ is $`\mathrm{band}(P) = \max(\text{hysteresis ticks}\cdot\epsilon,\ \text{band fraction}\cdot P)`$,
 with `hysteresis_ticks` = 5 and `requote_band_perc` = 0.0003: 798 rial at a USDT price of 2,659,865. The
 previous pair is returned again (`selection reason` ends in `_kept`) when all of these hold:
 
-* $`\operatorname{band}(B_p) > 0`$;
-* $`\lvert B - B_p\rvert \le \operatorname{band}(B_p)`$ and $`\lvert A - A_p\rvert \le \operatorname{band}(A_p)`$;
+* $`\mathrm{band}(B_p) > 0`$;
+* $`\lvert B - B_p\rvert \le \mathrm{band}(B_p)`$ and $`\lvert A - A_p\rvert \le \mathrm{band}(A_p)`$;
 * the pair was set less than `refresh_seconds` (300) ago;
 * it still clears the bar: $`R_{\mathrm{net}}(B_p, A_p) > r`$.
 
@@ -643,7 +643,7 @@ Either setting at 0 switches the pause off. The strategy still computes and reco
 On a quote round the engine handles the sell side first, then the buy side:
 
 * a paused side has every resting order of that side cancelled;
-* on an active side, every resting order whose limit price is farther than $`\operatorname{band}(P)`$ from
+* on an active side, every resting order whose limit price is farther than $`\mathrm{band}(P)`$ from
   the new price $`P`$ is cancelled (`replaced`);
 * a resting order within the band is kept, and then no new order is placed on that side
   (`resting_order_kept`).
@@ -661,8 +661,8 @@ fill:
 * the sell side uses $`x_s`$, the band position of $`q`$ minus the locked sells.
 
 ```math
-Q^{\mathrm{buy}} = Q\cdot\operatorname{clip}\big(1 - k(2x_b - 1),\ \nu,\ 1 + k\big),\qquad
-Q^{\mathrm{sell}} = Q\cdot\operatorname{clip}\big(1 + k(2x_s - 1),\ \nu,\ 1 + k\big).
+Q^{\mathrm{buy}} = Q\cdot\mathrm{clip}\big(1 - k(2x_b - 1),\ \nu,\ 1 + k\big),\qquad
+Q^{\mathrm{sell}} = Q\cdot\mathrm{clip}\big(1 + k(2x_s - 1),\ \nu,\ 1 + k\big).
 ```
 
 With the profile values $`k = 1`$ and $`\nu = 0`$, these are $`Q^{\mathrm{buy}} = 2Q(1 - x_b)`$ and
