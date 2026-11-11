@@ -15,55 +15,29 @@ Other algorithms live on their own branches: `MM_algo1v2` and `MM_algo3`.
 
 ## One round, in pseudocode
 
-```text
-every time_step seconds (BTC 60 s, USDT 10 s)                  market_maker/engine.py
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing1_round_dark.svg">
+  <img alt="Listing 1: one round of the worker, from reading the order book to sending at most one order per side" src="docs/figures/listing1_round.svg">
+</picture>
 
- 1  [demo] reload the settings saved in the admin panel
- 2  book <- GET https://apiv2.nobitex.ir/v3/orderbook/<PAIR>
-    if the request failed, or best bid / best ask / lastTradePrice is missing:
-        wait for the next round
- 3  fills   [demo] a resting buy fills at its own price once best_ask <= price,
-                   a resting sell once best_bid >= price (at most order_size per side per round)
-            [live] read the status of our orders on Nobitex
- 4  cancel our orders older than cancel_after_minutes (3)
- 5  q <- coins held, including coins locked in our open sells
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing2_decide_dark.svg">
+  <img alt="Listing 2: DECIDE, how MM_algo2 turns the order book and the inventory into a bid B and an ask A" src="docs/figures/listing2_decide.svg">
+</picture>
 
-    # the strategy: (book, q) -> (B, A) or no quote            market_maker/strategy/algo3.py
- 6  if the top is missing or crossed, or a side has fewer than k levels:  NO QUOTE
- 7  V_b <- sum over i < k of rho^i * bid_volume[i];   V_a <- the same on the ask side
-    I   <- (V_b - V_a) / (V_b + V_a)
- 8  if V_b + V_a < algo3_min_volume_orders * order_size:        # thin book
-        I <- 0;  p <- mid
-    else:
-        I <- clip(I, -0.8, +0.8)
-        p <- (a0*vb0 + b0*va0) / (vb0 + va0)                    # microprice
- 9  x <- clamp((q - inv_min) / (inv_max - inv_min), 0, 1)
-    c <- p * (1 + beta*I) * (1 - skew_perc*(2x - 1))            # beta = 0 by default
-10  G <- (1 + exp_ret_min) / (1 - f)^2 - 1                      # f = commission_perc
-    h <- max(algo3_half_spread, G/(2 + G) + tick/c)            # tick = 10 rial
-11  B <- round_down(min(c*(1 - h), a0 - tick))
-    A <- round_up(max(c*(1 + h), b0 + tick))
-12  if B <= 0 or B >= A or (1 - f)^2 * A/B - 1 <= exp_ret_min:  NO QUOTE   # cannot happen
-13  if the last pair (B0, A0) is younger than refresh_seconds, still clears the bar,
-       and |B - B0| <= w(B0) and |A - A0| <= w(A0):              # w(p) = max(5 ticks, 0.0003*p)
-        (B, A) <- (B0, A0)
-    write the decision to the diagnostics file
+The grey § numbers are sections of [docs/MM_algo2.md](docs/MM_algo2.md). Listing 1 is
+`market_maker/engine.py`, Listing 2 is `market_maker/strategy/algo3.py`.
 
-    # the engine: two prices -> at most one order per side
-14  if the mid fell (rose) by trend_pause_perc or more over trend_window_seconds:
-        pause buys (sells): cancel our resting orders on that side and send none
-15  on each side, cancel our resting orders farther than w(new price) from it
-16  buy_target  <- 2*order_size*(1 - x_b)        x_b: position of q + our open buys
-    sell_target <- 2*order_size*x_s              x_s: position of q - our open sells
-17  SELL at A, size min(sell_target, free coins - inv_min),
-        unless sells are paused, one of our sells rests within w(A), or size < 0.1*order_size
-18  BUY at B, size min(buy_target, free cash / B),
-        unless buys are paused, one of our buys rests within w(B), size < 0.1*order_size,
-        or open buys + q + size > inv_max
-    [live] also refuse an order that would lock more than 25 % of the cash (buy) or coins (sell)
-    send: [demo] to the paper ledger   [live] signed POST /market/orders/add
-19  record the round; wait for the next one
-```
+**Listing 1.** $`T_s`$ time step (BTC 60 s, USDT 10 s), $`T_c`$ order lifetime (3 min), $`S`$ order size,
+$`q_{\min}, q_{\max}`$ inventory band, $`x_b`$ and $`x_s`$ the position in the band counting our open buys and
+leaving out our open sells, $`q_{\mathrm{free}}`$ and $`C`$ free coins and free cash, $`m_W`$ the oldest mid of
+the last $`W`$ = 600 s, $`\theta`$ = 0.3 %, $`w(P)`$ the requote band. The caps are the band ceiling for buys
+and, live, the 25 % exposure guards.
+
+**Listing 2.** $`k`$ = 3 levels with weights $`\rho^i`$ ($`\rho`$ = 0.5), $`n_V`$ = 20, $`\beta`$ = 0,
+$`\sigma_q`$ the inventory skew, $`h_0`$ the configured half-spread (0 = use the bar alone), $`\epsilon`$ the
+tick, $`\lfloor\cdot\rfloor_\epsilon`$ and $`\lceil\cdot\rceil_\epsilon`$ rounding down and up to the tick,
+$`T_r`$ = 300 s.
 
 ## Key formulas
 
