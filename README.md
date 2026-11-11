@@ -14,67 +14,34 @@ or live (real orders). This branch documents MM_algo1v2 only; the other algorith
 
 ## One round
 
-```text
-EVERY time_step SECONDS                                  engine.py: SimpleMarketMaker._run_demo
-  apply the settings saved in the admin panel            (live: read once, at worker start)
-  book <- GET /v3/orderbook/<PAIR>                       missing or malformed: skip the round
-  b0, a0 <- best bid, best ask
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing1_round_dark.svg">
+  <img alt="Listing 1: one round of the worker, from reading the order book to sending at most one order per side" src="docs/figures/listing1_round.svg">
+</picture>
 
-  for each resting order of ours, best price first:      demo paper rule (live: Nobitex fills them)
-      a buy is reached if a0 <= limit, a sell if b0 >= limit
-      (or if the book reports a trade price that crosses the limit)
-      fill at the limit (or that trade price), at most order_size per side per round
-  cancel our resting orders older than cancel_after_minutes        (stale_timeout)
-  q, cash, locked cash, locked coins <- account snapshot
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing2_decide_dark.svg">
+  <img alt="Listing 2: DECIDE, how MM_algo1v2 chooses its bid and ask from the distance grid by expected value" src="docs/figures/listing2_decide.svg">
+</picture>
 
-  write the decision diagnostics (JSONL)
-  quote <- DECIDE(book, q)                               None = no quote this round
-  paused <- {buy}  if mid / (oldest mid of the last trend_window_seconds) - 1 <= -trend_pause_perc
-            {sell} if it is >= +trend_pause_perc, else {}
-  if quote is None: record the round, wait
+The grey § numbers are sections of [docs/MM_algo1v2.md](docs/MM_algo1v2.md). Listing 1 is
+`market_maker/engine.py`, Listing 2 is `market_maker/strategy/algo1.py` with the fill probabilities of
+`market_maker/fill_model.py`.
 
-  for side in (sell, buy):
-      side paused:      cancel our resting orders on it                      (trend_pause)
-      side has a price: cancel our resting orders farther than w(price) from it (replaced)
-  x_b <- position of (q + resting buys),  x_s <- position of (q - resting sells)
-  buy_size  <- order_size * clip(1 - k (2 x_b - 1), min_fraction, 1 + k)
-  sell_size <- order_size * clip(1 + k (2 x_s - 1), min_fraction, 1 + k)
-  SELL min(sell_size, free coins - inv_min) at the ask, unless
-      no ask | paused | our sell rests within w(ask) | size < 0.1 order_size | exposure guard
-  BUY min(buy_size, free cash / bid) at the bid, unless
-      no bid | paused | our buy rests within w(bid) | size < 0.1 order_size
-      | resting buys + q + size > inv_max | exposure guard
-  record the round (SQLite row, CSV export, Telegram), wait for the next round
+**Listing 1.** $`T_s`$ time step (BTC 60 s, USDT 10 s), $`T_c`$ order lifetime (3 min), $`S`$ order size,
+$`q_{\min}, q_{\max}`$ inventory band, $`x_b`$ and $`x_s`$ the position in the band counting our open buys and
+leaving out our open sells, $`k`$ and $`\phi`$ the sizing strength and floor (1 and 0, so the sizes are
+$`2S(1 - x_b)`$ and $`2S x_s`$), $`q_{\mathrm{free}}`$ and $`C`$ free coins and free cash, $`m_W`$ the oldest
+mid of the last $`W`$ = 600 s, $`\theta`$ = 0.3 %, $`w(P) = \max(5\epsilon,\ 0.0003\,P)`$ the requote band
+($`\epsilon`$: the 10-rial tick). The caps are the band ceiling for buys and the exposure guards.
 
-DECIDE(book, q)                                          strategy/algo1.py: Algo1Strategy.decide_order
-  if q rose since the last call and a bid was issued then: book the rise at that bid (cost basis)
-  D <- min(depth_max, bid levels - 1, ask levels - 1)
-  if D = 0 or the book is crossed: forget the kept prices, return None
-  x <- clamp((q - inv_min) / (inv_max - inv_min), 0, 1)
-  c <- mid * (1 - skew_perc * (2x - 1))
-  for delta = grid_min_perc * grid_ratio^k, while delta <= grid_max_perc:
-      bid: first level i <= D with b_i <= c (1 - delta) -> B = b_i + tick
-           (no such level: c (1 - delta) rounded down to the tick);  B <- min(B, a0 - tick)
-      ask: first level j <= D with a_j >= c (1 + delta) -> A = a_j - tick
-           (no such level: rounded up);                              A <- max(A, b0 + tick)
-      keep each price once; distance = (c - B) / c or (A - c) / c
-      p <- fill probability at that distance: the measured table if fresh,
-           else 1 - exp(-fill_lambda_tau * exp(-fill_kappa * distance))
-  if x >= one_sided_hi: return the best lone ask (reference: cost basis or c), or None
-  if x <= one_sided_lo: return the best lone bid (reference: c), or None
-  for every pair (B, A):
-      R <- (1 - f)^2 * A / B - 1
-      J <- pB * pA * R - eta * (pB (1 - pA) + pA (1 - pB))
-      feasible if R > exp_ret_min and J > ev_min
-  choice <- the feasible pair with the largest J (tie: the nearer pair)
-            else the best feasible lone leg on either side, else return None
-  hysteresis: per side keep the last issued price while the new one is within w of it
-              and it is younger than refresh_seconds, if the kept quote still clears the bar
-  return bid, ask (one may be None), levels, returns, probabilities, J, mode, reason
-```
-
-`w(P) = max(hysteresis_ticks * tick, requote_band_perc * P)` is the requote band (tick: 10 rial on
-IRT pairs); a lone leg is a single bid or ask judged against a reference price.
+**Listing 2.** $`B'`$ the last bid issued, $`D_{\max}`$ = 10 and $`n^b, n^a`$ the number of book levels,
+$`\sigma`$ the centre shift, $`\delta_{\min}, \rho, \delta_{\max}`$ the distance grid (first point 0.05 %, ratio 1.4, at most 2 %),
+$`\lfloor\cdot\rfloor_\epsilon`$ and $`\lceil\cdot\rceil_\epsilon`$ rounding to the tick. A fill probability
+comes from the measured fill table when it is fresh, otherwise from $`1 - \exp(-\lambda_\tau e^{-\kappa\delta})`$.
+$`x_{lo}, x_{hi}`$ = 0.1, 0.9 are the band positions where only one side is quoted; a lone leg is judged
+against a reference price (an ask against the cost basis when it is known, else $`c`$; a bid against $`c`$). $`\eta`$ is the cost of a single
+fill, $`J_{\min}`$ the expected-value floor, $`T_r`$ = 300 s.
 
 ## Key formulas
 
