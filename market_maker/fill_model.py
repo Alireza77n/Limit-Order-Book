@@ -1,4 +1,5 @@
-"""Fill-probability model for Algorithm 1 v2.
+"""Fill-probability model for MM_algo1v2, and the fill-intensity fit behind
+MM_algo3's kappa (``FillTable.fit_intensity``, docs/MM_algo3.md section 6.1).
 
 Answers one question for the quote-selection rule: *if an order rests at
 relative distance ``delta`` from the quote centre, what is the probability
@@ -8,8 +9,8 @@ Two sources, used in this order:
 
 1. A measured table ``fill_table_<pair>.json`` written by
    ``tools/build_fill_table.py`` from the project's own price history and
-   order outcomes (see docs/algorithms/FILL_MODEL.md on the MM_algo1v2
-   branch). It is reloaded
+   order outcomes (see the MM_algo1v2 document,
+   https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo1v2/docs/MM_algo1v2.md). It is reloaded
    whenever the file changes, so the daily rebuild reaches a running worker
    without a restart.
 2. A parametric fallback when the table is missing, stale, or a bucket has

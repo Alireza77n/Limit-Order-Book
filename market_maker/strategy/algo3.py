@@ -1,7 +1,7 @@
 """Algorithm 3: order-book imbalance and microprice market maker.
 
 Shown as MM_algo2 (the branch it was built on). Specification:
-docs/algorithms/MM_algo2.md (from the design note
+https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md (from the design note
 "Algorithm 3 -- Order-Book Imbalance and Microprice Market Maker").
 
 Pure decision logic, like Algorithm 1: reads ``cfg``, a plain order-book
@@ -233,7 +233,7 @@ class Algo3Strategy(QuoteArithmetic, Strategy):
         evaluation.relative_quoted_spread = (ask - bid) / mid
         # Safety net on the prices actually sent. With h > h_min it cannot
         # fail: rounding and the touch clip only lower the bid and raise the
-        # ask, so A/B >= (1+h)/(1-h) > 1 + G (docs/algorithms/MM_algo2.md, Proposition 3).
+        # ask, so A/B >= (1+h)/(1-h) > 1 + G (the MM_algo2 document, https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md).
         if bid <= 0 or bid >= ask or evaluation.net_return is None or evaluation.net_return <= self.min_required_return():
             evaluation.ok = False
             evaluation.reason = "net_return_below_bar"

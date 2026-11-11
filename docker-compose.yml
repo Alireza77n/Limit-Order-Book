@@ -1,14 +1,14 @@
 # Runs every market (btc, usdt, eth, xaut, trx) in demo (paper-trading) mode plus the history
 # dashboard and the admin control panel, all sharing one results/ volume so
-# the dashboard/admin see both bots' live output. See usage.md §7 for the
-# full walkthrough.
+# the dashboard/admin see every worker's live output. README.md (Run, test,
+# deploy) has the commands.
 #
 #   cp market_maker/.env.example market_maker/.env   # optional worker/Telegram settings; local Admin is fixed admin/admin
 #   docker compose up --build
 #
 # Real (--mode real) trading isn't wired up here -- it needs a reachable
 # MySQL server, which is out of scope while the project's focus is demo
-# mode (see README.md's Known limitations). Point MYSQL_HOST at your own
+# mode. Point MYSQL_HOST at your own
 # server and swap a service's command below if/when that's needed.
 #
 # `docker compose up -d --build --wait` alone brings up a fully working

@@ -1,6 +1,6 @@
 """Algorithm 4 (strategy/algo4.py, shown as MM_algo3): market making with a
 mean-reverting signal. The estimator, the admissibility rule, the quotes and
-their properties follow docs/algorithms/MM_algo3.md, so the document and the
+their properties follow docs/MM_algo3.md, so the document and the
 code can be checked against each other."""
 
 import math
@@ -59,7 +59,7 @@ def _feed(strategy, clock, samples, inventory=25.0):
     return quotes
 
 
-# ---------- the estimator (specification section 6.1) ----------
+# ---------- the estimator (docs/MM_algo3.md sections 4.3 to 4.5) ----------
 
 def test_ou_fit_recovers_the_parameters_of_a_simulated_path():
     samples = _ou_path(2_660_000.0, 120.0, 300.0, 3000, 10.0)

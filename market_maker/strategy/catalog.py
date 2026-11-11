@@ -42,7 +42,7 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
     "algo1": AlgorithmInfo(
         key="algo1", number=1, label="MM_algo1v2",
         title="Algorithm 1, version 2: distance grid, fill probabilities and expected value",
-        cls=Algo1Strategy, implemented=True, doc="https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo1v2/docs/algorithms/ALGORITHM_1_V2.md",
+        cls=Algo1Strategy, implemented=True, doc="https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo1v2/docs/MM_algo1v2.md",
         summary=(
             "Moves a quote centre away from the mid as the inventory fills: c = mid · (1 − skew · (2x − 1)).",
             "Builds candidate bids and asks on a geometric grid of distances from the centre, each one tick inside a real book level.",
@@ -59,7 +59,7 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
     "algo3": AlgorithmInfo(
         key="algo3", number=3, label="MM_algo2",
         title="order-book imbalance, microprice and a fixed spread",
-        cls=Algo3Strategy, implemented=True, doc="https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/algorithms/MM_algo2.md",
+        cls=Algo3Strategy, implemented=True, doc="https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md",
         summary=(
             "Measures the imbalance of the resting volumes in the top k levels, I = (V_bid − V_ask) / (V_bid + V_ask), deeper levels weighted ρ^i.",
             "Starts the centre at the microprice, the mid pulled toward the thinner side: (a₀·v_bid₀ + b₀·v_ask₀) / (v_bid₀ + v_ask₀).",
@@ -75,12 +75,12 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
     "algo4": AlgorithmInfo(
         key="algo4", number=4, label="MM_algo3",
         title="mean-reverting signal and optimal quotes (stochastic control)",
-        cls=Algo4Strategy, implemented=True, doc="docs/algorithms/MM_algo3.md",
+        cls=Algo4Strategy, implemented=True, doc="https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo3/docs/MM_algo3.md",
         summary=(
             "Keeps a window of recent mids and fits the Ornstein–Uhlenbeck model dS = θ(μ − S)dt + σdW to it by the AR(1) regression S_{k+1} = a + b·S_k: θ = −ln b / Δt, μ = a / (1 − b), half-life ln 2 / θ.",
-            "Uses the forecast only when it is admissible: 0 < b < 1, the unit root rejected (t-statistic of b − 1 below −2) and the half-life inside the configured bounds; otherwise the lean is zero and the quotes are the Avellaneda–Stoikov ones.",
-            "Leans the quotes by the expected reversion over the horizon, m = (μ − S)(1 − e^{−θτ}), clipped to algo4_lean_clip: price below its mean → bid closer, ask farther.",
-            "Depths from the first-order solution of the Hamilton–Jacobi–Bellman equation: δ± = 1/κ ± m ∓ skew + risk, with 1/κ the fee-free optimal half-spread (κ from the fill table when it can be fitted, else algo4_kappa), the inventory skew skew_perc·(2x − 1) and the risk widening algo4_risk_perc; then the fee shift + f on each side.",
+            "Uses the forecast only when it is admissible: 0 < b < 1, the unit root rejected (t-statistic of b − 1 at most −2.86, the Dickey–Fuller 5 % value) and the half-life inside the configured bounds; otherwise the lean is zero and the quotes are the Avellaneda–Stoikov ones.",
+            "Leans the quotes by the expected reversion over the horizon, m = (μ − S)(1 − e^{−θτ}) / S, clipped to algo4_lean_clip: price below its mean → bid closer, ask farther.",
+            "Depths from the first-order solution of the Hamilton–Jacobi–Bellman equation: δ± = 1/κ ± m ∓ skew + risk, with 1/κ the fee-free optimal half-spread (κ from the fill table when it can be fitted, else algo4_kappa), the inventory skew skew_perc·(2x − 1) and the risk widening algo4_risk_perc, each at least one tick; then the fee shift + f on each side.",
             "Prices S(1 + δ+) and S(1 − δ−), clipped to the touch, rounded outward to the tick and widened symmetrically until the round trip clears the fee bar R_net > exp_ret_min; a volatility guard and the shared hysteresis (requote band) as the other algorithms.",
         ),
         fields=("algo4_use_alpha", "algo4_window_seconds", "algo4_sample_seconds", "algo4_horizon_seconds",
@@ -93,7 +93,7 @@ ALGORITHMS: Mapping[str, AlgorithmInfo] = {
 
 # What the CLI accepts: the implemented algorithms plus the Avellaneda-Stoikov
 # stub (key algo2, unrelated to the name MM_algo2; kept so `--algorithm algo2`
-# fails loudly, as documented in README.md).
+# fails loudly, see strategy/algo2.py).
 STRATEGIES: Dict[str, type] = {key: info.cls for key, info in ALGORITHMS.items()}
 STRATEGIES["algo2"] = Algo2Strategy
 

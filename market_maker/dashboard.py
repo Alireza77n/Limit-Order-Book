@@ -163,7 +163,8 @@ def _url_params(search) -> Dict[str, str]:
 # every scored pair (~50 KB), so this bounds what one refresh reads.
 DECISION_ROUNDS = 120
 
-# The demo-to-real gate (docs/algorithms/MM_algo2.md section 17; the same nine
+# The demo-to-real gate (defined in the MM_algo2 document,
+# https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md; the same nine
 # conditions for every algorithm).
 GATE_THRESHOLDS = {
     "quote_rate": 0.50, "fills_per_hour": 1.0, "round_trips": 30,
@@ -788,7 +789,7 @@ def drawdown_fraction(df: pd.DataFrame) -> Optional[float]:
 
 
 def gate_rows(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The demo-to-real gate of docs/algorithms/MM_algo2.md section 17, one row per
+    """The demo-to-real gate of the MM_algo2 document (https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md), one row per
     metric with its value, threshold and pass/fail (None = not measurable yet)."""
     fee = float(settings.get("commission_perc") or 0.0)
     modes = quote_mode_counts(df)
@@ -828,7 +829,7 @@ def gate_rows(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]
     ]
 
 
-# ---------- PnL attribution (docs/algorithms/PNL_ATTRIBUTION.md) ----------
+# ---------- PnL attribution (docs/MM_algo3.md, appendix A) ----------
 
 ATTRIBUTION_COLUMNS = ["Price PnL", "Trading PnL", "Total PnL", "Fees"]
 
@@ -1521,7 +1522,7 @@ def _algo4_window_chart(document: Dict[str, Any]) -> go.Figure:
 
 
 def _algo4_decision_trace(document: Dict[str, Any], settings: Dict[str, Any]) -> html.Div:
-    """MM_algo3's decision as the steps of docs/algorithms/MM_algo3.md (sections 5-7)."""
+    """MM_algo3's decision as the steps of docs/MM_algo3.md (sections 4 to 6)."""
     def line(ok, text):
         mark = "✓" if ok else ("•" if ok is None else "✗")
         color = STATUS_GOOD if ok else (STATUS_WARN if ok is None else STATUS_CRITICAL)
@@ -1718,7 +1719,7 @@ def _algo3_levels_table(document: Dict[str, Any]) -> html.Div:
 
 
 def _algo3_decision_trace(document: Dict[str, Any], settings: Dict[str, Any]) -> html.Div:
-    """MM_algo2's decision as the steps of docs/algorithms/MM_algo2.md (sections 4-5)."""
+    """MM_algo2's decision as the steps of the MM_algo2 document (https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md)."""
     def line(ok, text):
         mark = "✓" if ok else ("•" if ok is None else "✗")
         color = STATUS_GOOD if ok else (STATUS_WARN if ok is None else STATUS_CRITICAL)
@@ -2690,7 +2691,7 @@ def _render_attribution_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
                "earned if the price had never moved; black is their sum, the real result. Where black hugs "
                "orange the market made the result; where it hugs blue, we did. Fills are marked at the mid "
                "of the round they were processed in, so a few seconds of price drift inside a round leaks "
-               "into the blue line. Derivation and a worked example: docs/algorithms/PNL_ATTRIBUTION.md.",
+               "into the blue line. Derivation and a worked example: docs/MM_algo3.md, appendix A.",
                style=text_style),
     )
     return html.Div([
@@ -2916,7 +2917,7 @@ def _render_validation_tab(
 
     return html.Div([
         _card(
-            _h3("Switch-to-real gate", "every metric against its threshold (docs/algorithms/MM_algo2.md §17)"),
+            _h3("Switch-to-real gate", "every metric against its threshold (defined in https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md)"),
             _gate_table(gate) if gate else html.Div(f"gate unavailable: {gate_error}", style={"color": MUTED}),
         ),
         html.Div([

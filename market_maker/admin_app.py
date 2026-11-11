@@ -1,7 +1,7 @@
 """Admin management page for the Demo (paper-trading) stack.
 
 Plain Flask, server-rendered Jinja, no Dash. Lowest-privilege component of
-the admin surface (see docs/superpowers/specs/2026-08-01-admin-demo-control-design.md):
+the admin surface:
 it can read Demo state (ro mounts in production) and enqueue a fixed set of
 named actions via `control_queue.py` -- it never shells out, never touches
 a Docker socket, and never writes directly to runtime/state or

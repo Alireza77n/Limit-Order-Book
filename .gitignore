@@ -42,6 +42,6 @@ docs/
 # Docker Compose's live runtime data (backups, control queue/audit, results,
 # state) -- host bind-mount target, never meant to be tracked in git. Never
 # committed on the server either; if it ever gets `git add`ed by accident,
-# `git reset` it back out (see usage.md's "Recovering from an accidental
-# runtime/ commit" section) rather than force-adding it.
+# undo it with a mixed `git reset` (never `--hard`, which would delete the
+# files the containers read) rather than force-adding it.
 /runtime/

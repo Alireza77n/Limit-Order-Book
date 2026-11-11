@@ -10,7 +10,8 @@ caller-supplied text -- worker actions are looked up in a hardcoded dict
 (`WORKER_ARGV`), and `pair` values are restricted to the closed set of
 markets in config.TRADING_PROFILES (btc, usdt, eth, xaut, trx).
 
-Not installed/deployed by this session -- see docs/deployment/ADMIN_PAGE.md.
+On the server it runs as deploy/systemd/lob-control-agent.service; in the
+local stack it is docker-compose.yml's `control-agent` service.
 """
 
 from __future__ import annotations

@@ -38,8 +38,8 @@ class MMConfig:
     # quote more often without touching commission_perc or Algorithm 1 itself.
     exp_ret_min: Optional[float] = None
     algorithm_id: str = "default"           # if None, equals commission_perc
-    # Which quoting algorithm the worker runs (strategy/catalog.py): "algo1"
-    # or "algo3". Hot in Demo (the engine swaps the strategy at the next
+    # Which quoting algorithm the worker runs (strategy/catalog.py): "algo1",
+    # "algo3" or "algo4". Hot in Demo (the engine swaps the strategy at the next
     # round boundary); a live worker reads it when it is started.
     algorithm: str = "algo1"
     # Demo lanes (run.py's LaneRunner): the demo worker of a pair runs every
@@ -54,7 +54,8 @@ class MMConfig:
     # Requote band: a resting order of ours is kept while the new price is
     # within max(hysteresis_ticks x tick, requote_band_perc x price) of it;
     # a new price outside the band cancels it and replaces it, so at most one
-    # order rests per side (engine._replace_outside_band). Before 20 October
+    # order rests per side (engine.py: _paper_orders_outside_band in the demo
+    # loop, the same test in the live loop). Before 20 October
     # 2026 the band was ticks only, 50 rial, which on BTC is nothing: a new
     # order was added almost every round and up to 11 of ours rested at once.
     requote_band_perc: float = 0.0003
@@ -64,7 +65,8 @@ class MMConfig:
     # 0.3 % over 10 minutes by default since 20 October 2026: the operator
     # wants no buying into a fall. Replayed on the demo's market of 11-17
     # October 2026 it changed the result by at most 0.06 of a point
-    # (docs/algorithms/MM_algo2.md section 19). trend_window_seconds = 0 or
+    # (the MM_algo2 document, https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md).
+    # trend_window_seconds = 0 or
     # trend_pause_perc = 0 switches it off.
     trend_window_seconds: float = 600.0
     trend_pause_perc: float = 0.003
@@ -152,7 +154,7 @@ class MMConfig:
     fill_lambda_tau: float = 1.0
     # Queue correction p *= exp(-volume_ahead / fill_queue_volume_ref); 0 = off.
     fill_queue_volume_ref: float = 0.0
-    # MM_algo2 (strategy/algo3.py, docs/algorithms/MM_algo2.md): the
+    # MM_algo2 (strategy/algo3.py, specified in https://github.com/Alireza77n/Limit-Order-Book/blob/MM_algo2/docs/MM_algo2.md): the
     # imbalance of the top algo3_depth_k levels (weights algo3_decay_rho^i)
     # leans a microprice centre by algo3_beta per unit of imbalance; the
     # inventory skew is shared with Algorithm 1 (skew_perc); one symmetric

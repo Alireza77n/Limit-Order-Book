@@ -11,12 +11,13 @@ files either way.
     python run.py --profile usdt --mode real   # live trading (explicit mode required)
     python run.py --profile btc --mode demo    # paper trading: real market data, simulated fills, no real orders
 
-See usage.md for the full real-vs-demo breakdown.
+README.md (Run, test, deploy) has the commands; docs/MM_algo3.md section 7.6
+describes the demo lanes.
 
 NOTE: --exchange only selects the ExchangeClient used for quotes/orders.
 Nobitex_portfolio (portfolio.py) is still Nobitex-specific and isn't
 behind an exchange interface, so portfolio valuation doesn't yet follow
---exchange. Flagged in README.md, not silently glossed over.
+--exchange. A known limitation, stated here rather than glossed over.
 """
 
 import argparse
@@ -51,7 +52,7 @@ from demo_config import (
 from forward_config import desired_config as load_forward_desired
 
 # STRATEGIES (the --algorithm choices) comes from strategy/catalog.py: the
-# implemented algorithms plus the Algorithm 2 stub -- see README.md.
+# implemented algorithms plus the Algorithm 2 stub -- see strategy/catalog.py.
 
 EXCHANGES = {
     "nobitex": NobitexExchangeClient,
@@ -246,7 +247,7 @@ def _lane_event(event: str, profile: str, lane: str, **extra) -> None:
 
 class LaneRunner:
     """The demo worker of one pair as lanes: one SimpleMarketMaker per
-    enabled algorithm (the overlay's algo1_enabled / algo3_enabled), each in
+    enabled algorithm (the overlay's algo1_enabled / algo3_enabled / algo4_enabled), each in
     its own thread with its own paper ledger and result files
     (apply_lane_paths), all under the pair's one worker lease. The runner
     re-reads the overlay every ``poll_seconds`` and starts or stops lanes to
@@ -340,7 +341,7 @@ def main():
     parser.add_argument("--algorithm", choices=sorted(STRATEGIES), default=None,
                          help="Quoting strategy to use. Live: default = the saved live configuration's "
                               "`algorithm` (algo1 when none). Demo: without this flag the worker runs every "
-                              "algorithm enabled in the Demo configuration (algo1_enabled, algo3_enabled), "
+                              "algorithm enabled in the Demo configuration (algo1_enabled, algo3_enabled, algo4_enabled), "
                               "each in its own lane with its own files; with it, one algorithm in the "
                               "single-worker files (<pair>_track_demo.csv).")
     parser.add_argument("--exchange", choices=sorted(EXCHANGES), default="nobitex",

@@ -1,7 +1,7 @@
 """Algorithm 4: market making with a mean-reverting signal (stochastic control).
 
 Shown as MM_algo3 (the branch it was built on). Specification:
-docs/algorithms/MM_algo3.md (from the design note "Algorithm 4 -- Market
+docs/MM_algo3.md (from the design note "Algorithm 4 -- Market
 Making with a Mean-Reverting Signal", the Avellaneda-Stoikov /
 Cartea-Jaimungal family).
 
@@ -24,7 +24,7 @@ What it does, per round:
   critical value) and the half-life inside
   ``[algo4_halflife_min_seconds, algo4_halflife_max_seconds]``; otherwise
   the lean is zero and the quotes are the Avellaneda-Stoikov ones;
-* lean ``m = (mu - S)(1 - e^{-theta tau})`` over the horizon ``tau`` (the
+* lean ``m = (mu - S)(1 - e^{-theta tau}) / S`` over the horizon ``tau`` (the
   order lifetime by default), clipped to ``algo4_lean_clip`` of the price:
   price below its mean -> bid closer, ask farther;
 * depths ``delta+ = 1/kappa + m - skew + risk`` and
@@ -60,7 +60,8 @@ MIN_POINTS = 30             # samples before the regression is attempted
 # 5 % critical value with a constant (large sample). The design note wrote
 # "-2"; measured on simulated random walks of 180 samples that loose rule
 # admits about a third of them as mean-reverting, -2.86 about one in twenty
-# (tests/test_strategy_algo4.py).
+# (tests/test_strategy_algo4.py: 60 walks, half-life floor 30 s); 200 walks with
+# the 60-s floor give 25.5 % and 4.5 % (docs/MM_algo3.md section 4.5).
 T_STAT_MAX = -2.86
 
 
@@ -85,7 +86,7 @@ class OUEstimate:
 def ou_fit(samples: Sequence[Tuple[float, float]], *, halflife_min: float, halflife_max: float,
            min_points: int = MIN_POINTS, t_stat_max: float = T_STAT_MAX) -> OUEstimate:
     """Ordinary least squares of S_{k+1} on S_k over the (time, mid) samples,
-    then the OU parameters (specification section 6.1). Pure."""
+    then the OU parameters (docs/MM_algo3.md sections 4.3 to 4.5). Pure."""
     n = len(samples)
     if n < max(3, int(min_points)):
         return OUEstimate(False, "warming_up", points=n,
@@ -239,7 +240,7 @@ class Algo4Strategy(QuoteArithmetic, Strategy):
 
     def kappa(self) -> Tuple[float, str, Optional[float]]:
         """(kappa, source, lambda): the fill-intensity decay per unit of
-        relative depth from the fresh fill table (specification 6.2) when it
+        relative depth from the fresh fill table (docs/MM_algo3.md 6.1) when it
         can be fitted, else ``algo4_kappa``."""
         intensity = None
         try:
@@ -279,7 +280,7 @@ class Algo4Strategy(QuoteArithmetic, Strategy):
 
     # ---------- The decision ----------
     def evaluate(self, ob: Dict[str, Any], inv_current: float) -> Algo4Evaluation:
-        """Steps of specification section 7 on the current window. Pure: no
+        """The steps of docs/MM_algo3.md sections 4.6 to 6.4 on the current window. Pure: no
         sample is taken, no hysteresis."""
         mid = self.mid_price(ob)
         if mid is None:
@@ -337,7 +338,8 @@ class Algo4Strategy(QuoteArithmetic, Strategy):
         base = 1.0 / kappa
         evaluation.base_depth = base
         tick_rel = epsilon / mid
-        # (12) with the fee shift (15), relative to the price; each depth at least one tick.
+        # The first-order optimal depths with the fee shift (docs/MM_algo3.md 5.3, 5.6, 6.2),
+        # relative to the price; each depth at least one tick before the fee.
         depth_ask = max(tick_rel, base + lean - skew + risk) + fee
         depth_bid = max(tick_rel, base - lean + skew + risk) + fee
         evaluation.depth_ask, evaluation.depth_bid = depth_ask, depth_bid
@@ -348,7 +350,7 @@ class Algo4Strategy(QuoteArithmetic, Strategy):
         ask = self._round_up(max(raw_ask, min_ask))
         evaluation.raw_bid, evaluation.raw_ask = raw_bid, raw_ask
         evaluation.clipped_bid, evaluation.clipped_ask = raw_bid > max_bid, raw_ask < min_ask
-        # The fee bar (16) on the prices sent: widen both sides by the same amount.
+        # The fee bar on the prices sent (docs/MM_algo3.md 6.4): widen both sides by the same amount.
         gross = self.gross_bar()
         if not math.isfinite(gross):
             evaluation.ok, evaluation.reason = False, "half_spread_not_attainable"
