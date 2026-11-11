@@ -1,6 +1,6 @@
 """Algo2Strategy is a deliberate placeholder -- no Avellaneda-Stoikov math
-exists yet (Alg2.ipynb was empty; only README.md documents the intended
-model). These tests just pin the stub's contract: it's constructible and
+exists yet (Alg2.ipynb was empty, and the intended model is not documented
+on this branch). These tests just pin the stub's contract: it's constructible and
 plugs into the Strategy interface, and calling decide_order fails loudly
 and clearly rather than silently returning a made-up quote.
 """

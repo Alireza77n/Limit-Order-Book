@@ -71,7 +71,7 @@ def _frame():
 
 
 def _example_book():
-    """The running example of docs/algorithms/ALGORITHM_1_V2.md (MM_algo1v2 branch)."""
+    """The running example of docs/MM_algo1v2.md (MM_algo1v2 branch)."""
     bids = [[2_659_990, "20000"], [2_659_900, "300"], [2_658_000, "1500"], [2_655_000, "8000"],
             [2_650_000, "40000"], [2_640_000, "10000"], [2_630_000, "5000"], [2_620_000, "5000"],
             [2_610_000, "5000"], [2_600_000, "5000"], [2_590_000, "5000"]]
@@ -615,7 +615,7 @@ def test_load_track_loads_one_session_and_lists_every_session(tmp_path, monkeypa
 # ---------- PnL attribution ----------
 
 def _ledger_frame():
-    """Three rounds of the worked example in docs/algorithms/PNL_ATTRIBUTION.md:
+    """Three rounds of the worked example in docs/MM_algo2.md, appendix A:
     start with 10 units and 1000 cash at mid 100; buy 2 at 98 while the mid
     slips to 99; sell 1 at 102 with a 0.5 fee while the mid returns to 100."""
     rows = [

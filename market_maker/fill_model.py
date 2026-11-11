@@ -8,7 +8,7 @@ Two sources, used in this order:
 
 1. A measured table ``fill_table_<pair>.json`` written by
    ``tools/build_fill_table.py`` from the project's own price history and
-   order outcomes (see docs/algorithms/FILL_MODEL.md on the MM_algo1v2
+   order outcomes (see docs/MM_algo1v2.md on the MM_algo1v2
    branch). It is reloaded
    whenever the file changes, so the daily rebuild reaches a running worker
    without a restart.

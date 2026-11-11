@@ -1,7 +1,7 @@
 """Unit tests for Algo1Strategy version 2 -- the I/O-free quoting logic.
 
 The example book, settings and expected numbers follow
-docs/algorithms/ALGORITHM_1_V2.md (MM_algo1v2 branch) so the documentation and the code can be
+docs/MM_algo1v2.md (MM_algo1v2 branch) so the documentation and the code can be
 checked against each other by hand.
 """
 

@@ -62,8 +62,8 @@ class MMConfig:
     # cancelled; when it rose by more than that, the same for sells.
     # 0.3 % over 10 minutes by default since 20 October 2026: the operator
     # wants no buying into a fall. Replayed on the demo's market of 11-17
-    # October 2026 it changed the result by at most 0.06 of a point
-    # (docs/algorithms/MM_algo2.md section 19). trend_window_seconds = 0 or
+    # October 2026 it changed the result by at most 0.06 of a point.
+    # The rule: docs/MM_algo2.md section 10.1. trend_window_seconds = 0 or
     # trend_pause_perc = 0 switches it off.
     trend_window_seconds: float = 600.0
     trend_pause_perc: float = 0.003
@@ -151,7 +151,7 @@ class MMConfig:
     fill_lambda_tau: float = 1.0
     # Queue correction p *= exp(-volume_ahead / fill_queue_volume_ref); 0 = off.
     fill_queue_volume_ref: float = 0.0
-    # MM_algo2 (strategy/algo3.py, docs/algorithms/MM_algo2.md): the
+    # MM_algo2 (strategy/algo3.py, docs/MM_algo2.md): the
     # imbalance of the top algo3_depth_k levels (weights algo3_decay_rho^i)
     # leans a microprice centre by algo3_beta per unit of imbalance; the
     # inventory skew is shared with Algorithm 1 (skew_perc); one symmetric

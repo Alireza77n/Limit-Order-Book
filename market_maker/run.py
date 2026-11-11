@@ -11,12 +11,13 @@ files either way.
     python run.py --profile usdt --mode real   # live trading (explicit mode required)
     python run.py --profile btc --mode demo    # paper trading: real market data, simulated fills, no real orders
 
-See usage.md for the full real-vs-demo breakdown.
+README.md ("Run, test, deploy") has the commands; docs/MM_algo2.md
+sections 3-10 describe what one round does in each mode.
 
 NOTE: --exchange only selects the ExchangeClient used for quotes/orders.
 Nobitex_portfolio (portfolio.py) is still Nobitex-specific and isn't
 behind an exchange interface, so portfolio valuation doesn't yet follow
---exchange. Flagged in README.md, not silently glossed over.
+--exchange. A known limitation, not silently glossed over.
 """
 
 import argparse
@@ -51,7 +52,7 @@ from demo_config import (
 from forward_config import desired_config as load_forward_desired
 
 # STRATEGIES (the --algorithm choices) comes from strategy/catalog.py: the
-# implemented algorithms plus the Algorithm 2 stub -- see README.md.
+# implemented algorithms plus the Algorithm 2 stub (strategy/algo2.py).
 
 EXCHANGES = {
     "nobitex": NobitexExchangeClient,

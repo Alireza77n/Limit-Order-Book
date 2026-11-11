@@ -10,7 +10,8 @@ caller-supplied text -- worker actions are looked up in a hardcoded dict
 (`WORKER_ARGV`), and `pair` values are restricted to the closed set
 {"btc", "usdt"}.
 
-Not installed/deployed by this session -- see docs/deployment/ADMIN_PAGE.md.
+On the server it runs as the systemd unit deploy/systemd/lob-control-agent.service;
+locally: python3 deploy/control_agent.py --mode local.
 """
 
 from __future__ import annotations

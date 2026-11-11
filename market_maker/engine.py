@@ -1021,7 +1021,7 @@ class SimpleMarketMaker:
     def _accumulate_cost(self, round_fee_irt: float) -> Tuple[float, float]:
         """Best-effort, cross-process running total of transaction costs
         (IRT), shared via a small local JSON file keyed by pair -- so a BTC
-        run and a USDT run (each its own process, per usage.md) can both
+        run and a USDT run (each its own process) can both
         report a combined total. No locking: a lost update on a rare
         simultaneous write is an acceptable tradeoff for a demo notification,
         not something the trading logic depends on.

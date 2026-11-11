@@ -1,7 +1,7 @@
 """Algorithm 3: order-book imbalance and microprice market maker.
 
 Shown as MM_algo2 (the branch it was built on). Specification:
-docs/algorithms/MM_algo2.md (from the design note
+docs/MM_algo2.md (from the design note
 "Algorithm 3 -- Order-Book Imbalance and Microprice Market Maker").
 
 Pure decision logic, like Algorithm 1: reads ``cfg``, a plain order-book
@@ -24,8 +24,9 @@ What it does, per round:
   clears the fee bar ``R_net > exp_ret_min``;
 * bid rounded down, ask rounded up to the tick, neither crossing the touch;
   the fee bar is re-checked on the final prices;
-* hysteresis: the previous pair is kept while both prices are within
-  ``hysteresis_ticks`` of it and it is younger than ``refresh_seconds``.
+* hysteresis: the previous pair is kept while both prices are within the
+  requote band of it, max(``hysteresis_ticks`` ticks, ``requote_band_perc``
+  of the price), and it is younger than ``refresh_seconds``.
 
 Algorithm 3 never looks at fill probabilities: the lean and the skew move the
 centre only, so ``A/B = (1+h)/(1-h)`` and the round-trip return is fixed by
@@ -233,7 +234,7 @@ class Algo3Strategy(QuoteArithmetic, Strategy):
         evaluation.relative_quoted_spread = (ask - bid) / mid
         # Safety net on the prices actually sent. With h > h_min it cannot
         # fail: rounding and the touch clip only lower the bid and raise the
-        # ask, so A/B >= (1+h)/(1-h) > 1 + G (docs/algorithms/MM_algo2.md, Proposition 3).
+        # ask, so A/B >= (1+h)/(1-h) > 1 + G (docs/MM_algo2.md, Proposition 3).
         if bid <= 0 or bid >= ask or evaluation.net_return is None or evaluation.net_return <= self.min_required_return():
             evaluation.ok = False
             evaluation.reason = "net_return_below_bar"

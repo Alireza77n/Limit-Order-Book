@@ -1,6 +1,6 @@
 """Algorithm 3 (strategy/algo3.py): order-book imbalance and microprice
 market maker. The worked example and the properties follow
-docs/algorithms/MM_algo2.md, so the document and the code can be checked
+docs/MM_algo2.md, so the document and the code can be checked
 against each other."""
 
 import math
@@ -23,7 +23,7 @@ def _cfg(**overrides):
 
 
 def _spec_cfg(**overrides):
-    """The settings of the design note's worked example (MM_algo2.md section 10)."""
+    """The settings of the design note's worked example (MM_algo2.md section 15.3)."""
     values = dict(
         commission_perc=0.0025, exp_ret_min=0.0025, inv_min=0.0, inv_max=50.0,
         algo3_depth_k=3, algo3_decay_rho=1.0, algo3_beta=0.0010, skew_perc=0.0020,
@@ -154,7 +154,7 @@ def test_a_thin_book_carries_no_signal_and_centres_on_the_mid():
 
 def test_reduces_to_a_fixed_spread_around_the_mid():
     """beta = 0, k = 1 and a balanced top of book: the fixed-spread market
-    maker centred on the mid (MM_algo2.md section 14)."""
+    maker centred on the mid (MM_algo2.md appendix B)."""
     cfg = _cfg(algo3_beta=0.0, algo3_depth_k=1, algo3_min_volume_orders=0.0, inv_min=0.0, inv_max=50.0,
                hysteresis_ticks=0, algo3_half_spread=0.004)
     strategy = Algo3Strategy(cfg)
