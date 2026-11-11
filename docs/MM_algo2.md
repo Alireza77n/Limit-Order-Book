@@ -473,7 +473,7 @@ in a typical book; it decides whether our bid or our ask sits nearer the market,
 *The 3 October 2026 books: the imbalance (top) and the microprice offset from the mid (bottom). The dashed
 lines of the bottom panels mark the half-spread of the demo settings of 17 October 2026 (0.085 %).*
 
-### 9.2 The explicit forecast: the lean $`\beta I`$, switched off
+### 9.2 The explicit forecast: the lean β·I, switched off
 
 The lean answers: per unit of imbalance of the top three levels, how far does the mid move over the next
 $`\tau`$ seconds? It is worth switching on only if the imbalance really predicts that move. The design note's
@@ -519,7 +519,7 @@ With the raw, unclipped imbalance every $`t`$ changes by less than 0.2.
 
 ![Imbalance against the 10-minute forward return, 3 October](figures/mm2_beta.png)
 
-### 9.3 What the imbalance changes while $`\beta=0`$
+### 9.3 What the imbalance changes while β = 0
 
 **Claim 3.** With $`\beta=0`$ the quote does not depend on $`I`$, $`k`$ or $`\rho`$, except through the
 thin-book test.
