@@ -636,13 +636,13 @@ orders as if filled: $`O_b`$ is the remaining amount of our resting buys, $`O_s`
 sells.
 
 ```math
-x_b = \operatorname{clip}\Bigl(\frac{q + O_b - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\Bigr), \qquad
-x_s = \operatorname{clip}\Bigl(\frac{q - O_s - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\Bigr),
+x_b = \mathrm{clip}\Bigl(\frac{q + O_b - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\Bigr), \qquad
+x_s = \mathrm{clip}\Bigl(\frac{q - O_s - q_{\min}}{q_{\max} - q_{\min}},\ 0,\ 1\Bigr),
 ```
 
 ```math
-\text{buy} = S\,\operatorname{clip}\bigl(1 - k(2x_b - 1),\ \phi,\ 1 + k\bigr), \qquad
-\text{sell} = S\,\operatorname{clip}\bigl(1 + k(2x_s - 1),\ \phi,\ 1 + k\bigr),
+\text{buy} = S\,\mathrm{clip}\bigl(1 - k(2x_b - 1),\ \phi,\ 1 + k\bigr), \qquad
+\text{sell} = S\,\mathrm{clip}\bigl(1 + k(2x_s - 1),\ \phi,\ 1 + k\bigr),
 ```
 
 with $`k`$ = `inventory_sizing_strength` (1) and $`\phi`$ = `inventory_sizing_min_fraction` (0), both

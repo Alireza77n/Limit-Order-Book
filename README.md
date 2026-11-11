@@ -113,8 +113,8 @@ A lone leg against a reference price: ask $`R = (1-f)^2 A/P_{\mathrm{ref}} - 1`$
 $`R = (1-f)^2 P_{\mathrm{ref}}/B - 1`$, $`J_1 = p\,(R - \eta)`$. Sizes, with resting orders counted:
 
 ```math
-\text{buy} = S\,\operatorname{clip}\bigl(1 - k(2x_b - 1),\ \phi,\ 1 + k\bigr), \qquad
-\text{sell} = S\,\operatorname{clip}\bigl(1 + k(2x_s - 1),\ \phi,\ 1 + k\bigr),
+\text{buy} = S\,\mathrm{clip}\bigl(1 - k(2x_b - 1),\ \phi,\ 1 + k\bigr), \qquad
+\text{sell} = S\,\mathrm{clip}\bigl(1 + k(2x_s - 1),\ \phi,\ 1 + k\bigr),
 ```
 
 which is $`2S(1 - x_b)`$ and $`2S x_s`$ with the defaults $`k = 1`$, $`\phi = 0`$.
