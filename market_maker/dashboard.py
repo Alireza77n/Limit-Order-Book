@@ -120,7 +120,7 @@ def _url_params(search) -> Dict[str, str]:
 # every scored pair (~50 KB), so this bounds what one refresh reads.
 DECISION_ROUNDS = 120
 
-# The demo-to-real gate (docs/algorithms/ALGORITHM_1_V2.md section 7).
+# The demo-to-real gate (docs/MM_algo1v2.md, appendix A.2).
 GATE_THRESHOLDS = {
     "quote_rate": 0.50, "fills_per_hour": 1.0, "round_trips": 30,
     "spread_gap": -0.0005, "adverse_60s": -0.001, "fill_forecast_error": 0.30,
@@ -703,7 +703,7 @@ def drawdown_fraction(df: pd.DataFrame) -> Optional[float]:
 
 
 def gate_rows(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """The demo-to-real gate of ALGORITHM_1_V2.md section 7, one row per
+    """The demo-to-real gate of docs/MM_algo1v2.md appendix A.2, one row per
     metric with its value, threshold and pass/fail (None = not measurable yet)."""
     fee = float(settings.get("commission_perc") or 0.0)
     modes = quote_mode_counts(df)
@@ -741,7 +741,7 @@ def gate_rows(df: pd.DataFrame, settings: Dict[str, Any]) -> List[Dict[str, Any]
     ]
 
 
-# ---------- PnL attribution (docs/algorithms/PNL_ATTRIBUTION.md) ----------
+# ---------- PnL attribution (docs/MM_algo1v2.md, appendix A.1) ----------
 
 ATTRIBUTION_COLUMNS = ["Price PnL", "Trading PnL", "Total PnL", "Fees"]
 
@@ -1890,7 +1890,7 @@ def _render_attribution_tab(df: pd.DataFrame, comparing: bool) -> html.Div:
                "earned if the price had never moved; black is their sum, the real result. Where black hugs "
                "orange the market made the result; where it hugs blue, we did. Fills are marked at the mid "
                "of the round they were processed in, so a few seconds of price drift inside a round leaks "
-               "into the blue line. Derivation and a worked example: docs/algorithms/PNL_ATTRIBUTION.md.",
+               "into the blue line. Derivation and a worked example: docs/MM_algo1v2.md, appendix A.1.",
                style=text_style),
     )
     return html.Div([
@@ -1986,7 +1986,7 @@ def _render_validation_tab(
 
     return html.Div([
         _card(
-            _h3("Switch-to-real gate", "every metric against its threshold (docs/algorithms/ALGORITHM_1_V2.md §7)"),
+            _h3("Switch-to-real gate", "every metric against its threshold (docs/MM_algo1v2.md, appendix A.2)"),
             _gate_table(gate) if gate else html.Div(f"gate unavailable: {gate_error}", style={"color": MUTED}),
         ),
         html.Div([

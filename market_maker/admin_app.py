@@ -1,11 +1,11 @@
 """Admin management page for the Demo (paper-trading) stack.
 
 Plain Flask, server-rendered Jinja, no Dash. Lowest-privilege component of
-the admin surface (see docs/superpowers/specs/2026-08-01-admin-demo-control-design.md):
-it can read Demo state (ro mounts in production) and enqueue a fixed set of
-named actions via `control_queue.py` -- it never shells out, never touches
-a Docker socket, and never writes directly to runtime/state or
-runtime/results. All mutation is performed by `deploy/control_agent.py`.
+the admin surface: it can read Demo state (ro mounts in production) and
+enqueue a fixed set of named actions via `control_queue.py` -- it never
+shells out, never touches a Docker socket, and never writes directly to
+runtime/state or runtime/results. All mutation is performed by
+`deploy/control_agent.py`.
 
 No Real Mode surface anywhere in this file, by construction: every route
 here only ever reads/writes Demo-prefixed files and enqueues Demo-only

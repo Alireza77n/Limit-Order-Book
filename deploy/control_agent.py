@@ -10,7 +10,8 @@ caller-supplied text -- worker actions are looked up in a hardcoded dict
 (`WORKER_ARGV`), and `pair` values are restricted to the closed set
 {"btc", "usdt"}.
 
-Not installed/deployed by this session -- see docs/deployment/ADMIN_PAGE.md.
+Local stack: the `control-agent` service of docker-compose.yml runs it with
+`--mode local`; on the server it runs as the systemd unit `lob-control-agent`.
 """
 
 from __future__ import annotations

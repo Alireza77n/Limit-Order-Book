@@ -2,7 +2,7 @@
 .gitignore
 .dockerignore
 reports/
-usage.md
+docs/
 README.md
 requirements-dev.txt
 

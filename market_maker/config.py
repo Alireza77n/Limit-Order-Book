@@ -87,7 +87,7 @@ class MMConfig:
     inventory_sizing_min_fraction: float = 0.0
 
     # Algorithm 1 v2 quote selection -- see strategy/algo1.py and
-    # docs/algorithms/ALGORITHM_1_V2.md. All of these are hot-reloadable from
+    # docs/MM_algo1v2.md. All of these are hot-reloadable from
     # the admin panel (demo_config.FIELD_DEFINITIONS / forward_config.FORWARD_FIELDS).
     #
     # Candidate distances from the quote centre, as fractions of price:

@@ -8,12 +8,13 @@ Two sources, used in this order:
 
 1. A measured table ``fill_table_<pair>.json`` written by
    ``tools/build_fill_table.py`` from the project's own price history and
-   order outcomes (see docs/algorithms/FILL_MODEL.md). It is reloaded
+   order outcomes (see docs/MM_algo1v2.md, section 8.6). It is reloaded
    whenever the file changes, so the daily rebuild reaches a running worker
    without a restart.
-2. A parametric fallback when the table is missing, stale, or a bucket has
-   too few observations: fills arrive as a Poisson process whose intensity
-   decays exponentially with depth,
+2. A parametric fallback when the table is missing or stale, or when no
+   bucket on the asked side has enough observations (thin buckets are
+   skipped and their neighbours interpolated): fills arrive as a Poisson
+   process whose intensity decays exponentially with depth,
 
        p(delta) = 1 - exp(-lambda_tau * exp(-kappa * delta)),
 
@@ -92,8 +93,9 @@ class FillTable:
         )
 
     def lookup(self, distance: float, side: str, min_samples: int) -> Optional[float]:
-        """Linear interpolation between bucket centres; ``None`` when the
-        nearest buckets do not carry ``min_samples`` observations."""
+        """Linear interpolation between the buckets that carry at least
+        ``min_samples`` observations on this side, flat beyond the first and
+        the last of them; ``None`` when no bucket does."""
         if side not in SIDES:
             raise ValueError(f"unknown side: {side!r}")
         usable = [
@@ -139,7 +141,8 @@ class FillModel:
 
     * ``fill_table_enabled`` -- use the table at all (False = formula only)
     * ``fill_table_max_age_hours`` -- older tables are treated as missing
-    * ``fill_table_min_samples`` -- buckets with fewer observations fall back
+    * ``fill_table_min_samples`` -- buckets with fewer observations are
+      skipped; the formula is used when no bucket on that side has enough
     * ``fill_kappa``, ``fill_lambda_tau`` -- the fallback formula
     * ``cancel_after_minutes`` -- the horizon the probabilities refer to
 
