@@ -16,12 +16,12 @@ Other algorithms live on their own branches: `MM_algo1v2` and `MM_algo3`.
 ## One round, in pseudocode
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing1_round_dark.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Alireza77n/Limit-Order-Book/raw/MM_algo2/docs/figures/listing1_round_dark.svg">
   <img alt="Listing 1: one round of the worker, from reading the order book to sending at most one order per side" src="docs/figures/listing1_round.svg">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing2_decide_dark.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Alireza77n/Limit-Order-Book/raw/MM_algo2/docs/figures/listing2_decide_dark.svg">
   <img alt="Listing 2: DECIDE, how MM_algo2 turns the order book and the inventory into a bid B and an ask A" src="docs/figures/listing2_decide.svg">
 </picture>
 
