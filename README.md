@@ -30,12 +30,12 @@ examples and the measured forecast skill: **[docs/MM_algo3.md](docs/MM_algo3.md)
 ## One round
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing1_round_dark.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Alireza77n/Limit-Order-Book/raw/MM_algo3/docs/figures/listing1_round_dark.svg">
   <img alt="Listing 1: one round of a demo lane, from reading the order book to sending at most one order per side" src="docs/figures/listing1_round.svg">
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing2_decide_dark.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/Alireza77n/Limit-Order-Book/raw/MM_algo3/docs/figures/listing2_decide_dark.svg">
   <img alt="Listing 2: DECIDE, how MM_algo3 fits the mean reversion, leans and sets the optimal depths" src="docs/figures/listing2_decide.svg">
 </picture>
 
