@@ -29,65 +29,31 @@ examples and the measured forecast skill: **[docs/MM_algo3.md](docs/MM_algo3.md)
 
 ## One round
 
-```text
-ROUND of a demo lane (engine.py SimpleMarketMaker._run_demo; live: SimpleMarketMaker.run)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing1_round_dark.svg">
+  <img alt="Listing 1: one round of a demo lane, from reading the order book to sending at most one order per side" src="docs/figures/listing1_round.svg">
+</picture>
 
- 1  reload the pair's Demo overlay; apply the hot fields; the lane's algorithm stays algo4
- 2  ob <- GET https://apiv2.nobitex.ir/v3/orderbook/<SYMBOL>
-    if the request fails or bids / asks / lastTradePrice are missing: skip the round
- 3  paper fills: a resting buy at B fills when best_ask <= B, a resting sell at A when best_bid >= A,
-    at its own limit price, at most order_size per side per round; fee f on every fill
- 4  cancel every order older than cancel_after_minutes (3 min)
- 5  q, cash, locked, available <- paper account snapshot (q includes the coins locked in sells)
- 6  write the diagnostics document (the decision below, without changing any state)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/figures/listing2_decide_dark.svg">
+  <img alt="Listing 2: DECIDE, how MM_algo3 fits the mean reversion, leans and sets the optimal depths" src="docs/figures/listing2_decide.svg">
+</picture>
 
- 7  DECIDE: strategy/algo4.py Algo4Strategy.decide_order(ob, q)
-    S <- (best_bid + best_ask) / 2                       ; invalid top of book -> no quote
-    if algo4_sample_seconds have passed since the last sample: append (now, S)
-    drop the samples older than algo4_window_seconds
-    if fewer than 30 samples: fit <- warming_up (no forecast)
-    else OLS of S[k+1] = a + b S[k] + e over the window:
-        dt <- (t_last - t_first) / (n - 1);  t <- (b - 1) / se(b)
-        theta <- -ln(b) / dt;  mu <- a / (1 - b);  half_life <- ln 2 / theta
-        admissible <- 0 < b < 1 and t <= -2.86 and halflife_min <= half_life <= halflife_max
-    if algo4_sigma_pause > 0 and s_eps / S > algo4_sigma_pause: no quote (volatility_pause)
-    tau <- algo4_horizon_seconds, or cancel_after_minutes * 60 when it is 0
-    m <- 0
-    if algo4_use_alpha and admissible:
-        m <- clip((mu - S) (1 - exp(-theta tau)), -L S, +L S) / S        ; L = algo4_lean_clip
-    x <- clip((q - inv_min) / (inv_max - inv_min), 0, 1);  s <- skew_perc (2x - 1)
-    kappa <- fit of the fresh fill table (fill_model.py FillTable.fit_intensity):
-             OLS of ln(-ln(1 - P) / tau_table) = ln(lambda) - kappa d over the buckets
-             with n >= fill_table_min_samples and 0 < P < 1;  else algo4_kappa
-    ask depth d+ <- max(tick / S, 1/kappa + m - s + algo4_risk_perc) + f
-    bid depth d- <- max(tick / S, 1/kappa - m + s + algo4_risk_perc) + f
-    A <- round_up(max(S (1 + d+), best_bid + tick))
-    B <- round_down(min(S (1 - d-), best_ask - tick))
-    G <- (1 + r) / (1 - f)^2 - 1                         ; f = commission_perc, r = exp_ret_min
-    if A / B <= 1 + G:
-        w <- max(((1 + G) B - A) / (2 + G), 0) + tick
-        B <- round_down(B - w);  A <- round_up(A + w)
-    if B >= A or (1 - f)^2 A / B - 1 <= r: no quote (net_return_below_bar)
-    if the last pair is within the requote band of (B, A) on both sides, younger than
-       refresh_seconds and still above the bar: (B, A) <- the last pair      ; hysteresis
-    return (B, A)
+The grey § numbers are sections of [docs/MM_algo3.md](docs/MM_algo3.md). Listing 1 is
+`market_maker/engine.py` (live: `SimpleMarketMaker.run`), Listing 2 is `market_maker/strategy/algo4.py`.
 
- 8  trend pause: mid fell >= 0.3 % over 600 s -> no buys; rose >= 0.3 % -> no sells
-    for side in (sell, buy):
-        paused: cancel the side's resting orders
-        else:   cancel resting orders farther than band(P) = max(5 ticks, 0.03 % of P)
-                from the new price; an order still within the band -> no new order there
- 9  sizes: buy = 2 order_size (1 - x_buy), sell = 2 order_size x_sell
-           (x_buy counts the open buys, x_sell leaves out the locked sells)
-    sell amount <- min(sell size, available inventory - inv_min)
-    buy amount  <- min(buy size, available cash / B); none if open buys + q + amount > inv_max
-    an amount below 0.1 order_size is not sent
-10  send the sell at A, then the buy at B
-        demo: paper ledger order "<symbol>-<side>-<round>-<ms>"
-        live: signed POST /market/orders/add {type, srcCurrency, dstCurrency, amount, price, clientOrderId}
-11  record the round (SQLite store and CSV export) and the Telegram messages
-12  wait for the next round start (every time_step seconds)
-```
+**Listing 1.** $`T_s`$ time step, $`T_c`$ order lifetime (3 min), $`Q`$ order size, $`q_{\min}, q_{\max}`$
+inventory band, $`x_b`$ and $`x_s`$ the position in the band counting our open buys and leaving out our open
+sells, $`q_{\mathrm{free}}`$ and $`C`$ free coins and free cash, $`S_W`$ the oldest mid of the last $`W`$ =
+600 s, $`\theta`$ = 0.3 %, $`w(P) = \max(5\epsilon,\ 0.0003\,P)`$ the requote band ($`\epsilon`$: the tick).
+The caps are the band ceiling for buys and, live, the exposure guards.
+
+**Listing 2.** $`S`$ the mid, $`\Delta_s`$ = 10 s the sample spacing, $`W`$ = 1800 s the window, $`\Delta t`$
+the mean spacing of the samples, $`\mathrm{se}(b)`$ the standard error of $`b`$, $`t_{\min}, t_{\max}`$ = 60 s
+and 900 s, $`\tau`$ the order lifetime, $`L`$ = 0.5 %, $`\kappa_0`$ = 400, $`\chi`$ the inventory skew,
+$`\varrho`$ the widening (0), $`f`$ the fee, $`r`$ the required return, $`G = (1 + r)/(1 - f)^2 - 1`$,
+$`T_r`$ = 300 s. Two switches are left out: the lean needs `algo4_use_alpha` (on), and the volatility pause
+`algo4_sigma_pause` (off) would return no quote when the residual is too large.
 
 ## Key formulas
 
