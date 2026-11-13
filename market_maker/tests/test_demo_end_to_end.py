@@ -88,7 +88,7 @@ def test_two_symbol_demo_replay_shares_session_isolates_state_and_has_zero_real_
             run.TRADING_PROFILES[profile_name], "inventory_sizing_enabled", False
         )
 
-        bot = run.make_bot(cfg, algorithm="algo1", exchange_name="nobitex", mode="demo")
+        bot = run.make_bot(cfg, algorithm="algo1", mode="demo")     # each profile on its own exchange
         bot.exchange._market_data = ReplayMarketData()
         times = iter([T0, T0 + timedelta(seconds=1), T0 + timedelta(seconds=2)])
         bot.now_provider = lambda times=times: next(times)

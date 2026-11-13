@@ -14,6 +14,13 @@
         <a href="{{ url_for('admin_index') }}">Trading Control</a>
       </h1>
       <div class="header-meta">
+        <span class="exchange-switch" role="group" aria-label="Exchange">
+          {% for exchange_key, exchange_name in exchanges %}
+          <a href="{{ url_for('admin_select_exchange', name=exchange_key, next=request.path) }}"
+             class="exchange-option{% if exchange_key == selected_exchange %} active{% endif %}"
+             {% if exchange_key == selected_exchange %}aria-current="true"{% endif %}>{{ exchange_name }}</a>
+          {% endfor %}
+        </span>
         <span class="demo-badge">{% if request.endpoint and request.endpoint.startswith('admin_forward') %}LIVE FORWARD TEST{% elif request.endpoint and request.endpoint.startswith('admin_algorithm') %}DEMO AND LIVE{% else %}DEMO / PAPER MODE{% endif %}</span>
         {% if session_id %}
         <span class="session-id">Session: {{ session_id }}</span>

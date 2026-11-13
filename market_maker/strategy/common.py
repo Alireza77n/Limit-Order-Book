@@ -30,6 +30,9 @@ class QuoteArithmetic:
             return 0
 
     def tick_size(self) -> float:
+        configured = float(getattr(self.cfg, "tick", 0.0) or 0.0)
+        if configured > 0:
+            return configured
         if self.cfg.pair.upper().endswith("IRT"):
             return 10.0
         if self.cfg.pair.upper().endswith("USDT"):

@@ -6,7 +6,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 EPSILON = 1e-12
@@ -707,9 +707,16 @@ class PaperLedger:
         now: datetime,
         trade_price: Optional[float] = None,
         traded_volume: Optional[float] = None,
+        market_trades: Optional[List[Dict[str, Any]]] = None,
     ) -> List[PaperEvent]:
+        """``market_trades`` (optional) are the exchange's public trades since the previous call, each
+        ``{"price", "amount", "taker": "buy" | "sell"}``. A resting buy at L is filled, at L, by the
+        volume takers sold at L or lower (a resting sell at L by what takers bought at L or higher):
+        had the order really rested there, those takers would have met it first. Volume used by one
+        order is not offered again to the next on the same side."""
         self.valuation_price = float(last_price)
         events: List[PaperEvent] = []
+        feed_used = {"buy": 0.0, "sell": 0.0}
         side_budgets = {
             "buy": self._observation_budget(traded_volume),
             "sell": self._observation_budget(traded_volume),
@@ -745,6 +752,30 @@ class PaperLedger:
                 or (order.side == "sell" and best_bid >= order.limit_price)
             )
             if not trade_eligible and not touch_eligible:
+                feed_volume = 0.0
+                for trade in market_trades or ():
+                    try:
+                        price, amount = float(trade["price"]), float(trade["amount"])
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if order.side == "buy" and trade.get("taker") == "sell" and price <= order.limit_price:
+                        feed_volume += amount
+                    elif order.side == "sell" and trade.get("taker") == "buy" and price >= order.limit_price:
+                        feed_volume += amount
+                feed_volume = max(0.0, feed_volume - feed_used[order.side])
+                if feed_volume <= EPSILON:
+                    continue
+                fill_amount = min(order.remaining_amount, feed_volume)
+                feed_used[order.side] += fill_amount
+                event = self.apply_cumulative_fill(
+                    order.client_order_id,
+                    cumulative_matched=order.matched_amount + fill_amount,
+                    fill_price=order.limit_price,
+                    reason="trade_feed",
+                    now=now,
+                )
+                if event:
+                    events.append(event)
                 continue
 
             if not self._passes_fill_probability(adverse=touch_eligible):
@@ -792,7 +823,7 @@ class PaperLedger:
     @staticmethod
     def _symbol_currencies(symbol: str) -> tuple[str, str]:
         normalized = str(symbol).upper()
-        for quote in ("USDT", "IRT", "USD", "EUR", "BTC", "ETH"):
+        for quote in ("USDT", "IRT", "IRR", "USD", "EUR", "BTC", "ETH"):
             if normalized.endswith(quote) and len(normalized) > len(quote):
                 return normalized[:-len(quote)], quote
         return normalized, "QUOTE"

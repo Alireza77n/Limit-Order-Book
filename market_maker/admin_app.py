@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import pandas as pd
-from flask import Flask, after_this_request, flash, jsonify, redirect, render_template, request, send_file, session as flask_session, url_for
+from flask import Flask, abort, after_this_request, flash, jsonify, redirect, render_template, request, send_file, session as flask_session, url_for
 from werkzeug.security import check_password_hash
 
 from control_queue import (
@@ -59,7 +59,10 @@ from forward_config import (
     desired_config as forward_desired_config,
     validate_forward_config,
 )
-from config import TRADING_PROFILES, demo_csv_path
+from config import (
+    DEFAULT_EXCHANGE, EXCHANGES, TRADING_PROFILES, demo_csv_path,
+    exchange_label, exchange_profiles, profile_exchange,
+)
 from dashboard import activity_records, filter_session, load_track
 from result_store import DemoResultStore
 from strategy.catalog import ALGORITHMS, DEFAULT_ALGORITHM, SELECTABLE_ALGORITHMS, algorithm_label
@@ -72,7 +75,28 @@ SESSION_IDLE_TIMEOUT = timedelta(minutes=30)
 PAIRS = tuple(TRADING_PROFILES)
 PAIR_LOCK_SUFFIX = {pair: str(TRADING_PROFILES[pair]["pair"]).lower() for pair in PAIRS}
 PAIR_CURRENCY = {pair: str(TRADING_PROFILES[pair]["currency_1"]) for pair in PAIRS}
-WALLET_CURRENCIES = ("rls",) + tuple(dict.fromkeys(PAIR_CURRENCY.values()))
+# The exchange of every market, and the wallets of each exchange: its cash currency first.
+PAIR_EXCHANGE = {pair: profile_exchange(pair) for pair in PAIRS}
+EXCHANGE_KEYS = tuple(key for key in EXCHANGES if exchange_profiles(key))
+EXCHANGE_WALLETS = {
+    key: (str(EXCHANGES[key]["cash_currency"]),) + tuple(dict.fromkeys(
+        PAIR_CURRENCY[pair] for pair in exchange_profiles(key)))
+    for key in EXCHANGE_KEYS
+}
+WALLET_CURRENCIES = tuple(currency for key in EXCHANGE_KEYS for currency in EXCHANGE_WALLETS[key])
+
+
+def selected_exchange() -> str:
+    """The exchange the operator is looking at (the header's selector); Nobitex until chosen."""
+    try:
+        chosen = flask_session.get("exchange")
+    except RuntimeError:          # outside a request
+        chosen = None
+    return chosen if chosen in EXCHANGE_KEYS else DEFAULT_EXCHANGE
+
+
+def selected_pairs() -> list:
+    return exchange_profiles(selected_exchange())
 
 
 def create_app(config: Optional[dict] = None) -> Flask:
@@ -102,12 +126,33 @@ def create_app(config: Optional[dict] = None) -> Flask:
     @app.context_processor
     def _pairs_for_templates():
         # The templates loop over the markets instead of naming btc and usdt.
+        # ``pairs`` are the markets of the exchange chosen in the header, so every page
+        # shows one exchange at a time; ``all_pairs`` is every market.
+        exchange = selected_exchange()
         return {
-            "pairs": list(PAIRS),
+            "pairs": exchange_profiles(exchange),
+            "all_pairs": list(PAIRS),
             "pair_symbols": {pair: str(TRADING_PROFILES[pair]["pair"]) for pair in PAIRS},
             "pair_currencies": PAIR_CURRENCY,
-            "wallet_currencies": WALLET_CURRENCIES,
+            "pair_exchange": PAIR_EXCHANGE,
+            "wallet_currencies": EXCHANGE_WALLETS[exchange],
+            "exchanges": [(key, exchange_label(key)) for key in EXCHANGE_KEYS],
+            "selected_exchange": exchange,
+            "selected_exchange_label": exchange_label(exchange),
+            "cash_currency": str(EXCHANGES[exchange]["cash_currency"]),
         }
+
+    @app.route("/admin/exchange/<name>")
+    def admin_select_exchange(name: str):
+        """The header's Exchange selector: remember the choice for this login and go back."""
+        if name not in EXCHANGE_KEYS:
+            abort(404)
+        flask_session["exchange"] = name
+        target = request.args.get("next") or ""
+        # only pages of this panel; a page of one market does not exist on the other exchange
+        if not target.startswith("/admin/") or "//" in target or chr(92) in target or "/config/" in target:
+            target = url_for("admin_index")
+        return redirect(target)
 
     _register_auth(app)
     _register_routes(app)
@@ -281,11 +326,14 @@ def read_forward_wallet_snapshot(app: Flask, pair: str):
     # The cash wallet and the two original markets must be present; a wallet
     # the forward agent does not read yet (a market added later) is shown as
     # unavailable rather than failing the whole snapshot.
+    exchange = PAIR_EXCHANGE.get(pair, DEFAULT_EXCHANGE)
+    required = ("rls", "btc", "usdt") if exchange == DEFAULT_EXCHANGE else (
+        str(EXCHANGES[exchange]["cash_currency"]), PAIR_CURRENCY[pair])
     if any(
         currency not in balances
         or isinstance(balances[currency], bool)
         or not isinstance(balances[currency], (int, float))
-        for currency in ("rls", "btc", "usdt")
+        for currency in required
     ):
         return None, "The wallet agent returned an incomplete balance snapshot."
     for currency in WALLET_CURRENCIES:
@@ -333,7 +381,8 @@ def _control_error(exc: Exception):
 
 def _resolve_pairs(selector: Optional[str]):
     if selector == "both":
-        return list(PAIRS)
+        # "both" on a form means every market of the exchange the operator is looking at
+        return selected_pairs()
     if selector in PAIRS:
         return [selector]
     return None

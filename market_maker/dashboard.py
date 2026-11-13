@@ -47,7 +47,10 @@ from dash import Dash, ctx, dash_table, dcc, html, no_update
 from dash.dependencies import Input, Output, State
 from plotly.subplots import make_subplots
 
-from config import DEMO_STATE_DIR, RESULTS_DIR, TRADING_PROFILES, demo_csv_path
+from config import (
+    DEFAULT_EXCHANGE, DEMO_STATE_DIR, EXCHANGES, RESULTS_DIR, TRADING_PROFILES, demo_csv_path,
+    exchange_label, profile_exchange,
+)
 from strategy.catalog import ALGORITHMS, DEFAULT_ALGORITHM, SELECTABLE_ALGORITHMS, algorithm_info, algorithm_label
 from demo_config import (
     CONFIG_STATUS_LABELS,
@@ -85,10 +88,11 @@ def _build_tracks() -> Dict[str, Dict[str, Any]]:
     tracks: Dict[str, Dict[str, Any]] = {}
     for pair in TRADING_PROFILES:
         name = pair.upper()
+        exchange = profile_exchange(pair)
         tracks[f"{pair}_real"] = {
             "label": f"{name} — Live Forward Test",
             "path": os.path.join(FORWARD_RESULTS_DIR, f"{pair}_track.csv"),
-            "status": "real", "lane": None,
+            "status": "real", "lane": None, "exchange": exchange,
         }
         lane_paths = []
         for lane in SELECTABLE_ALGORITHMS:
@@ -96,16 +100,19 @@ def _build_tracks() -> Dict[str, Dict[str, Any]]:
             lane_paths.append(path)
             tracks[f"{pair}_demo_{lane}"] = {
                 "label": f"{name} — Demo {algorithm_label(lane)}",
-                "path": path, "status": "demo", "lane": lane,
+                "path": path, "status": "demo", "lane": lane, "exchange": exchange,
             }
         tracks[f"{pair}_demo_lanes"] = {
             "label": f"{name} — Demo, all algorithms (compare)",
-            "path": tuple(lane_paths), "status": "demo", "lane": None,
+            "path": tuple(lane_paths), "status": "demo", "lane": None, "exchange": exchange,
         }
-        tracks[f"{pair}_demo"] = {
-            "label": f"{name} — Demo history (one worker, until 20 Oct 2026)",
-            "path": demo_csv_path(TRADING_PROFILES[pair]["output_csv"]), "status": "demo", "lane": None,
-        }
+        if exchange == DEFAULT_EXCHANGE:
+            # the single-algorithm demo worker ran on Nobitex only
+            tracks[f"{pair}_demo"] = {
+                "label": f"{name} — Demo history (one worker, until 20 Oct 2026)",
+                "path": demo_csv_path(TRADING_PROFILES[pair]["output_csv"]), "status": "demo", "lane": None,
+                "exchange": exchange,
+            }
     return tracks
 
 
@@ -117,6 +124,14 @@ TRACKS = _build_tracks()
 # mixes simulated rows with a real-account view.
 if os.environ.get("LOB_LIVE_ONLY_DASHBOARD", "0") == "1":
     TRACKS = {key: value for key, value in TRACKS.items() if value["status"] == "real"}
+
+# The exchanges that have at least one track here, in config.EXCHANGES order: the choices of the
+# Exchange selector in the top bar.
+DASHBOARD_EXCHANGES = [key for key in EXCHANGES if any(t.get("exchange") == key for t in TRACKS.values())]
+
+
+def track_exchange(track_key) -> str:
+    return str(TRACKS.get(track_key, {}).get("exchange") or DEFAULT_EXCHANGE)
 
 QUOTE_EXTRA_COLUMNS = [
     "Quote Mode", "Selection Reason", "Centre", "Bid Distance", "Ask Distance",
@@ -2005,7 +2020,21 @@ app.layout = html.Div([
             parent_style={"flex": "1 1 auto"},
             content_style={"display": "none"},
         ),
-        html.Div(id="status-badge", style={"marginLeft": "auto"}),
+        html.Div([
+            html.Span("Exchange", style={"color": "#9fb3b1", "fontSize": "0.78rem", "marginRight": "0.5rem"}),
+            dcc.RadioItems(
+                id="exchange-choice",
+                options=[{"label": exchange_label(key), "value": key} for key in DASHBOARD_EXCHANGES],
+                value=track_exchange(default_track()),
+                inline=True,
+                inputStyle={"marginRight": "0.3rem"},
+                labelStyle={"color": "#e8f1f0", "fontWeight": 600, "fontSize": "0.9rem",
+                            "marginRight": "0.9rem", "cursor": "pointer"},
+            ),
+        ], style={"display": "flex", "alignItems": "center", "fontFamily": FONT_FAMILY,
+                  "marginLeft": "auto", "padding": "0.15rem 0.6rem", "border": "1px solid #3d5553",
+                  "borderRadius": "8px"}),
+        html.Div(id="status-badge"),
     ], style={"display": "flex", "alignItems": "center", "gap": "0.5rem", "background": BAR,
               "padding": "0.6rem 1.25rem", "borderRadius": "10px", "marginBottom": "1rem", "flexWrap": "wrap"}),
 
@@ -2086,13 +2115,16 @@ def apply_url(search):
     return tab if tab in TAB_VALUES else no_update
 
 
-def visible_tracks(choice) -> List[str]:
+def visible_tracks(choice, exchange=None) -> List[str]:
     """The tracks the picker offers for an Algorithm choice: the live tracks
     and the single-worker history always (their rounds are filtered to the
     chosen algorithm); one algorithm's own demo lane only when it is chosen;
-    the two lanes together only under "All algorithms"."""
+    the two lanes together only under "All algorithms". With ``exchange``
+    (the Exchange selector), only that exchange's markets."""
     keys = []
     for key, track in TRACKS.items():
+        if exchange is not None and track.get("exchange", DEFAULT_EXCHANGE) != exchange:
+            continue
         lane = track.get("lane")
         combined = isinstance(track["path"], (tuple, list))
         if choice in (None, ALGORITHM_VIEW_ALL) or (lane is None and not combined) or lane == choice:
@@ -2109,17 +2141,36 @@ def _track_for_choice(current, choice, allowed: List[str]):
         wanted = f"{_pair_of(current)}_demo_{choice}"
         if wanted in allowed:
             return wanted
+    if current in TRACKS:
+        # another exchange was chosen: the same kind of track (same lane, live or demo) there
+        suffix = current.split("_", 1)[1] if "_" in current else ""
+        for key in allowed:
+            if "_" in key and key.split("_", 1)[1] == suffix:
+                return key
     return allowed[0] if allowed else None
 
 
+@app.callback(Output("exchange-choice", "value"), Input("url", "search"))
+def apply_url_exchange(search):
+    """Deep links: ?exchange=mazdax, or the exchange of the track named by ?track=."""
+    params = _url_params(search)
+    wanted = params.get("exchange")
+    if wanted not in DASHBOARD_EXCHANGES and params.get("track") in TRACKS:
+        wanted = track_exchange(params["track"])
+    return wanted if wanted in DASHBOARD_EXCHANGES else no_update
+
+
 @app.callback(Output("track", "options"), Output("track", "value"),
-              Input("algorithm-choice", "value"), Input("url", "search"), State("track", "value"))
-def tracks_for_algorithm(choice, search, current):
-    """The Track list follows the Algorithm choice (visible_tracks); a track
-    named in the deep link wins when the choice offers it. The value is
-    written only when it has to change, so a late response never undoes a
-    choice the operator made meanwhile."""
-    allowed = visible_tracks(choice)
+              Input("algorithm-choice", "value"), Input("url", "search"), State("track", "value"),
+              Input("exchange-choice", "value"))
+def tracks_for_algorithm(choice, search, current, exchange=None):
+    """The Track list follows the Exchange selector and the Algorithm choice
+    (visible_tracks); a track named in the deep link wins when the choice
+    offers it. The value is written only when it has to change, so a late
+    response never undoes a choice the operator made meanwhile."""
+    if exchange not in DASHBOARD_EXCHANGES:
+        exchange = None
+    allowed = visible_tracks(choice, exchange)
     options = [{"label": TRACKS[key]["label"], "value": key} for key in allowed]
     wanted = _url_params(search).get("track")
     if wanted in allowed and (current is None or _triggered_by("url")):

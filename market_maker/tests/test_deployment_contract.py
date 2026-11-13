@@ -18,7 +18,17 @@ COMPOSE_PATH = ROOT / "deploy/docker-compose.production.yml"
 LOCAL_COMPOSE_PATH = ROOT / "docker-compose.yml"
 DOCKERFILE_PATH = ROOT / "Dockerfile"
 ENV_PATH = ROOT / "deploy/demo.env"
-DEMO_SERVICES = ("btc-demo", "usdt-demo", "eth-demo", "xaut-demo", "trx-demo")
+DEMO_SERVICES = ("btc-demo", "usdt-demo", "eth-demo", "xaut-demo", "trx-demo",
+                 "ahrm1-demo", "roba1-demo", "nogh1-demo", "zfam1-demo")      # the last four trade on Mazdax
+# The lock a worker leases is named after its symbol: <coin>irt on Nobitex, <coin>irr on Mazdax.
+MAZDAX_SERVICES = ("ahrm1-demo", "roba1-demo", "nogh1-demo", "zfam1-demo")
+
+
+def worker_lock_name(service):
+    coin = service[:-len("-demo")]
+    return f".worker_{coin}{'irr' if service in MAZDAX_SERVICES else 'irt'}.lock"
+
+
 SERVICES = ("session-init",) + DEMO_SERVICES + ("dashboard", "admin")
 CONTAINER_NAMES = {
     "session-init": "lob-session-init",
@@ -27,6 +37,10 @@ CONTAINER_NAMES = {
     "eth-demo": "lob-eth-demo",
     "xaut-demo": "lob-xaut-demo",
     "trx-demo": "lob-trx-demo",
+    "ahrm1-demo": "lob-ahrm1-demo",
+    "roba1-demo": "lob-roba1-demo",
+    "nogh1-demo": "lob-nogh1-demo",
+    "zfam1-demo": "lob-zfam1-demo",
     "dashboard": "lob-dashboard",
     "admin": "lob-admin",
 }
@@ -39,6 +53,10 @@ COMMANDS = {
         "--worker-lock", "/app/runtime/state/.worker_ethirt.lock",
         "--worker-lock", "/app/runtime/state/.worker_xautirt.lock",
         "--worker-lock", "/app/runtime/state/.worker_trxirt.lock",
+        "--worker-lock", "/app/runtime/state/.worker_ahrm1irr.lock",
+        "--worker-lock", "/app/runtime/state/.worker_roba1irr.lock",
+        "--worker-lock", "/app/runtime/state/.worker_nogh1irr.lock",
+        "--worker-lock", "/app/runtime/state/.worker_zfam1irr.lock",
     ],
     "btc-demo": [
         "python", "demo_entrypoint.py", "python", "run.py", "--profile", "btc",
@@ -58,6 +76,22 @@ COMMANDS = {
     ],
     "trx-demo": [
         "python", "demo_entrypoint.py", "python", "run.py", "--profile", "trx",
+        "--mode", "demo", "--continuous",
+    ],
+    "ahrm1-demo": [
+        "python", "demo_entrypoint.py", "python", "run.py", "--profile", "ahrm1",
+        "--mode", "demo", "--continuous",
+    ],
+    "roba1-demo": [
+        "python", "demo_entrypoint.py", "python", "run.py", "--profile", "roba1",
+        "--mode", "demo", "--continuous",
+    ],
+    "nogh1-demo": [
+        "python", "demo_entrypoint.py", "python", "run.py", "--profile", "nogh1",
+        "--mode", "demo", "--continuous",
+    ],
+    "zfam1-demo": [
+        "python", "demo_entrypoint.py", "python", "run.py", "--profile", "zfam1",
         "--mode", "demo", "--continuous",
     ],
     "dashboard": ["python", "demo_entrypoint.py", "python", "dashboard.py"],
@@ -251,6 +285,10 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         "eth-demo": ("unless-stopped", "30s", 128, 320),
         "xaut-demo": ("unless-stopped", "30s", 128, 320),
         "trx-demo": ("unless-stopped", "30s", 128, 320),
+        "ahrm1-demo": ("unless-stopped", "30s", 128, 320),
+        "roba1-demo": ("unless-stopped", "30s", 128, 320),
+        "nogh1-demo": ("unless-stopped", "30s", 128, 320),
+        "zfam1-demo": ("unless-stopped", "30s", 128, 320),
         "dashboard": ("unless-stopped", "20s", 128, 384),
         "admin": ("unless-stopped", "20s", 128, 384),
     }
@@ -267,10 +305,11 @@ def test_runtime_hardening_resources_and_restart_policies_are_bounded():
         assert f"pids: {pids}" in block
         assert "healthcheck:" in block
 
-    # Five demo workers (1 November 2026) plus the two UI containers on a
-    # 4 GB host: the limits add up to 2.4 GB; the workers use 80–210 MB each.
+    # Nine demo workers (five Nobitex markets, four Mazdax markets since 13 November 2026)
+    # plus the two UI containers: the limits add up to 3.6 GB; the workers use about
+    # 220-250 MB each and the server has 24 GB.
     long_running_memory_mib = sum(expected[name][3] for name in SERVICES[1:])
-    assert long_running_memory_mib <= 2432
+    assert long_running_memory_mib <= 3648
 
 
 def test_mounts_are_limited_to_separate_results_and_state_roots():
@@ -324,7 +363,7 @@ def test_healthchecks_are_guarded_and_worker_health_requires_an_active_lock():
         assert "CMD-SHELL" not in block
 
     for name, lock_name in (
-        (service, f".worker_{service[:-len('-demo')]}irt.lock") for service in DEMO_SERVICES
+        (service, worker_lock_name(service)) for service in DEMO_SERVICES
     ):
         block = blocks[name]
         assert lock_name in block
@@ -433,6 +472,22 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
             (ROOT / "runtime/results", "/app/runtime/results", False),
             (ROOT / "runtime/state", "/app/runtime/state", False),
         ],
+        "ahrm1-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "roba1-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "nogh1-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
+        "zfam1-demo": [
+            (ROOT / "runtime/results", "/app/runtime/results", False),
+            (ROOT / "runtime/state", "/app/runtime/state", False),
+        ],
         "dashboard": [
             (ROOT / "runtime/results", "/app/runtime/results", True),
             (ROOT / "runtime/state", "/app/runtime/state", True),
@@ -458,6 +513,10 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
         "eth-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
         "xaut-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
         "trx-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "ahrm1-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "roba1-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "nogh1-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
+        "zfam1-demo": (0.5, 128, 128, "unless-stopped", "30s", "30s", "10s", "20s"),
         "dashboard": (0.5, 192, 128, "unless-stopped", "20s", "30s", "10s", "20s"),
         "admin": (0.5, 192, 128, "unless-stopped", "20s", "30s", "10s", "20s"),
     }
@@ -510,6 +569,7 @@ def test_rendered_compose_model_enforces_the_complete_deployment_contract():
     for name, lock_name in (
         ("btc-demo", ".worker_btcirt.lock"),
         ("usdt-demo", ".worker_usdtirt.lock"),
+        ("ahrm1-demo", ".worker_ahrm1irr.lock"),
     ):
         health_test = services[name]["healthcheck"]["test"]
         assert health_test[:5] == ["CMD", "python", "demo_entrypoint.py", "python", "-c"]

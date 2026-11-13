@@ -138,7 +138,7 @@ def test_overview_default_still_returns_json(client):
     _login(client)
     response = client.get("/admin/")
     assert response.status_code == 200
-    assert response.get_json()["workers"] == {pair: False for pair in ["btc", "usdt", "eth", "xaut", "trx"]}
+    assert response.get_json()["workers"] == {pair: False for pair in ["btc", "usdt", "eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1"]}
 
 
 def test_overview_html_for_browser_accept_header(client):
@@ -157,7 +157,7 @@ def test_overview_explicit_json_accept_returns_json(client):
     _login(client)
     response = client.get("/admin/", headers={"Accept": "application/json"})
     assert response.status_code == 200
-    assert response.get_json()["workers"] == {pair: False for pair in ["btc", "usdt", "eth", "xaut", "trx"]}
+    assert response.get_json()["workers"] == {pair: False for pair in ["btc", "usdt", "eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1"]}
 
 
 def test_unauthenticated_html_request_redirects_to_login(client):
@@ -1176,9 +1176,10 @@ def test_overview_shows_the_algorithm_of_each_pair_and_the_drop_down(forward_app
                     pair="usdt", profiles=TRADING_PROFILES)
     status = client.get("/admin/").get_json()
     # demo: the lanes switched on (both by default); live: the saved algorithm
-    every_lane = {pair: "algo1,algo3,algo4" for pair in ("eth", "xaut", "trx")}
+    others = ("eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1")      # Nobitex, then the Mazdax markets
+    every_lane = {pair: "algo1,algo3,algo4" for pair in others}
     assert status["algorithms"] == {"demo": dict({"btc": "algo1,algo3,algo4", "usdt": "algo1,algo4"}, **every_lane),
-                                    "live": dict({"btc": "algo1", "usdt": "algo3"}, eth="algo1", xaut="algo1", trx="algo1")}
+                                    "live": dict({"btc": "algo1", "usdt": "algo3"}, **{pair: "algo1" for pair in others})}
     body = _html(client.get("/admin/", headers=HTML))
     assert "Algorithm in force" not in body and ">change<" not in body     # the old card is gone
     assert re.search(r'<form method="get" action="/admin/algorithm"[^>]*data-auto-submit', body)
@@ -1320,13 +1321,13 @@ def test_algorithm_page_json_reports_the_same_state(forward_app, monkeypatch, tm
 
     assert state["algorithm"] == "algo3" and state["demo_session_id"] == "demo-test-1"
     btc_demo, usdt_demo = state["demo"][0], state["demo"][1]      # then eth, xaut, trx with the defaults
-    assert [entry["pair"] for entry in state["demo"]] == ["btc", "usdt", "eth", "xaut", "trx"]
+    assert [entry["pair"] for entry in state["demo"]] == ["btc", "usdt", "eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1"]
     assert (btc_demo["pair"], btc_demo["algorithm"], btc_demo["enabled_labels"]) == ("btc", "algo3,algo4", ["MM_algo2", "MM_algo3"])
     assert btc_demo["lanes"]["algo3"] == {"enabled": True, "state": "running", "session_label": "MM_algo2 · demo-test-1"}
     assert btc_demo["lanes"]["algo1"]["state"] == "off"
     assert usdt_demo["algorithm"] == "algo1,algo3,algo4" and usdt_demo["lanes"]["algo1"]["state"] == "starting"
     btc, usdt = state["live"][0], state["live"][1]
-    assert [entry["pair"] for entry in state["live"]] == ["btc", "usdt", "eth", "xaut", "trx"]
+    assert [entry["pair"] for entry in state["live"]] == ["btc", "usdt", "eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1"]
     assert (usdt["running"], usdt["running_algorithm"], usdt["next_algorithm"], usdt["session_id"]) == (
         True, "algo1", "algo3", "1792069104.17595")
     assert (btc["running"], btc["next_algorithm"], btc["session_id"]) == (False, "algo1", None)

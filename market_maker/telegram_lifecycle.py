@@ -66,7 +66,7 @@ class PaperTelegramReporter:
     @staticmethod
     def _currencies(symbol: str) -> tuple[str, str]:
         normalized = str(symbol).upper()
-        for quote in ("USDT", "IRT", "USD", "EUR", "BTC", "ETH"):
+        for quote in ("USDT", "IRT", "IRR", "USD", "EUR", "BTC", "ETH"):
             if normalized.endswith(quote) and len(normalized) > len(quote):
                 return normalized[:-len(quote)], quote
         return normalized, "QUOTE"

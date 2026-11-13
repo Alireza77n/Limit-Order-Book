@@ -570,7 +570,7 @@ def test_status_route_reports_session_and_workers(client, app):
     assert response.status_code == 200
     body = response.get_json()
     assert body["session_id"] == "demo-123"
-    assert body["workers"] == {pair: False for pair in ["btc", "usdt", "eth", "xaut", "trx"]}
+    assert body["workers"] == {pair: False for pair in ["btc", "usdt", "eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1"]}
 
 
 def test_reset_rejected_without_exact_confirm(client, app, fake_agent):

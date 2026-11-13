@@ -76,6 +76,20 @@ class MMConfig:
     pair: str = "BTCIRT"                           # e.g., "BTCIRT" or "BTCUSDT"
     currency_1: str = "btc"                        # base currency code for wallet endpoint
     currency_2: str = "rls"                        # quote currency (e.g., "rls" or "usdt")
+    # The exchange this market trades on: a key of EXCHANGES below ("nobitex" or "mazdax").
+    exchange: str = "nobitex"
+    # Price tick of the market. 0 = infer it from the symbol (10 on ...IRT, else 0.01), the
+    # rule every Nobitex market has always used.
+    tick: float = 0.0
+    # Order amounts are rounded down to a multiple of amount_step before they are sent
+    # (0 = no rounding), and an order worth less than min_notional (amount x price, in the
+    # quote currency) is not sent (0 = no floor). Mazdax rejects both (errors 122 and 119).
+    amount_step: float = 0.0
+    min_notional: float = 0.0
+    # Demo: fill resting paper orders from the exchange's recent trades (a buy at L fills, at L,
+    # by the volume that takers sold at L or lower since the last round), in addition to the
+    # touch rule. Needs an exchange client that reports trades (Mazdax).
+    demo_trade_fills_enabled: bool = False
     order_size: Optional[float] = 0.000015             # if None, inv_max/100
     inv_initial: float = None
     cash_initial: float = None
@@ -488,3 +502,107 @@ def _market_profile(code: str, *, order_size: float, inv_max: float, time_step: 
 TRADING_PROFILES["eth"] = _market_profile("eth", order_size=0.0005, inv_max=0.016, time_step=30)
 TRADING_PROFILES["xaut"] = _market_profile("xaut", order_size=0.0003, inv_max=0.0094, time_step=30)
 TRADING_PROFILES["trx"] = _market_profile("trx", order_size=3.5, inv_max=118.0, time_step=30)
+
+
+# ---------------------------------------------------------------- exchanges
+# Every profile belongs to one exchange (its "exchange" key; Nobitex when absent).
+# EXCHANGES is the single list the worker, the dashboard and the admin panel read.
+EXCHANGES: Dict[str, Dict[str, Any]] = {
+    "nobitex": dict(
+        label="Nobitex",
+        api_key_env="NOBITEX_API_KEY",
+        secret_key_env="NOBITEX_SECRET_KEY",
+        cash_currency="rls",
+        # Live: the smallest fee the forward configuration accepts (Nobitex charges 0.25 %).
+        min_live_commission_perc=0.0025,
+    ),
+    "mazdax": dict(
+        label="Mazdax",
+        api_key_env="MAZDAX_API_KEY",
+        secret_key_env="MAZDAX_SECRET_KEY",
+        cash_currency="irr",
+        min_live_commission_perc=0.0025,
+    ),
+}
+DEFAULT_EXCHANGE = "nobitex"
+MAZDAX_BASE_URL = "https://api.mazdax.ir"
+
+
+def _mazdax_profile(code: str, *, order_size: float, inv_max: float, min_notional: float,
+                    time_step: int = 30) -> Dict[str, Any]:
+    """A profile for one Mazdax market (https://api-docs.mazdax.tech). Mazdax lists rial markets
+    of fund and commodity tokens: the symbol is <CODE>IRR, prices are whole rials (tick 1), the
+    four markets below trade whole units (amount step 1), and the cash wallet is IRR. The
+    strategy settings are the USDT profile's, as for every market added after BTC and USDT;
+    sizes are about 3 million rial per order and about 100 million rial of inventory at the
+    13 November 2026 prices. Demo fills also use Mazdax's public trade feed, because these
+    books are wide (6 to 10 % between best bid and best ask that day) and trades happen
+    inside the spread, which the touch rule alone never sees."""
+    profile = dict(TRADING_PROFILES["usdt"])
+    profile.update(
+        exchange="mazdax",
+        algorithm_id=f"1{code}",
+        pair=f"{code.upper()}IRR",
+        currency_1=code,
+        currency_2="irr",
+        tick=1.0,
+        amount_step=1.0,
+        min_notional=min_notional,
+        inv_max=inv_max,
+        inv_initial=0.0,
+        order_size=order_size,
+        time_step=time_step,
+        demo_trade_fills_enabled=True,
+        url_send_order=f"{MAZDAX_BASE_URL}/hapi/v1/spot/order",
+        url_wallet_balance=f"{MAZDAX_BASE_URL}/hapi/v1/spot/wallet",
+        output_csv=os.path.join(RESULTS_DIR, f"{code}_track.csv"),
+    )
+    return profile
+
+
+# Added 13 November 2026: the four most traded Mazdax markets (24-hour turnover that day:
+# AHRM1 131, ROBA1 54, NOGH1 45, ZFAM1 36 billion rial). Prices that day: AHRM1 about
+# 88 thousand rial, ROBA1 235 thousand, NOGH1 12 thousand, ZFAM1 176 thousand.
+TRADING_PROFILES["ahrm1"] = _mazdax_profile("ahrm1", order_size=34.0, inv_max=1150.0, min_notional=100000.0)
+TRADING_PROFILES["roba1"] = _mazdax_profile("roba1", order_size=13.0, inv_max=425.0, min_notional=100000.0)
+TRADING_PROFILES["nogh1"] = _mazdax_profile("nogh1", order_size=250.0, inv_max=8300.0, min_notional=100000.0)
+TRADING_PROFILES["zfam1"] = _mazdax_profile("zfam1", order_size=17.0, inv_max=570.0, min_notional=1000000.0)
+
+
+def profile_exchange(profile: str) -> str:
+    """The exchange key of a profile ("nobitex" for the profiles written before exchanges existed)."""
+    return str(TRADING_PROFILES[profile].get("exchange") or DEFAULT_EXCHANGE)
+
+
+def exchange_profiles(exchange: str) -> list:
+    """Profile keys of one exchange, in TRADING_PROFILES order."""
+    return [name for name in TRADING_PROFILES if profile_exchange(name) == exchange]
+
+
+def exchange_label(exchange: str) -> str:
+    return str(EXCHANGES.get(exchange, {}).get("label") or exchange)
+
+
+def exchange_credentials(exchange: str) -> tuple:
+    """(api key, secret) of an exchange from the environment; (None, None) when unset."""
+    spec = EXCHANGES.get(exchange) or EXCHANGES[DEFAULT_EXCHANGE]
+    return os.environ.get(spec["api_key_env"]), os.environ.get(spec["secret_key_env"])
+
+
+QUOTE_SUFFIXES = ("USDT", "IRT", "IRR", "USD", "EUR", "BTC", "ETH")
+
+
+def split_symbol(symbol: str) -> tuple:
+    """("AHRM1", "IRR") for "AHRM1IRR"; (symbol, "QUOTE") when the quote is not recognised."""
+    normalized = str(symbol).upper()
+    for quote in QUOTE_SUFFIXES:
+        if normalized.endswith(quote) and len(normalized) > len(quote):
+            return normalized[:-len(quote)], quote
+    return normalized, "QUOTE"
+
+
+def infer_tick(pair: str, tick: float = 0.0) -> float:
+    """The configured tick, or the historical rule: 10 on ...IRT markets, else 0.01."""
+    if tick and float(tick) > 0:
+        return float(tick)
+    return 10.0 if str(pair).upper().endswith("IRT") else 0.01

@@ -31,6 +31,7 @@ def test_non_worker_commands_are_accepted(command):
 
 @pytest.mark.parametrize("name", [
     "NOBITEX_API_KEY", "NOBITEX_SECRET_KEY", "NOBITEX_API_TOKEN",
+    "MAZDAX_API_KEY", "MAZDAX_SECRET_KEY",
     "MYSQL_HOST", "MYSQL_USER", "MYSQL_PASSWORD",
     "MYSQL_DATABASE", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID",
 ])

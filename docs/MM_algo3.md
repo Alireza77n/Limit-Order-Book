@@ -745,6 +745,64 @@ The demo runs on five rial markets, BTCIRT, USDTIRT, ETHIRT, XAUTIRT and TRXIRT 
 `run.py --profile <pair> --mode demo --algorithm algo4` runs MM_algo3 alone in the single-worker files.
 `--mode real --algorithm algo4` runs it live with real money.
 
+### 7.7 Exchanges: Nobitex and Mazdax
+
+Every profile carries an `exchange` key (`config.py::EXCHANGES`: `nobitex`, `mazdax`; a profile
+without the key is a Nobitex market). `run.py` takes the exchange from the profile, builds
+`exchange/nobitex.py::NobitexExchangeClient` or `exchange/mazdax.py::MazdaxExchangeClient`, and
+refuses an `--exchange` that differs from the profile's. The engine, the strategies and the paper
+ledger are the same code for both; what differs is listed here.
+
+**Markets.** Mazdax's API (https://api-docs.mazdax.tech) lists rial markets of fund and commodity
+tokens. The four with the largest turnover on 13 November 2026 have profiles: `ahrm1` (AHRM1IRR),
+`roba1` (ROBA1IRR), `nogh1` (NOGH1IRR) and `zfam1` (ZFAM1IRR). Prices are whole rials, so the tick
+is 1 (`tick`; on Nobitex's IRT markets the tick stays 10, inferred from the symbol). These markets
+trade whole units: the engine rounds every order amount down to `amount_step` = 1 and sends no order
+worth less than `min_notional` (100,000 rial; 1,000,000 on ZFAM1), the two rules Mazdax enforces with
+errors 122 and 119 (`engine.py::_exchange_amount`; both settings are 0 on Nobitex markets). The cash
+wallet is `irr`.
+
+**Market data.** `MazdaxExchangeClient.get_orderbook` reads `GET /api/v1/spot/public/books` and
+`/trades` (no key) and returns the shape the engine reads from Nobitex: `bids` and `asks` as
+`[price, amount]` rows with the best price first, and `lastTradePrice`, the newest public trade. It
+adds `marketTrades`, the trades printed since this client's previous call, each with its price, its
+amount and the side that took the price.
+
+**Demo fills.** On these books the best bid and ask are far apart and trades print inside the gap,
+so the touch rule of section 3.3 alone would almost never fill a paper order. With
+`demo_trade_fills_enabled` (on in the Mazdax profiles, off elsewhere) a resting paper buy at limit L
+is also filled, at L, by the volume that takers sold at L or lower since the previous round, and a
+resting sell at L by the volume takers bought at L or higher (`paper.py::PaperLedger.process_market`,
+reason `trade_feed`). Had the order really rested there, those takers would have met it before the
+orders behind it. Volume used by one order is not offered to the next on the same side. It is an
+upper bound in one respect: the real order would have joined the queue at its price, and here it
+is filled as if it stood alone.
+
+**Live trading.** Private requests carry everything in the query string, a millisecond `timestamp`
+last, and are signed with HMAC-SHA256 over `METHOD`, newline, path, newline, query string; the key
+goes in the `X-MZX-APIKEY` header (`exchange/mazdax_auth.py`). Mazdax rejects a timestamp more than
+5 seconds off, so the client corrects its clock from `GET /time` every 5 minutes. Orders are LIMIT
+orders sent to `POST /hapi/v1/spot/order` with our `clientOrderId`. Mazdax finds a finished order by
+its own numeric id only, so the client remembers the id of every order it sent: open orders come
+from `GET /order/open`, and an order that left that list is read with `GET /order` until it is
+final. The rows are translated to the statuses and fields of section 7.5 (`Active`, `Done`,
+`Canceled`; `matchedAmount`; a cumulative fee in the base coin for a buy and in rial for a sell). The
+id table lives in the worker's memory: an order that finishes while the worker is restarting is not
+booked by the new process. The keys come from `MAZDAX_API_KEY` and `MAZDAX_SECRET_KEY` in the
+forward agent's environment; the key needs `read_only` and `spot` only. The live path is covered by
+tests against the documented requests and replies; it has not yet been run against a real account.
+
+**Panels.** The dashboard's top bar and the admin panel's header have an Exchange selector. The
+dashboard filters its Track list to the chosen exchange (`dashboard.py::visible_tracks`,
+`?exchange=mazdax` in a link); the admin panel remembers the choice for the login and shows that
+exchange's markets on every page, and "all markets" on a form means all markets of that exchange.
+
+**Not tuned yet.** The Mazdax profiles copy the USDT profile's strategy settings. On the books of
+13 November 2026 (best bid and ask 6 to 10 % apart) MM_algo1v2 returned no quote
+(`expected_value_below_floor`), MM_algo2 centred on a microprice that the small top-of-book volumes
+push to one edge, and MM_algo3 quoted 0.7 % wide around the mid. The fee of the account on Mazdax is
+not in the profiles either (they carry the USDT profile's `commission_perc`).
+
 ## 8. Records and no-quote reasons
 
 ### 8.1 The quote

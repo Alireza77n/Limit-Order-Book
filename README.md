@@ -1,4 +1,4 @@
-# Limit-Order-Book: branch MM_algo3
+# Limit-Order-Book: branch MM_algo3_mazdax
 
 This is a market-making bot for the Nobitex exchange. Every round a worker reads the order book of a rial
 market, keeps one limit buy below the mid and one limit sell above it, and earns the spread when both fill,
@@ -71,6 +71,34 @@ $`T_r`$ = 300 s. Two switches are left out: the lean needs `algo4_use_alpha` (on
 $`1/\kappa + f`$ is the depth that maximises the expected gain $`\lambda e^{-\kappa\delta}(\delta - f)`$ of
 one order, and the Avellaneda–Stoikov half-spread as risk aversion goes to zero. The lean, the skew
 $`\chi(2x-1)`$ and the widening $`\varrho`$ are the other terms of the first-order optimal quotes.
+
+## Exchanges: Nobitex and Mazdax
+
+This branch (`MM_algo3_mazdax`) runs the same three algorithms on two exchanges. Every market in
+`config.py::TRADING_PROFILES` belongs to one exchange (its `exchange` key), and the worker picks the
+exchange client from the market: `exchange/nobitex.py` or `exchange/mazdax.py`.
+
+| | Nobitex | Mazdax |
+|---|---|---|
+| Markets | `btc`, `usdt`, `eth`, `xaut`, `trx` (BTCIRT, ...) | `ahrm1`, `roba1`, `nogh1`, `zfam1` (AHRM1IRR, ...) |
+| What trades | crypto against rial | fund and commodity tokens against rial |
+| Price tick, amount step | 10 rial, none | 1 rial, 1 unit |
+| Smallest order | 10 % of `order_size` | the same, and 100,000 rial (ZFAM1: 1,000,000) |
+| Cash wallet | `rls` | `irr` |
+| Credentials (live only) | `NOBITEX_API_KEY`, `NOBITEX_SECRET_KEY` | `MAZDAX_API_KEY`, `MAZDAX_SECRET_KEY` |
+| Demo fills | touch rule | touch rule, and Mazdax's public trades |
+
+The results dashboard has an **Exchange** selector in its top bar and the admin panel has one in its
+header: choosing Nobitex or Mazdax shows that exchange's markets on every page (`?exchange=mazdax` in
+a dashboard link opens it on Mazdax).
+
+Mazdax's books are wide and thin (on 13 November 2026 the best bid and the best ask of the four
+markets were 6 to 10 % apart, with trades printing inside that gap). The strategy settings of the
+Mazdax profiles are still the USDT profile's and have not been tuned for these markets: that day
+MM_algo1v2 found no quote worth its expected-value floor, MM_algo2's microprice sat at one edge of
+the book, and MM_algo3 quoted around the mid. A Mazdax API key for a live worker needs the
+`read_only` and `spot` permissions only, never `withdraw` or `transfer`, and the server's address in
+its IP list. Details: section 7.7 of [docs/MM_algo3.md](docs/MM_algo3.md).
 
 ## Settings
 

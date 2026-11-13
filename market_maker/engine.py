@@ -381,6 +381,9 @@ class SimpleMarketMaker:
         if callable(method):
             return float(method())
         # Strategy stand-ins (tests, future algorithms) may not expose a tick.
+        configured = float(getattr(self.cfg, "tick", 0.0) or 0.0)
+        if configured > 0:
+            return configured
         return 10.0 if str(self.cfg.pair).upper().endswith("IRT") else 0.01
 
     def _spread_ok(self, ob: Dict[str, Any], bid_idx: int, ask_idx: int) -> bool:
@@ -1165,6 +1168,18 @@ class SimpleMarketMaker:
         """
         return max(1e-10, abs(float(self.cfg.order_size)) * MIN_ORDER_SIZE_FRACTION)
 
+    def _exchange_amount(self, amount: float, price: Optional[float]) -> float:
+        """The amount the exchange accepts: rounded down to cfg.amount_step, and 0 when the order
+        would be worth less than cfg.min_notional. Both are 0 (no effect) on Nobitex markets."""
+        step = float(getattr(self.cfg, "amount_step", 0.0) or 0.0)
+        floor = float(getattr(self.cfg, "min_notional", 0.0) or 0.0)
+        amount = max(0.0, float(amount))
+        if step > 0:
+            amount = math.floor(amount / step + 1e-9) * step
+        if floor > 0 and price and amount * float(price) < floor:
+            return 0.0
+        return amount
+
     @staticmethod
     def _clamp(value: float, lower: float, upper: float) -> float:
         return max(lower, min(upper, value))
@@ -1627,6 +1642,10 @@ class SimpleMarketMaker:
                     traded_volume = float(traded_volume) if traded_volume is not None else None
                 except (TypeError, ValueError):
                     trade_price = traded_volume = None
+                market_extra = {}
+                if getattr(self.cfg, "demo_trade_fills_enabled", False):
+                    # public trades printed since the last round (exchange clients that report them)
+                    market_extra["market_trades"] = ob.get("marketTrades") or []
                 fill_events = self.exchange.process_market(
                     best_bid=best_bid,
                     best_ask=best_ask,
@@ -1634,6 +1653,7 @@ class SimpleMarketMaker:
                     trade_price=trade_price,
                     traded_volume=traded_volume,
                     now=now,
+                    **market_extra,
                 )
                 cancel_events = self.exchange.ledger.cancel_stale(
                     max_age_seconds=self.cfg.cancel_after_minutes * 60,
@@ -1734,6 +1754,7 @@ class SimpleMarketMaker:
                         0.0,
                         min(sell_target, snapshot.available_inventory - float(self.cfg.inv_min)),
                     )
+                    sell_amount = self._exchange_amount(sell_amount, ask_price)
                     sell_locked_reason = None
                     if ask_price is None:
                         # v2 quoted the bid side only (inventory low, or only
@@ -1793,6 +1814,7 @@ class SimpleMarketMaker:
                     )
                     affordable = snapshot.available_cash / bid_price if bid_price and bid_price > 0 else 0.0
                     buy_amount = max(0.0, min(buy_target, affordable))
+                    buy_amount = self._exchange_amount(buy_amount, bid_price)
                     buy_locked_cash_reason = None
                     if bid_price is None:
                         # v2 quoted the ask side only (inventory high, or only
@@ -2208,6 +2230,7 @@ class SimpleMarketMaker:
 
                     # SELL: cap by available (inventory minus already-locked sells)
                     sell_size = max(0.0, min(sell_target, (inv_current - sell_locked['amount']) - float(self.cfg.inv_min)))
+                    sell_size = self._exchange_amount(sell_size, ask_price)
                     if ask_price is None:
                         sell_size = 0.0  # one-sided quote: no ask this round
                     elif self._resting_order_blocks(ask_price, resting.get("sell", [])):
@@ -2240,6 +2263,7 @@ class SimpleMarketMaker:
                         buy_affordable_base = 0.0
 
                     buy_size = max(0.0, min(buy_target, buy_affordable_base))
+                    buy_size = self._exchange_amount(buy_size, bid_price)
                     if bid_price is None:
                         buy_size = 0.0  # one-sided quote: no bid this round
                     elif self._resting_order_blocks(bid_price, resting.get("buy", [])):

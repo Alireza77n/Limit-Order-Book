@@ -72,13 +72,13 @@ def test_local_new_session_uses_compose_liveness_and_restarts_workers(tmp_path):
     result = ca.handle_new_session(paths, None, None, local_runner)
 
     assert result.ok is True
-    assert result.detail["restarted"] == ["btc", "usdt", "eth", "xaut", "trx"]
+    assert result.detail["restarted"] == ["btc", "usdt", "eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1"]
     services = [f"{pair}-demo" for pair in ca.PAIRS]
-    assert calls[:5] == [
+    assert calls[:len(services)] == [
         ca.LOCAL_COMPOSE_ARGV_PREFIX + ["ps", "--status", "running", "--services", service]
         for service in services
     ]
-    assert calls[5:] == [
+    assert calls[len(services):] == [
         ca.LOCAL_COMPOSE_ARGV_PREFIX + ["stop", service] for service in services
     ] + [
         ca.LOCAL_COMPOSE_ARGV_PREFIX + ["up", "-d", "--no-deps", "--no-recreate", service]
@@ -724,8 +724,8 @@ def test_destructive_action_restart_failure_is_reported_with_partial_state(
     assert result.detail["phase"] == "start"
     assert result.detail["pair"] == "btc"
     assert result.detail["action"] == "start_worker"
-    assert result.detail["stopped"] == ["btc", "usdt", "eth", "xaut", "trx"]
-    assert result.detail["started"] == ["usdt", "eth", "xaut", "trx"]
+    assert result.detail["stopped"] == ["btc", "usdt", "eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1"]
+    assert result.detail["started"] == ["usdt", "eth", "xaut", "trx", "ahrm1", "roba1", "nogh1", "zfam1"]
     assert result.detail["failures"] == [{
         "pair": "btc",
         "action": "start_worker",

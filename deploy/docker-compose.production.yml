@@ -46,6 +46,14 @@ services:
       - /app/runtime/state/.worker_xautirt.lock
       - --worker-lock
       - /app/runtime/state/.worker_trxirt.lock
+      - --worker-lock
+      - /app/runtime/state/.worker_ahrm1irr.lock
+      - --worker-lock
+      - /app/runtime/state/.worker_roba1irr.lock
+      - --worker-lock
+      - /app/runtime/state/.worker_nogh1irr.lock
+      - --worker-lock
+      - /app/runtime/state/.worker_zfam1irr.lock
     volumes:
       - ../runtime/state:/app/runtime/state
     restart: "no"
@@ -340,6 +348,230 @@ services:
           from session import load_stack_session
 
           lock_file = Path("/app/runtime/state/.worker_trxirt.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 320M
+          pids: 128
+
+  ahrm1-demo:
+    <<: *runtime-common
+    container_name: lob-ahrm1-demo
+    profiles: ["paper"]
+    command:
+      - python
+      - demo_entrypoint.py
+      - python
+      - run.py
+      - --profile
+      - ahrm1
+      - --mode
+      - demo
+      - --continuous
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../runtime/results:/app/runtime/results
+      - ../runtime/state:/app/runtime/state
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 128
+    cpus: "0.50"
+    # Mazdax market, added 13 November 2026; sized like the USDT worker.
+    mem_limit: 320m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_ahrm1irr.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 320M
+          pids: 128
+
+  roba1-demo:
+    <<: *runtime-common
+    container_name: lob-roba1-demo
+    profiles: ["paper"]
+    command:
+      - python
+      - demo_entrypoint.py
+      - python
+      - run.py
+      - --profile
+      - roba1
+      - --mode
+      - demo
+      - --continuous
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../runtime/results:/app/runtime/results
+      - ../runtime/state:/app/runtime/state
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 128
+    cpus: "0.50"
+    # Mazdax market, added 13 November 2026; sized like the USDT worker.
+    mem_limit: 320m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_roba1irr.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 320M
+          pids: 128
+
+  nogh1-demo:
+    <<: *runtime-common
+    container_name: lob-nogh1-demo
+    profiles: ["paper"]
+    command:
+      - python
+      - demo_entrypoint.py
+      - python
+      - run.py
+      - --profile
+      - nogh1
+      - --mode
+      - demo
+      - --continuous
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../runtime/results:/app/runtime/results
+      - ../runtime/state:/app/runtime/state
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 128
+    cpus: "0.50"
+    # Mazdax market, added 13 November 2026; sized like the USDT worker.
+    mem_limit: 320m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_nogh1irr.lock").open("a+")
+          try:
+              fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+          except BlockingIOError:
+              load_stack_session("/app/runtime/state/stack_session.json")
+          else:
+              raise SystemExit("worker lease is not held")
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 320M
+          pids: 128
+
+  zfam1-demo:
+    <<: *runtime-common
+    container_name: lob-zfam1-demo
+    profiles: ["paper"]
+    command:
+      - python
+      - demo_entrypoint.py
+      - python
+      - run.py
+      - --profile
+      - zfam1
+      - --mode
+      - demo
+      - --continuous
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ../runtime/results:/app/runtime/results
+      - ../runtime/state:/app/runtime/state
+    restart: unless-stopped
+    stop_grace_period: 30s
+    pids_limit: 128
+    cpus: "0.50"
+    # Mazdax market, added 13 November 2026; sized like the USDT worker.
+    mem_limit: 320m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - demo_entrypoint.py
+        - python
+        - -c
+        - |
+          import fcntl
+          from pathlib import Path
+          from session import load_stack_session
+
+          lock_file = Path("/app/runtime/state/.worker_zfam1irr.lock").open("a+")
           try:
               fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
           except BlockingIOError:

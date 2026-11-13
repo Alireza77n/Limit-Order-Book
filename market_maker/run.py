@@ -36,15 +36,20 @@ from config import (
     TRADING_PROFILES,
     demo_csv_path,
     demo_state_path,
+    exchange_credentials,
+    profile_exchange,
 )
 from portfolio import Nobitex_portfolio
 from engine import CoordinatedShutdown, SimpleMarketMaker
 from exchange.nobitex import NobitexExchangeClient
+from exchange.mazdax import MazdaxExchangeClient
 from exchange.demo import DemoExchangeClient
 from strategy.catalog import SELECTABLE_ALGORITHMS, STRATEGIES, build_strategy
 from session import WorkerLease, load_stack_session
 from paper import PaperLedger
 from demo_config import (
+    OverlayLoadError,
+    OverlayValidationError,
     RuntimeConfigSynchronizer,
     apply_overrides,
     load_desired_config,
@@ -56,6 +61,7 @@ from forward_config import desired_config as load_forward_desired
 
 EXCHANGES = {
     "nobitex": NobitexExchangeClient,
+    "mazdax": MazdaxExchangeClient,
 }
 
 
@@ -107,6 +113,9 @@ def make_cfg(
         demo_config_state_dir=DEMO_STATE_DIR if mode == "demo" else None,
         **TRADING_PROFILES[profile],
     )
+    if cfg.exchange != "nobitex":
+        # MMConfig's defaults read the Nobitex variables; every other exchange has its own pair.
+        cfg.api_key, cfg.secret_key = exchange_credentials(cfg.exchange)
     cfg.continuous = bool(continuous)
     if cfg.continuous:
         cfg.max_rounds = None
@@ -142,7 +151,7 @@ def make_cfg(
     return cfg
 
 
-def make_bot(cfg: MMConfig, algorithm: Optional[str] = None, exchange_name: str = "nobitex",
+def make_bot(cfg: MMConfig, algorithm: Optional[str] = None, exchange_name: Optional[str] = None,
              mode: str = "real") -> SimpleMarketMaker:
     """Build the SimpleMarketMaker for an already-constructed cfg (see
     make_cfg). Also pulled out of main() so it can be reused verbatim.
@@ -154,6 +163,13 @@ def make_bot(cfg: MMConfig, algorithm: Optional[str] = None, exchange_name: str 
     if algorithm is not None:
         cfg.algorithm = algorithm
     is_forward = bool(os.environ.get("LOB_FORWARD_CONFIG_DIR"))
+    # The market decides the exchange: a profile's symbol exists on its own exchange only.
+    profile_exchange_name = str(getattr(cfg, "exchange", "") or "nobitex")
+    exchange_name = exchange_name or profile_exchange_name
+    if exchange_name != profile_exchange_name:
+        raise ValueError(
+            f"profile {cfg.profile_name!r} trades on {profile_exchange_name}, not on {exchange_name}"
+        )
 
     adapter_api_key = None if is_demo else cfg.api_key
     adapter_secret_key = None if is_demo else cfg.secret_key
@@ -344,8 +360,9 @@ def main():
                               "algorithm enabled in the Demo configuration (algo1_enabled, algo3_enabled, algo4_enabled), "
                               "each in its own lane with its own files; with it, one algorithm in the "
                               "single-worker files (<pair>_track_demo.csv).")
-    parser.add_argument("--exchange", choices=sorted(EXCHANGES), default="nobitex",
-                         help="Exchange to trade on (default: nobitex).")
+    parser.add_argument("--exchange", choices=sorted(EXCHANGES), default=None,
+                         help="Exchange to trade on. Default: the profile's own exchange; a "
+                              "different value is refused.")
     parser.add_argument("--mode", choices=["real", "demo"], required=True,
                          help="real: places real orders; the isolated forward runtime uses CSV without MySQL. "
                               "demo: real market data, simulated fills, no real orders, "
@@ -355,6 +372,11 @@ def main():
         help="Run until intentionally stopped; ignore profile round/time horizon limits.",
     )
     args = parser.parse_args()
+    if args.exchange is None:
+        args.exchange = profile_exchange(args.profile)
+    elif args.exchange != profile_exchange(args.profile):
+        parser.error(f"profile {args.profile} trades on {profile_exchange(args.profile)}, "
+                     f"not on {args.exchange}")
 
     if args.mode == "demo" and args.algorithm is None:
         # Lanes: every enabled algorithm at once, under the pair's one lease.

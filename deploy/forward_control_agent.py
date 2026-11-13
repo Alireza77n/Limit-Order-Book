@@ -25,10 +25,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "market_maker"
 sys.path.insert(0, str(PACKAGE))
-from config import TRADING_PROFILES  # noqa: E402
+from config import EXCHANGES, TRADING_PROFILES, exchange_credentials, exchange_label, exchange_profiles, profile_exchange  # noqa: E402
 
 PAIRS = {pair: str(TRADING_PROFILES[pair]["pair"]) for pair in TRADING_PROFILES}
-WALLET_CURRENCIES = ("rls",) + tuple(dict.fromkeys(str(TRADING_PROFILES[pair]["currency_1"]) for pair in TRADING_PROFILES))
+# The wallets of each exchange: its cash currency, then the coin of each of its markets.
+EXCHANGE_WALLETS = {
+    exchange: (str(spec["cash_currency"]),) + tuple(dict.fromkeys(
+        str(TRADING_PROFILES[pair]["currency_1"]) for pair in exchange_profiles(exchange)))
+    for exchange, spec in EXCHANGES.items()
+}
+WALLET_CURRENCIES = tuple(currency for wallets in EXCHANGE_WALLETS.values() for currency in wallets)
+# The Nobitex wallets the admin panel has always required.
+REQUIRED_WALLETS = {"nobitex": ("rls", "btc", "usdt")}
 POLL_SECONDS = 0.25
 STOP_TIMEOUT = 35.0
 
@@ -97,8 +105,9 @@ def _start_worker(paths, pair, algorithm="algo1"):
     validated live configuration's choice (strategy/catalog.py)."""
     if os.environ.get("FORWARD_TRADING_ENABLED") != "1":
         raise RuntimeError("FORWARD_TRADING_ENABLED is not set to 1")
-    if not os.environ.get("NOBITEX_API_KEY") or not os.environ.get("NOBITEX_SECRET_KEY"):
-        raise RuntimeError("Nobitex API credentials are missing from the forward-agent environment")
+    exchange = profile_exchange(pair)
+    if not all(exchange_credentials(exchange)):
+        raise RuntimeError(f"{exchange_label(exchange)} API credentials are missing from the forward-agent environment")
     if worker_running(paths, pair):
         return {"running": True, "already_running": True}
     paths.config.mkdir(parents=True, exist_ok=True)
@@ -115,7 +124,7 @@ def _start_worker(paths, pair, algorithm="algo1"):
     log = log_path.open("ab", buffering=0)
     try:
         process = subprocess.Popen(
-            [sys.executable, "run.py", "--profile", pair, "--algorithm", algorithm, "--exchange", "nobitex", "--mode", "real", "--continuous"],
+            [sys.executable, "run.py", "--profile", pair, "--algorithm", algorithm, "--exchange", exchange, "--mode", "real", "--continuous"],
             cwd=PACKAGE, env=env, stdin=subprocess.DEVNULL,
             stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
             close_fds=True,
@@ -219,31 +228,40 @@ def _result(paths, command_id, ok, detail):
 
 def _read_wallet_balances():
     """Read the three spot-wallet balances without exposing API credentials to the web app."""
-    api_key = os.environ.get("NOBITEX_API_KEY")
-    secret_key = os.environ.get("NOBITEX_SECRET_KEY")
-    if not api_key or not secret_key:
-        raise RuntimeError("Nobitex API credentials are missing from the forward-agent environment")
-
-    from config import TRADING_PROFILES
+    from exchange.mazdax import MazdaxExchangeClient
     from exchange.nobitex import NobitexExchangeClient
 
-    client = NobitexExchangeClient(
-        api_key=api_key,
-        secret_key=secret_key,
-        url_send_order=None,
-        url_wallet_balance=TRADING_PROFILES["btc"]["url_wallet_balance"],
-        trading_enabled=False,
-    )
+    clients = {"nobitex": NobitexExchangeClient, "mazdax": MazdaxExchangeClient}
     balances = {}
-    for currency in WALLET_CURRENCIES:
-        value = client.wallet_balance(currency)
-        if value is None or not math.isfinite(value) or value < 0:
-            if currency in ("rls", "btc", "usdt"):
-                raise RuntimeError(f"Could not read a valid {currency.upper()} balance from Nobitex")
-            # A market added later may have no wallet on the account yet.
-            balances[currency] = None
+    configured = 0
+    for exchange, wallets in EXCHANGE_WALLETS.items():
+        api_key, secret_key = exchange_credentials(exchange)
+        if not api_key or not secret_key:
+            # no key for this exchange on this server: its wallets are shown as unavailable
+            for currency in wallets:
+                balances[currency] = None
             continue
-        balances[currency] = value
+        configured += 1
+        first = exchange_profiles(exchange)[0]
+        client = clients[exchange](
+            api_key=api_key,
+            secret_key=secret_key,
+            url_send_order=None,
+            url_wallet_balance=TRADING_PROFILES[first]["url_wallet_balance"],
+            trading_enabled=False,
+        )
+        for currency in wallets:
+            value = client.wallet_balance(currency)
+            if value is None or not math.isfinite(value) or value < 0:
+                if currency in REQUIRED_WALLETS.get(exchange, ()):
+                    raise RuntimeError(
+                        f"Could not read a valid {currency.upper()} balance from {exchange_label(exchange)}")
+                # A market added later may have no wallet on the account yet.
+                balances[currency] = None
+                continue
+            balances[currency] = value
+    if not configured:
+        raise RuntimeError("Nobitex API credentials are missing from the forward-agent environment")
     return {
         "balances": balances,
         "read_at": datetime.now(timezone.utc).isoformat(),

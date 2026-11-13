@@ -23,7 +23,7 @@ services:
   session-init:
     build: .
     command:
-      ["python", "session.py", "stack-init", "--path", "/app/market_maker/results/stack_session.json", "--worker-lock", "/app/market_maker/results/.worker_btcirt.lock", "--worker-lock", "/app/market_maker/results/.worker_usdtirt.lock", "--worker-lock", "/app/market_maker/results/.worker_ethirt.lock", "--worker-lock", "/app/market_maker/results/.worker_xautirt.lock", "--worker-lock", "/app/market_maker/results/.worker_trxirt.lock"]
+      ["python", "session.py", "stack-init", "--path", "/app/market_maker/results/stack_session.json", "--worker-lock", "/app/market_maker/results/.worker_btcirt.lock", "--worker-lock", "/app/market_maker/results/.worker_usdtirt.lock", "--worker-lock", "/app/market_maker/results/.worker_ethirt.lock", "--worker-lock", "/app/market_maker/results/.worker_xautirt.lock", "--worker-lock", "/app/market_maker/results/.worker_trxirt.lock", "--worker-lock", "/app/market_maker/results/.worker_ahrm1irr.lock", "--worker-lock", "/app/market_maker/results/.worker_roba1irr.lock", "--worker-lock", "/app/market_maker/results/.worker_nogh1irr.lock", "--worker-lock", "/app/market_maker/results/.worker_zfam1irr.lock"]
     volumes:
       - ./market_maker/results:/app/market_maker/results
     restart: "no"
@@ -115,6 +115,90 @@ services:
   trx-demo:
     build: .
     command: ["python", "run.py", "--profile", "trx", "--mode", "demo", "--continuous"]
+    env_file:
+      - path: market_maker/.env
+        required: false
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  ahrm1-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "ahrm1", "--mode", "demo", "--continuous"]
+    env_file:
+      - path: market_maker/.env
+        required: false
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  roba1-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "roba1", "--mode", "demo", "--continuous"]
+    env_file:
+      - path: market_maker/.env
+        required: false
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  nogh1-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "nogh1", "--mode", "demo", "--continuous"]
+    env_file:
+      - path: market_maker/.env
+        required: false
+    environment:
+      DEMO_SESSION_FILE: /app/market_maker/results/stack_session.json
+    depends_on:
+      session-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./market_maker/results:/app/market_maker/results
+    restart: unless-stopped
+    stop_grace_period: 20s
+    healthcheck:
+      test: ["CMD", "python", "session.py", "load", "--path", "/app/market_maker/results/stack_session.json"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  zfam1-demo:
+    build: .
+    command: ["python", "run.py", "--profile", "zfam1", "--mode", "demo", "--continuous"]
     env_file:
       - path: market_maker/.env
         required: false
