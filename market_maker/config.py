@@ -12,6 +12,18 @@ from dotenv import load_dotenv
 if os.environ.get("LOB_DISABLE_DOTENV") != "1":
     load_dotenv()
 
+# Branch MM_algo2_mazdax runs one algorithm: MM_algo2 (key "algo3"). The code of the other two is in
+# the tree, switched off: every profile below gets algorithm = BRANCH_ALGORITHM and only its lane
+# enabled. The test-suite sets LOB_ALL_ALGORITHMS=1 (tests/conftest.py) to exercise the engine with
+# every algorithm, as on MM_algo3_mazdax; tests/test_branch_algorithm.py pins what ships.
+BRANCH_ALGORITHM = "algo3"
+ALL_ALGORITHMS = os.environ.get("LOB_ALL_ALGORITHMS") == "1"
+DEFAULT_PROFILE_ALGORITHM = "algo1" if ALL_ALGORITHMS else BRANCH_ALGORITHM
+
+
+def _lane_on(key: str) -> bool:
+    return ALL_ALGORITHMS or key == BRANCH_ALGORITHM
+
 
 @dataclass
 class MMConfig:
@@ -45,9 +57,9 @@ class MMConfig:
     # Demo lanes (run.py's LaneRunner): the demo worker of a pair runs every
     # enabled algorithm at the same time, each in its own lane with its own
     # paper account and result files. Ignored by a live worker.
-    algo1_enabled: bool = True
-    algo3_enabled: bool = True
-    algo4_enabled: bool = True
+    algo1_enabled: bool = _lane_on("algo1")
+    algo3_enabled: bool = _lane_on("algo3")
+    algo4_enabled: bool = _lane_on("algo4")
     # The lane this configuration belongs to (the algorithm key), set by
     # run.py's make_cfg(..., lane=...) for a demo lane; None otherwise.
     lane: Optional[str] = None
@@ -345,10 +357,10 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         fill_lambda_tau=1.0,
         fill_queue_volume_ref=0.0,
         # Which algorithm runs (admin-selectable): "algo1" or "algo3".
-        algorithm="algo1",
-        algo1_enabled=True,
-        algo3_enabled=True,
-        algo4_enabled=True,
+        algorithm=DEFAULT_PROFILE_ALGORITHM,
+        algo1_enabled=_lane_on("algo1"),
+        algo3_enabled=_lane_on("algo3"),
+        algo4_enabled=_lane_on("algo4"),
         # Algorithm 3 (strategy/algo3.py); beta stays 0 until it is estimated.
         algo3_depth_k=3,
         algo3_decay_rho=0.5,
@@ -441,10 +453,10 @@ TRADING_PROFILES: Dict[str, Dict[str, Any]] = {
         fill_lambda_tau=1.0,
         fill_queue_volume_ref=0.0,
         # Which algorithm runs (admin-selectable): "algo1" or "algo3".
-        algorithm="algo1",
-        algo1_enabled=True,
-        algo3_enabled=True,
-        algo4_enabled=True,
+        algorithm=DEFAULT_PROFILE_ALGORITHM,
+        algo1_enabled=_lane_on("algo1"),
+        algo3_enabled=_lane_on("algo3"),
+        algo4_enabled=_lane_on("algo4"),
         # Algorithm 3 (strategy/algo3.py); beta stays 0 until it is estimated.
         algo3_depth_k=3,
         algo3_decay_rho=0.5,

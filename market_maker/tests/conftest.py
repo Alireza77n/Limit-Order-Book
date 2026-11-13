@@ -1,3 +1,9 @@
+# The suite exercises the engine with every algorithm switched on, whatever this branch ships
+# (config.BRANCH_ALGORITHM); tests/test_branch_algorithm.py checks the shipped defaults.
+import os
+
+os.environ.setdefault("LOB_ALL_ALGORITHMS", "1")
+
 import sys
 from pathlib import Path
 
