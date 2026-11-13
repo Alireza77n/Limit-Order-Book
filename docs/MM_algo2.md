@@ -1175,8 +1175,18 @@ filters its Track list to the chosen exchange (`dashboard.py::visible_tracks`, `
 link); the admin panel remembers the choice for the login and shows that exchange's markets on every page,
 and "all markets" on a form means all markets of that exchange.
 
-**Not tuned yet.** The Mazdax profiles copy the USDT profile's strategy settings.
-On the books of 13 November 2026 (best bid and ask 6 to 10 % apart) MM_algo2 quoted 0.22 to 0.25 % wide
-around a microprice that the small volumes at the top of these books push to one edge of the spread.
-The fee of the account on Mazdax is not in the profiles either (they carry the USDT profile's
-`commission_perc`).
+**First calibration.** The Mazdax profiles (`config.py::_mazdax_profile`) carry values measured on
+Mazdax's public trades of 12-13 November 2026, 500 trades per market. Around the middle of the recent
+trades, a quote at distance d would have been met about 5 times an hour on AHRM1, 6 on NOGH1 and 14 to
+15 on ROBA1 and ZFAM1 at d near 0, falling by a factor e about every 1.25 % of distance, and the gross
+gain per hour of a pair quoted at +-d was largest at d = 1.5 % (2 % on ROBA1). The profiles therefore
+set, per market: MM_algo2's half-spread `algo3_half_spread` to that distance, with its centre on the mid
+(`algo3_min_volume_orders` is set so high that the thin-book rule always applies: the top of these
+books is too small for the microprice to mean anything); MM_algo3's fallback `algo4_kappa` to one over
+that distance; and MM_algo1v2's grid to 0.5 % to 4 % (`grid_min_perc`, `grid_ratio` 1.3,
+`grid_max_perc`) with the fill formula `fill_kappa` = 80 and `fill_lambda_tau` = the fills per order
+life (0.25 to 0.75), and `ev_min` = 0.000001. Two cautions. The trades of these markets print anywhere
+inside the book's gap whatever the taker's side, as many taker sells above the middle as below it, so
+a real resting order may be met less often than these counts say. And the sample is one day that
+includes a weekend. These are first values, to be measured again on the demo's own fills. The fee of
+the account on Mazdax is not in the profiles (they carry the USDT profile's `commission_perc`).
