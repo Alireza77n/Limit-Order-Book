@@ -529,7 +529,7 @@ MAZDAX_BASE_URL = "https://api.mazdax.ir"
 
 
 def _mazdax_profile(code: str, *, order_size: float, inv_max: float, min_notional: float,
-                    time_step: int = 30) -> Dict[str, Any]:
+                    half_spread: float, fills_per_lifetime: float, time_step: int = 30) -> Dict[str, Any]:
     """A profile for one Mazdax market (https://api-docs.mazdax.tech). Mazdax lists rial markets
     of fund and commodity tokens: the symbol is <CODE>IRR, prices are whole rials (tick 1), the
     four markets below trade whole units (amount step 1), and the cash wallet is IRR. The
@@ -553,6 +553,26 @@ def _mazdax_profile(code: str, *, order_size: float, inv_max: float, min_notiona
         order_size=order_size,
         time_step=time_step,
         demo_trade_fills_enabled=True,
+        # First calibration, from Mazdax's public trades of 12-13 November 2026 (500 trades per
+        # market): a quote at distance d from the middle of the recent trades would have been met
+        # about fills_per_lifetime times per 3-minute order life at d = 0, falling by a factor e
+        # every 1.25 % of distance, and the gross gain per hour of a pair quoted at +-d was largest
+        # near half_spread (1.5 %; 2 % on ROBA1). The trades of these markets print anywhere inside
+        # the book's gap whatever the taker's side, so these are first values to be measured again
+        # on the demo's own fills, not a forecast.
+        # MM_algo2: quote +-half_spread around the mid; the top of these books is too small for
+        # the microprice to mean anything, so the thin-book rule (centre = mid) always applies.
+        algo3_half_spread=half_spread,
+        algo3_min_volume_orders=1e6,
+        # MM_algo3: 1/kappa is the depth when no fill table can be fitted.
+        algo4_kappa=round(1.0 / half_spread, 1),
+        # MM_algo1v2: a grid that reaches into these wide books, and the measured fill formula.
+        grid_min_perc=0.005,
+        grid_ratio=1.3,
+        grid_max_perc=0.04,
+        fill_kappa=80.0,
+        fill_lambda_tau=fills_per_lifetime,
+        ev_min=0.000001,
         url_send_order=f"{MAZDAX_BASE_URL}/hapi/v1/spot/order",
         url_wallet_balance=f"{MAZDAX_BASE_URL}/hapi/v1/spot/wallet",
         output_csv=os.path.join(RESULTS_DIR, f"{code}_track.csv"),
@@ -563,10 +583,14 @@ def _mazdax_profile(code: str, *, order_size: float, inv_max: float, min_notiona
 # Added 13 November 2026: the four most traded Mazdax markets (24-hour turnover that day:
 # AHRM1 131, ROBA1 54, NOGH1 45, ZFAM1 36 billion rial). Prices that day: AHRM1 about
 # 88 thousand rial, ROBA1 235 thousand, NOGH1 12 thousand, ZFAM1 176 thousand.
-TRADING_PROFILES["ahrm1"] = _mazdax_profile("ahrm1", order_size=34.0, inv_max=1150.0, min_notional=100000.0)
-TRADING_PROFILES["roba1"] = _mazdax_profile("roba1", order_size=13.0, inv_max=425.0, min_notional=100000.0)
-TRADING_PROFILES["nogh1"] = _mazdax_profile("nogh1", order_size=250.0, inv_max=8300.0, min_notional=100000.0)
-TRADING_PROFILES["zfam1"] = _mazdax_profile("zfam1", order_size=17.0, inv_max=570.0, min_notional=1000000.0)
+TRADING_PROFILES["ahrm1"] = _mazdax_profile("ahrm1", order_size=34.0, inv_max=1150.0, min_notional=100000.0,
+                                                   half_spread=0.015, fills_per_lifetime=0.25)
+TRADING_PROFILES["roba1"] = _mazdax_profile("roba1", order_size=13.0, inv_max=425.0, min_notional=100000.0,
+                                                   half_spread=0.02, fills_per_lifetime=0.75)
+TRADING_PROFILES["nogh1"] = _mazdax_profile("nogh1", order_size=250.0, inv_max=8300.0, min_notional=100000.0,
+                                                   half_spread=0.015, fills_per_lifetime=0.3)
+TRADING_PROFILES["zfam1"] = _mazdax_profile("zfam1", order_size=17.0, inv_max=570.0, min_notional=1000000.0,
+                                                   half_spread=0.015, fills_per_lifetime=0.7)
 
 
 def profile_exchange(profile: str) -> str:

@@ -93,10 +93,9 @@ header: choosing Nobitex or Mazdax shows that exchange's markets on every page (
 a dashboard link opens it on Mazdax).
 
 Mazdax's books are wide and thin (on 13 November 2026 the best bid and the best ask of the four
-markets were 6 to 10 % apart, with trades printing inside that gap). The strategy settings of the
-Mazdax profiles are still the USDT profile's and have not been tuned for these markets: that day
-MM_algo1v2 found no quote worth its expected-value floor, MM_algo2's microprice sat at one edge of
-the book, and MM_algo3 quoted around the mid. A Mazdax API key for a live worker needs the
+markets were 6 to 10 % apart, with trades printing inside that gap). The Mazdax profiles carry a first calibration from Mazdax's public trades of 12-13 November 2026:
+quotes about 1.5 % from the middle of the recent trades (2 % on ROBA1), where the gross gain per hour of
+a quoted pair was largest. It is a starting point to be measured again on the demo's own fills. A Mazdax API key for a live worker needs the
 `read_only` and `spot` permissions only, never `withdraw` or `transfer`, and the server's address in
 its IP list. Details: section 7.7 of [docs/MM_algo3.md](docs/MM_algo3.md).
 
